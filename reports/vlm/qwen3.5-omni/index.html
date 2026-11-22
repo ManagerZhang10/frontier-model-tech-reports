@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-Omni 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Qwen3.5-Omni 技术报告中文精读：Thinker-Talker 混合注意力 MoE、AuT 音频编码器、文本时间戳、ARIA 流式语音、数据与训练配方、评测与局限，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* 页面特有：ARIA 示意图、分差图、比例条补色 */
+  .d-pos { fill: var(--good); }
+  .d-neg { fill: var(--warm); }
+  .aria-svg .tk { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .aria-svg .sp { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 50%, var(--line)); }
+  .aria-svg .tt { fill: var(--accent-ink); font: 700 11px var(--f-mono); }
+  .aria-svg .st { fill: var(--warm); font: 700 11px var(--f-mono); }
+  .aria-svg .hd { fill: var(--ink); font: 700 13px var(--f-body); }
+  .aria-svg .nt { fill: var(--muted); font: 500 11.5px var(--f-body); }
+  .aria-svg .rail { stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 4; }
+  .ratio .rbar .c { background: var(--good); }
+  .rkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .8rem; color: var(--muted); margin-top: 5px; }
+  .rkey i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .flow.f3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 960px) { .flow.f3 { grid-template-columns: 1fr; } .flow.f3 .stage::after { display: none; } }
+  pre.ts { font: 500 .8rem/1.6 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; overflow: auto; color: var(--ink-2); margin: 10px 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型（Omni / 音视频）</div>
+    <h1>Qwen3.5-Omni<span class="sub">Qwen3.5-Omni Technical Report</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Qwen Team（阿里巴巴）</b></span>
+      <span>arXiv <b>2604.15804</b></span>
+      <span>v1 发布 <b>2026-04-17</b></span>
+      <span>本页依据 <b>v2（2026-04-21）</b></span>
+    </div>
+    <p class="lede">在 Qwen3-Omni 的 Thinker–Talker 框架上，把理解端和语音生成端<em>都换成 Hybrid-Attention MoE</em>，上下文拉到 256K，在超过 1 亿小时音视频数据上原生全模态预训练。对数据和 caption 读者最有用的三点：<em>用文本字符串时间戳替代纯位置 ID 编码时间</em>（明说是为了降低数据构建成本）、AuT 用 Qwen3-ASR 伪标注的 4000 万小时音频训练、Talker 用 Qwen3-Omni-Captioner 做质量分层后再继续预训练。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>不开源权重 · 仅 API</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4"/></svg>「数千亿参数」级 · Plus / Flash 具体规模未披露</span>
+      <span class="badge">256K 上下文</span>
+      <span class="badge">视觉语言模型（Omni / 音视频）</span>
+      <span class="badge">理解 + 流式语音生成</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2604.15804" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M21 3l-9 9M19 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg>arXiv 论文</a>
+      <a href="https://arxiv.org/pdf/2604.15804" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/></svg>PDF</a>
+      <a href="https://huggingface.co/spaces/Qwen/Qwen3.5-Omni-Online-Demo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 4 20 12 6 20 6 4"/></svg>HF Demo</a>
+      <a href="https://modelscope.cn/studios/Qwen/Qwen3.5-Omni-Online-Demo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 4 20 12 6 20 6 4"/></svg>ModelScope Demo</a>
+      <a href="https://www.alibabacloud.com/help/en/model-studio/qwen-omni" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3"/></svg>API 文档</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自原文；<span class="src calc">推算</span> 为本页计算。</div>
+  </nav>
+
+  <main>
+
+  <!-- 01 速览 -->
+  <section class="sec" id="glance">
+    <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+    <div class="glance wide">
+      <div class="card stat"><span class="stat-k">发布</span><span class="stat-num sm">2026-04-17</span><span class="stat-sub">arXiv v1；本页依据 v2（2026-04-21），PDF 页眉日期 2026-04-22</span><span class="src">arXiv</span></div>
+      <div class="card stat"><span class="stat-k">型号</span><span class="stat-num sm">Plus / Flash</span><span class="stat-sub">均为 instruct 模型；另有 Plus-Realtime 交互形态</span><span class="src">§1 · 图 1</span></div>
+      <div class="card stat"><span class="stat-k">规模</span><span class="stat-num sm">数千亿参数</span><span class="stat-sub">原文仅写 “hundreds of billions”；总参 / 激活参数未披露</span><span class="src">摘要</span></div>
+      <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">256K</span><span class="stat-sub">10 小时+ 音频，或 400 秒 720P 视频（1 FPS）</span><span class="src">§2.1</span></div>
+      <div class="card stat"><span class="stat-k">音视频预训练数据</span><span class="stat-num">&gt;1 亿小时</span><span class="stat-sub">另有大量文本、图文数据</span><span class="src">摘要 · §1</span></div>
+      <div class="card stat"><span class="stat-k">S2 通用预训练</span><span class="stat-num">≈4T tokens</span><span class="stat-sub">序列长 32,768；按模态拆分见 §数据</span><span class="src">§3</span></div>
+      <div class="card stat"><span class="stat-k">AuT 编码器数据</span><span class="stat-num">4000 万小时</span><span class="stat-sub">Qwen3-ASR 生成的音频-文本对；中:英:多语 = 3.5:3.5:3</span><span class="src">§2.2</span></div>
+      <div class="card stat"><span class="stat-k">Talker 预训练</span><span class="stat-num">&gt;2000 万小时</span><span class="stat-sub">多语语音 + 多模态上下文</span><span class="src">§4.2</span></div>
+      <div class="card stat"><span class="stat-k">语言覆盖（Plus）</span><span class="stat-num sm">ASR 113 · TTS 36</span><span class="stat-sub">ASR：74 语言 + 39 种汉语方言；TTS：29 语言 + 7 种方言；文本 201</span><span class="src">表 3</span></div>
+      <div class="card stat"><span class="stat-k">首包延迟（单并发）</span><span class="stat-num sm">Flash 235 ms · Plus 435 ms</span><span class="stat-sub">音频输入；视频输入 426 / 651 ms；理论值，内部 vLLM</span><span class="src">表 1–2</span></div>
+      <div class="card stat"><span class="stat-k">号称 SOTA</span><span class="stat-num">215</span><span class="stat-sub">音频 / 音视频子任务与基准（Plus），清单未逐项列出</span><span class="src">摘要 · §1</span></div>
+      <div class="card stat"><span class="stat-k">权重 / 许可证</span><span class="stat-num sm">仅 API · <span class="nd">原文未披露</span></span><span class="stat-sub">“publicly accessible via API”</span><span class="src">摘要</span></div>
+    </div>
+  </section>
+
+  <!-- 02 TL;DR -->
+  <section class="sec" id="tldr">
+    <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看懂</h2></div>
+    <div class="tldr wide">
+      <div class="card tl"><span class="idx">01</span><h3>两端都上 Hybrid MoE</h3><p>Thinker 和 Talker 都改为 Qwen3.5 的 Hybrid-Attention MoE（含 Gated Delta Net），主要收益是长音视频序列的 KV-cache I/O 和并发<span class="src">§2.5</span>。上下文 256K，可吃 10 小时+ 音频或 400 秒 720P@1FPS 视频<span class="src">§2.1</span>。</p></div>
+      <div class="card tl"><span class="idx">02</span><h3>时间用文本写出来</h3><p>每个视频 / 音视频时间片前加一个以秒为单位的文本时间戳，音频里再随机插时间戳；原因之一是纯绝对时间位置 ID 需要“跨帧率大规模均匀采样”的数据，构建成本高<span class="src">§2.3 · §3</span>。</p></div>
+      <div class="card tl"><span class="idx">03</span><h3>数据：量大，配比只露一半</h3><p>S2 约 4T tokens，其中音频 1.99T、图像 0.95T、文本 0.92T、音视频 0.29T、视频 0.14T<span class="src">§3</span>；AuT 用 4000 万小时 Qwen3-ASR 伪标注数据<span class="src">§2.2</span>。清洗规则、S3 长序列配比、视觉数据规模均未披露。</p></div>
+      <div class="card tl"><span class="idx">04</span><h3>ARIA：文本和语音单流交错</h3><p>把 Qwen3-Omni 的双轨 Talker 改成单流交错，约束“任意前缀的语音/文本 token 累计比 ≤ 该条样本的全局比”<span class="src">§2.4</span>。SEED test-en WER 1.26，表内最低<span class="src">表 8</span>。</p></div>
+      <div class="card tl caveat"><span class="idx">05</span><h3>“持平 Gemini-3.1 Pro”要打折</h3><p>音视频上 Plus 赢了 DailyOmni（84.6 vs 82.7）和 Omni-Cloze caption（64.8 vs 57.2），但 VideoMME 带音频 83.7 vs 89.0、OmniGAIA 57.2 vs 68.9 明显落后<span class="src">表 7</span>。文本侧 AA-LCR 比同尺寸 Qwen3.5-Plus-Instruct 低 5.0<span class="src">表 4</span>。</p></div>
+    </div>
+  </section>
+
+  <!-- 03 架构 -->
+  <section class="sec" id="arch">
+    <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：Thinker–Talker + AuT</h2>
+      <p class="sec-intro">骨架沿用 Qwen2.5-Omni 提出的 Thinker–Talker：Thinker 出文本，Talker 以多模态输入和 Thinker 的文本输出为条件，流式出语音 token<span class="src">§2.1</span>。</p></div>
+
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="Qwen3.5-Omni 总览：Vision Encoder 与 AuT 输入 Hybrid MoE Thinker，Talker 从 Thinker 中间层取隐状态，MTP 预测残差码本，Streaming Codec Decoder 出波形" loading="lazy"></div>
+      <figcaption><b>Qwen3.5-Omni 总览。</b>Vision Encoder 与 AuT 的输出和文本时间戳（如 <code>&lt;4.0 seconds&gt;</code>）交错进入 Hybrid MoE Thinker；Talker 接收 Thinker 中间层隐状态（图中 “Hidden Extraction From Middle Layers”）和参考音频，自回归预测多码本序列：每步由 MTP 模块补出当前帧的残差码本，再由 Code2Wav 逐帧合成波形。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+
+    <h3>五模块一览</h3>
+    <div class="tbl-wrap wide">
+      <table>
+        <thead><tr><th>模块</th><th style="text-align:left">结构</th><th>流式</th><th style="text-align:left">要点</th></tr></thead>
+        <tbody>
+          <tr><td>Audio Encoder</td><td style="text-align:left">AuT</td><td>✓</td><td style="text-align:left">16 kHz → 128 通道 mel（25 ms 窗 / 10 ms 移）→ 6.25 Hz，每帧约 160 ms <span class="src">§2.3</span></td></tr>
+          <tr><td>Vision Encoder</td><td style="text-align:left">SigLIP2</td><td>–</td><td style="text-align:left">沿用 Qwen3.5 视觉编码器，图像 + 视频混合训练；视频动态帧率采样 <span class="src">表 1 · §2.3</span></td></tr>
+          <tr><td>Thinker</td><td style="text-align:left">Hybrid MoE Transformer</td><td>✓</td><td style="text-align:left">Qwen3.5 tokenizer，词表 250k（原 150k），多数语言编解码效率提升 10–60% <span class="src">§2.3</span></td></tr>
+          <tr><td>Talker</td><td style="text-align:left">Hybrid MoE Transformer</td><td>✓</td><td style="text-align:left">RVQ 语音 token；ARIA 单流交错；音色 system prompt <span class="src">§2.4</span></td></tr>
+          <tr><td>MTP</td><td style="text-align:left">Dense Transformer</td><td>✓</td><td style="text-align:left">每步补出当前帧的残差码本 <span class="src">图 2 · §2.4</span></td></tr>
+          <tr><td>Code2wav</td><td style="text-align:left">ConvNet（因果）</td><td>✓</td><td style="text-align:left">逐帧合成；Codec Decode 3~5 ms <span class="src">表 2</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">来源：表 1，补充 §2.3–2.5。</p>
+
+    <h3>相对 Qwen3-Omni 的五项升级 <span class="src">§1</span></h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4><span class="tag">1</span>Thinker / Talker 都改 Hybrid-Attention MoE</h4><p>来自 Qwen3.5；其中 GDN 模块对长音视频序列加速明显，降低 KV-cache I/O，提高吞吐与并发<span class="src">§2.5</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">2</span>256K 长上下文</h4><p>10 小时+ 音频；400 秒以上 720P 音视频（1 FPS）<span class="src">§1 · §2.1</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">3</span>多码本 codec，单帧即时合成</h4><p>沿用 Qwen3-Omni 的 RVQ 表征；Talker 出第一层码本，MTP 补残差码本，因果 ConvNet 解码<span class="src">§2.4–2.5</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">4</span>ARIA 文本-语音对齐</h4><p>解决文本 / 语音 tokenizer 编码效率不一致导致的跳字、读错、数字念混等问题<span class="src">§2.1</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">5</span>多语言扩展</h4><p>语音识别 113 种语言与方言，语音合成 36 种<span class="src">§1 · 表 3</span>。</p></div>
+      <div class="card mod"><h4><span class="tag nd-tag">注意</span>摘要与正文语种数不一致</h4><p>v2 摘要写“10 languages”的语音生成，正文与表 3 是 36 种（29 语言 + 7 方言），§5.2.2 评测 29 种<span class="src">摘要 · 表 3 · §5.2.2</span>。</p></div>
+    </div>
+
+    <h3>AuT：从头训练的音频编码器</h3>
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig3.jpg" alt="AuT 结构：FBank 特征经 4 个下采样 Conv2d、32 层自注意力编码器得到 6.25Hz 隐状态，8 层解码器用交叉注意力生成文本" loading="lazy"></div>
+      <figcaption><b>AuT 结构。</b>attention encoder-decoder：FBank（10 ms 帧移）经 4 个 Conv2D 下采样 16 倍，接 32 层自注意力得到 6.25 Hz 音频表示；8 层解码器（自注意力 + 交叉注意力）输出文本，用于训练编码器。层数读自原图。<span class="from">来源：论文图 3</span></figcaption>
+    </figure>
+    <ul class="prose">
+      <li>训练数据：4000 万小时音频-文本对，文本由 <em>Qwen3-ASR 生成</em><span class="src">§2.2</span>。</li>
+      <li>相对 Qwen3-Omni 的编码器，加入 20 多种语言的多语数据，中文:英文:多语 = 3.5 : 3.5 : 3<span class="src">§2.2</span>。</li>
+      <li>动态注意力窗口训练，兼顾实时 prefill 缓存与离线音频理解<span class="src">§2.2</span>。</li>
+    </ul>
+
+    <h3>时间怎么编码：TM-RoPE + 文本时间戳</h3>
+    <div class="prose">
+      <p>沿用 Qwen3-Omni 的 TM-RoPE：音频每 160 ms 一个时间 ID，视频帧的时间 ID 按真实时间戳动态调整到同样 160 ms 分辨率；各模态位置编号首尾相接，避免冲突<span class="src">§2.3</span>。</p>
+      <p>新增的是<em>显式文本时间戳</em>：每个视频或音视频时间片前加一个以秒为单位的格式化字符串；音频序列里在随机间隔插入时间戳<span class="src">§2.3 · §3</span>。论文给的两个理由：</p>
+      <ol>
+        <li>长视频下，绝对时间直接当位置 ID 会让 ID 过大、过稀，削弱长程时序建模；</li>
+        <li>这种方案要学好，通常需要跨不同帧率大规模、均匀分布的训练样本，<em>数据构建成本高</em>。</li>
+      </ol>
+      <p>代价是上下文略增<span class="src">§2.3</span>。图 2 里能看到形如下面的序列（摘自原图文字）：</p>
+      <pre class="ts">Please introduce this audio/video in a low voice. &lt;0.0 seconds&gt; [V][V][A] &lt;4.0 seconds&gt; [V][V][A] … &lt;600.0 seconds&gt; …</pre>
+      <p class="footnote">[V] / [A] 为本页简写，表示视觉 / 音频隐状态块；每段内具体排列以原图为准。</p>
+    </div>
+
+    <h3>Talker：音色 prompt + ARIA</h3>
+    <div class="prose">
+      <p>相对 Qwen3-Omni 的两处结构差异<span class="src">§2.4</span>：</p>
+      <ul>
+        <li><b>Talker 专用 system prompt</b> 指定目标音色，可含文字描述和 codec 序列，替代传统 speaker embedding，支持零样本音色克隆和可控生成。</li>
+        <li><b>ARIA（Adaptive Rate Interleave Alignment）</b>：把双通道生成统一成单通道。不依赖 MFA 强制对齐，也不用固定交错比；只要求生成序列的<em>任意前缀</em>，语音/文本 token 累计比不超过该条样本的全局比。天然支持“任意文本前缀 + 语音续写”。</li>
+      </ul>
+    </div>
+    <div class="card diagram wide">
+      <svg class="aria-svg" viewBox="0 0 760 210" role="img" aria-label="示意：Qwen3-Omni 双轨 Talker 输入与 Qwen3.5-Omni ARIA 单流交错的对比">
+        <text class="hd" x="0" y="18">Qwen3-Omni：双轨（dual-track）</text>
+        <text class="nt" x="0" y="44">文本轨</text>
+        <text class="nt" x="0" y="74">语音轨</text>
+        <g>
+          <rect class="tk" x="60" y="30" width="34" height="22" rx="4"/><text class="tt" x="77" y="45" text-anchor="middle">T</text>
+          <rect class="tk" x="100" y="30" width="34" height="22" rx="4"/><text class="tt" x="117" y="45" text-anchor="middle">T</text>
+          <rect class="tk" x="140" y="30" width="34" height="22" rx="4"/><text class="tt" x="157" y="45" text-anchor="middle">T</text>
+          <line class="rail" x1="180" y1="41" x2="420" y2="41"/>
+        </g>
+        <g>
+          <rect class="sp" x="60" y="60" width="34" height="22" rx="4"/><text class="st" x="77" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="100" y="60" width="34" height="22" rx="4"/><text class="st" x="117" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="140" y="60" width="34" height="22" rx="4"/><text class="st" x="157" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="180" y="60" width="34" height="22" rx="4"/><text class="st" x="197" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="220" y="60" width="34" height="22" rx="4"/><text class="st" x="237" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="260" y="60" width="34" height="22" rx="4"/><text class="st" x="277" y="75" text-anchor="middle">S</text>
+          <rect class="sp" x="300" y="60" width="34" height="22" rx="4"/><text class="st" x="317" y="75" text-anchor="middle">S</text>
+        </g>
+        <text class="nt" x="440" y="58">两条轨按各自速率推进；文本与语音 tokenizer</text>
+        <text class="nt" x="440" y="74">编码效率不同 → 跳字、读错、数字念混 §2.1</text>
+
+        <text class="hd" x="0" y="122">Qwen3.5-Omni：ARIA 单流交错</text>
+        <g>
+          <rect class="tk" x="60" y="134" width="34" height="22" rx="4"/><text class="tt" x="77" y="149" text-anchor="middle">T</text>
+          <rect class="sp" x="100" y="134" width="34" height="22" rx="4"/><text class="st" x="117" y="149" text-anchor="middle">S</text>
+          <rect class="sp" x="140" y="134" width="34" height="22" rx="4"/><text class="st" x="157" y="149" text-anchor="middle">S</text>
+          <rect class="tk" x="180" y="134" width="34" height="22" rx="4"/><text class="tt" x="197" y="149" text-anchor="middle">T</text>
+          <rect class="sp" x="220" y="134" width="34" height="22" rx="4"/><text class="st" x="237" y="149" text-anchor="middle">S</text>
+          <rect class="sp" x="260" y="134" width="34" height="22" rx="4"/><text class="st" x="277" y="149" text-anchor="middle">S</text>
+          <rect class="tk" x="300" y="134" width="34" height="22" rx="4"/><text class="tt" x="317" y="149" text-anchor="middle">T</text>
+          <rect class="sp" x="340" y="134" width="34" height="22" rx="4"/><text class="st" x="357" y="149" text-anchor="middle">S</text>
+          <rect class="sp" x="380" y="134" width="34" height="22" rx="4"/><text class="st" x="397" y="149" text-anchor="middle">S</text>
+        </g>
+        <text class="nt" x="440" y="142">约束：任意前缀 Σ语音 / Σ文本 ≤ 本条样本的</text>
+        <text class="nt" x="440" y="158">全局 语音/文本 比 §2.4</text>
+        <text class="nt" x="0" y="196">示意：T = 文本 token，S = 语音 token；交错节奏为虚构示例，原文未给出具体排布与比例。</text>
+      </svg>
+      <div class="cap">示意，非论文原图。仅表达“双轨 → 单流 + 前缀比约束”这一点。</div>
+    </div>
+
+    <details class="more wide">
+      <summary>流式与并发：表 2 理论首包延迟 <span class="hint">Flash vs Plus · 1 / 4 / 8 并发</span></summary>
+      <div class="body">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>指标（音频 / 视频输入）</th><th>Flash 1</th><th>Flash 4</th><th>Flash 8</th><th>Plus 1</th><th>Plus 4</th><th>Plus 8</th></tr></thead>
+            <tbody>
+              <tr><td>Thinker TTFT</td><td>80/255ms</td><td>86/446ms</td><td>103/765ms</td><td>162/377ms</td><td>183/907ms</td><td>260/1243ms</td></tr>
+              <tr><td>Talker TTFC</td><td>56/61ms</td><td>68/108ms</td><td>81/116ms</td><td>54/56ms</td><td>72/88ms</td><td>95/116ms</td></tr>
+              <tr><td>Thinker TPOP</td><td>5.6/5.9ms</td><td>8.2/9.2ms</td><td>9.6/15.8ms</td><td>17.4/18.5ms</td><td>25.6/26.9ms</td><td>33.3/40.2ms</td></tr>
+              <tr><td>Talker TPOP</td><td>14.2/14.2ms</td><td>16.9/17.0ms</td><td>20.5/20.6ms</td><td>14.9/14.9ms</td><td>21.0/21.3ms</td><td>25.8/27.1ms</td></tr>
+              <tr class="hl"><td>Overall Latency</td><td>235/426ms</td><td>298/891ms</td><td>352/1625ms</td><td>435/651ms</td><td>619/1515ms</td><td>955/1980ms</td></tr>
+              <tr><td>Thinker TPS</td><td>177/171</td><td>556/457</td><td>942/598</td><td>57/54</td><td>156/149</td><td>266/240</td></tr>
+              <tr><td>Talker TPS</td><td>70/70</td><td>237/235</td><td>389/388</td><td>67/67</td><td>191/189</td><td>320/296</td></tr>
+              <tr><td>Generation RTF</td><td>0.178</td><td>0.211</td><td>0.257</td><td>0.187</td><td>0.267</td><td>0.334</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="tbl-note">Codec Decode 3~5 ms。内部 vLLM，MTP 与 codec decoder 开 torch.compile + CUDA Graph。论文明确：Flash 与 Plus 部署资源和并行策略不同，<b>不宜横向比较</b>；ARIA 单流下 Overall Latency 不是各行相加<span class="src">表 2 · §2.5</span>。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- 04 数据 -->
+  <section class="sec" id="data">
+    <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：披露了什么、没披露什么</h2>
+      <p class="sec-intro">规模给得多，过滤和配比给得少。下面把每一份数据单列，没给的明确标 <span class="nd">原文未披露</span>。</p></div>
+
+    <h3>来源与模态</h3>
+    <div class="prose">
+      <ul>
+        <li>预训练覆盖 image-text、video-text、audio-text、video-audio、video-audio-text 和纯文本<span class="src">§3</span>。</li>
+        <li>从预训练早期就同时混入单模态和跨模态数据<span class="src">§3</span>；沿用 Qwen3-Omni，用更多样的自然语言 prompt 增强泛化与指令遵循<span class="src">§3</span>。</li>
+        <li>具体来源（公开集 / 爬取 / 授权 / 合成占比）<span class="nd">原文未披露</span>。</li>
+      </ul>
+    </div>
+
+    <h3>已披露规模</h3>
+    <div class="tbl-wrap wide">
+      <table class="idx-table">
+        <thead><tr><th>数据</th><th style="text-align:left">规模</th><th style="text-align:left">标注 / 生成方式</th><th style="text-align:left">来源</th></tr></thead>
+        <tbody>
+          <tr><td>音视频总量</td><td>&gt;1 亿小时</td><td>未说明</td><td>摘要 · §1</td></tr>
+          <tr><td>AuT 编码器训练</td><td>4000 万小时音频-文本对</td><td>文本由 Qwen3-ASR 生成（伪标注）；20+ 语言；中:英:多语 = 3.5:3.5:3</td><td>§2.2</td></tr>
+          <tr><td>S1 编码器对齐</td><td><span class="nd">原文未披露</span></td><td>“大量”音频-文本、图像-文本对</td><td>§3</td></tr>
+          <tr class="hl"><td>S2 通用预训练</td><td>约 4T tokens</td><td>文本 0.92T · 音频 1.99T · 图像 0.95T · 视频 0.14T · 音视频 0.29T</td><td>§3</td></tr>
+          <tr><td>S3 长序列</td><td><span class="nd">原文未披露</span></td><td>提高长音频、长视频占比；具体比例未给</td><td>§3</td></tr>
+          <tr><td>Thinker SFT / 蒸馏</td><td><span class="nd">原文未披露</span></td><td>ChatML 格式；文本 / 视觉 / 音频 / 混合模态对话；各领域教师模型生成</td><td>§4.1</td></tr>
+          <tr><td>Thinker OPD</td><td><span class="nd">原文未披露</span></td><td>音频-文本成对 query；文本条件下的回答作为音频条件的目标</td><td>§4.1</td></tr>
+          <tr><td>Interaction-Aligned RL</td><td><span class="nd">原文未披露</span></td><td>构造多轮交互轨迹；奖励围绕语种混切、人设一致、长上下文指令遵循</td><td>§4.1</td></tr>
+          <tr><td>Talker 通用预训练</td><td>&gt;2000 万小时</td><td>多语语音 + 多模态上下文；含指令式语音生成等任务</td><td>§4.2</td></tr>
+          <tr><td>Talker 长上下文 CPT</td><td><span class="nd">原文未披露</span></td><td>专门的 curation pipeline 做质量分层，只用高质量子集；由 Qwen3-Omni-Captioner 增强</td><td>§4.2</td></tr>
+          <tr><td>Talker DPO</td><td><span class="nd">原文未披露</span></td><td>基于人工标注的多语偏好对</td><td>§4.2</td></tr>
+          <tr><td>Talker 音色微调</td><td><span class="nd">原文未披露</span></td><td>轻量 speaker fine-tuning；仅单语数据</td><td>§4.2 · §5.2.4</td></tr>
+          <tr><td>视觉编码器数据</td><td><span class="nd">原文未披露</span></td><td>沿用 Qwen3.5 视觉编码器，图像 + 视频混合训练</td><td>§2.3</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>配比：只有两处给了数</h3>
+    <div class="grid2 wide">
+      <div class="card mod">
+        <h4>AuT 训练语种比 <span class="tag ok-tag">原文给出比例</span></h4>
+        <div class="ratio">
+          <div class="rlab"><span>中文 : 英文 : 多语 = 3.5 : 3.5 : 3</span><span class="src">§2.2</span></div>
+          <div class="rbar"><span class="a" style="width:35%">中 3.5</span><span class="b" style="width:35%">英 3.5</span><span class="c" style="width:30%">多语 3</span></div>
+        </div>
+        <p class="footnote">4000 万小时总量下各语种小时数未给出；“多语”含 20 多种语言，内部比例未披露。</p>
+      </div>
+    </div>
+    <div class="card mod wide" style="max-width:820px">
+      <h4>S2 各模态 token 数 <span class="tag ok-tag">原文给出绝对量</span></h4>
+      <svg class="chart" viewBox="0 0 640 206" role="img" aria-label="S2 预训练各模态 token 数（万亿），横轴从 0 起">
+<text class="ch-t" x="0" y="14">S2 各模态 token 数（单位：万亿 / T，横轴从 0 起）</text>
+<line x1="170" y1="26" x2="170" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="170" y="198" text-anchor="middle">0T</text>
+<line x1="260.0" y1="26" x2="260.0" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="260.0" y="198" text-anchor="middle">0.5T</text>
+<line x1="350.0" y1="26" x2="350.0" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="350.0" y="198" text-anchor="middle">1T</text>
+<line x1="440.0" y1="26" x2="440.0" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="440.0" y="198" text-anchor="middle">1.5T</text>
+<line x1="530.0" y1="26" x2="530.0" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="530.0" y="198" text-anchor="middle">2T</text>
+<line x1="620.0" y1="26" x2="620.0" y2="184" stroke="var(--line)"/>
+<text class="ch-ax" x="620.0" y="198" text-anchor="middle">2.5T</text>
+<text class="ch-lbl" x="162" y="45" text-anchor="end">音频 audio</text>
+<rect class="bar-q" x="170" y="33" width="358.2" height="16" rx="3"/>
+<text class="ch-val" x="534.2" y="45">1.99T</text>
+<text class="ch-lbl" x="162" y="75" text-anchor="end">图像 image</text>
+<rect class="bar-qi" x="170" y="63" width="171.0" height="16" rx="3"/>
+<text class="ch-val" x="347.0" y="75">0.95T</text>
+<text class="ch-lbl" x="162" y="105" text-anchor="end">文本 text</text>
+<rect class="bar-qi" x="170" y="93" width="165.6" height="16" rx="3"/>
+<text class="ch-val" x="341.6" y="105">0.92T</text>
+<text class="ch-lbl" x="162" y="135" text-anchor="end">视频-音频 video-audio</text>
+<rect class="bar-qi" x="170" y="123" width="52.2" height="16" rx="3"/>
+<text class="ch-val" x="228.2" y="135">0.29T</text>
+<text class="ch-lbl" x="162" y="165" text-anchor="end">视频 video</text>
+<rect class="bar-qi" x="170" y="153" width="25.2" height="16" rx="3"/>
+<text class="ch-val" x="201.2" y="165">0.14T</text>
+<line class="axis" x1="170" y1="26" x2="170" y2="184"/>
+</svg>
+      <p class="footnote">五项相加为 4.29T<span class="src calc">推算</span>，原文称“approximately 4 trillion”。图像-文本、视频-文本等是否计入“图像 / 视频”口径未说明。这是绝对量，不是原文给出的百分比。</p>
+    </div>
+
+    <h3>清洗、过滤与合成</h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4>伪标注当监督 <span class="tag">AuT</span></h4><p>AuT 的 4000 万小时文本标签来自上一代专用模型 Qwen3-ASR<span class="src">§2.2</span>。是否按置信度过滤<span class="nd">原文未披露</span>。</p></div>
+      <div class="card mod"><h4>质量分层 + 高质量 CPT <span class="tag">Talker</span></h4><p>先用专门 pipeline 分层，再只在高质量子集上继续预训练，并用 Qwen3-Omni-Captioner 增强，目的是压掉噪声数据带来的幻觉、提升自然度<span class="src">§4.2</span>。分层标准、阈值、保留比例<span class="nd">原文未披露</span>。</p></div>
+      <div class="card mod"><h4>教师合成数据 <span class="tag">Thinker</span></h4><p>从 Qwen3.5 base 分别 SFT + RL 出文本（agent / code / 推理）、视觉、音频领域教师，由教师生成领域数据再蒸馏进单一模型<span class="src">§4.1</span>。</p></div>
+      <div class="card mod"><h4>跨条件自蒸馏 <span class="tag">Thinker</span></h4><p>同一 query 的文本版回答当作音频版的训练目标，缩小“语音问”与“文字问”的质量差<span class="src">§4.1</span>。</p></div>
+    </div>
+
+    <h3>caption / 标注方式</h3>
+    <div class="prose">
+      <ul>
+        <li><b>ASR 伪标注</b>：Qwen3-ASR → AuT 训练文本<span class="src">§2.2</span>。</li>
+        <li><b>Captioner 增强</b>：Qwen3-Omni-Captioner 用于 Talker 长上下文 CPT 阶段的数据增强<span class="src">§4.2</span>；具体是补描述、做过滤还是生成条件文本，原文没细说。</li>
+        <li><b>时间戳作为文本</b>：时间信息以 <code>&lt;x.x seconds&gt;</code> 字符串形式写进训练序列<span class="src">§2.3 · 图 2</span>。</li>
+        <li><b>可控音视频 caption</b>：模型能输出剧本级结构化描述，含自动分段、时间戳、角色及其与音频的关系<span class="src">§1</span>。但这项能力的训练数据、schema、标注流程<span class="nd">原文未披露</span>，只有 Omni-Cloze 一个分数。</li>
+      </ul>
+    </div>
+
+    <details class="more wide">
+      <summary>表 3：语言与方言覆盖（Plus） <span class="hint">201 / 113 / 36</span></summary>
+      <div class="body">
+        <div class="tbl-wrap">
+          <table class="idx-table">
+            <thead><tr><th>模态</th><th style="text-align:left">种类数</th><th style="text-align:left">构成</th></tr></thead>
+            <tbody>
+              <tr><td>文本</td><td>201</td><td>同 Qwen3.5</td></tr>
+              <tr><td>语音输入</td><td>113</td><td>74 种语言 + 39 种汉语方言（含粤语、上海话、四川话、客家话、闽南语等）</td></tr>
+              <tr><td>语音输出</td><td>36</td><td>29 种语言 + 7 种方言（四川话、北京话、天津话、南京话、陕西话、粤语、闽南语）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- 05 训练 -->
+  <section class="sec" id="train">
+    <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2>
+      <p class="sec-intro">学习率、batch、步数、优化器、MoE 专家数等超参<span class="nd">原文未披露</span>。下面只列原文写明的阶段与条件。</p></div>
+
+    <h3>预训练：三阶段 <span class="src">§3</span></h3>
+    <div class="flow f3 wide">
+      <div class="card stage"><span class="sid">S1</span><h4>Encoder Alignment</h4>
+        <dl><dt>LLM</dt><dd>冻结，Qwen3.5 初始化</dd><dt>视觉</dt><dd>Qwen3.5 编码器</dd><dt>音频</dt><dd>AuT 初始化</dd><dt>顺序</dt><dd>先训 adapter，再训编码器</dd></dl>
+        <p class="footnote">两个编码器在固定 LLM 上分别训练。</p></div>
+      <div class="card stage"><span class="sid">S2</span><h4>General</h4>
+        <dl><dt>参数</dt><dd>全部解冻</dd><dt>数据</dt><dd>≈4T tokens</dd><dt>序列长</dt><dd>32,768</dd></dl>
+        <div class="tokbar"><i style="width:12.5%"></i></div>
+        <p class="footnote">条：32,768 / 262,144 = 12.5%<span class="src calc">推算</span></p></div>
+      <div class="card stage"><span class="sid">S3</span><h4>Long Context</h4>
+        <dl><dt>序列长</dt><dd>262,144</dd><dt>数据</dt><dd>加大长音频 / 长视频占比</dd><dt>规模</dt><dd><span class="nd">未披露</span></dd></dl>
+        <div class="tokbar"><i style="width:100%"></i></div>
+        <p class="footnote">论文称长序列理解“显著提升”，未给数字。</p></div>
+    </div>
+
+    <h3>Thinker 后训练：三阶段 <span class="src">§4.1</span></h3>
+    <div class="post-flow wide">
+      <div class="card stage"><span class="sid">P1</span><h4>Specialist Distillation</h4>
+        <ul><li>从 Qwen3.5 base 出发，独立 SFT + RL 出各领域教师</li><li>文本（agent / code / 推理）、视觉、音频</li><li>教师生成领域数据 → 蒸馏进一个统一模型</li></ul></div>
+      <div class="card stage"><span class="sid">P2</span><h4>On-Policy Distillation（OPD）</h4>
+        <ul><li>问题：语音提问的回答质量明显不如文字提问</li><li>同一 query：文本条件下的回答 → 音频条件的目标</li><li>目标：模态一致的生成</li></ul></div>
+      <div class="card stage"><span class="sid">P3</span><h4>Interaction-Aligned RL</h4>
+        <ul><li>针对多轮中的语种混切、人设漂移、长上下文指令遵循下降</li><li>构造多轮交互轨迹，围绕体验目标设计奖励</li><li>奖励形式、算法<span class="nd">未披露</span></li></ul></div>
+    </div>
+
+    <h3>Talker：四阶段 <span class="src">§4.2</span></h3>
+    <div class="flow wide">
+      <div class="card stage"><span class="sid">T1</span><h4>General</h4><dl><dt>数据</dt><dd>&gt;2000 万小时</dd><dt>任务</dt><dd>含指令式语音生成</dd></dl></div>
+      <div class="card stage"><span class="sid">T2</span><h4>Long-Context CPT</h4><dl><dt>数据</dt><dd>质量分层后的高质量子集</dd><dt>增强</dt><dd>Qwen3-Omni-Captioner</dd><dt>上下文</dt><dd>64k</dd></dl></div>
+      <div class="card stage"><span class="sid">T3</span><h4>RL</h4><dl><dt>偏好</dt><dd>DPO，人工标注多语偏好对</dd><dt>规则奖励</dt><dd>GSPO</dd></dl></div>
+      <div class="card stage"><span class="sid">T4</span><h4>Speaker FT</h4><dl><dt>方式</dt><dd>轻量音色微调</dd><dt>数据</dt><dd>仅单语 <span class="src">§5.2.4</span></dd></dl></div>
+    </div>
+    <p class="footnote wide">Talker 全程使用 ChatML 格式，与 Thinker 保持一致，也便于音色克隆<span class="src">§4.2</span>。</p>
+  </section>
+
+  <!-- 06 评测 -->
+  <section class="sec" id="eval">
+    <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+      <p class="sec-intro">两组对比对象：文本 / 视觉对比同尺寸的 <b>Qwen3.5-Plus-Instruct</b>（看“有没有退化”）；音频 / 音视频对比 <b>Gemini-3.1 Pro</b>；语音生成对比专用 TTS 与商业 API。</p></div>
+
+    <h3>音视频 → 文本（表 7）</h3>
+    <div class="card diagram wide">
+      <svg class="chart" viewBox="0 0 640 462" role="img" aria-label="表 7 音视频理解：Gemini-3.1 Pro、Qwen3.5-Omni-Flash、Qwen3.5-Omni-Plus 对比，横轴从 0 起">
+<text class="ch-t" x="0" y="14">表 7 · 音视频 → 文本（分数越高越好，横轴从 0 起）</text>
+<line x1="150.0" y1="28" x2="150.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="150.0" y="452" text-anchor="middle">0</text>
+<line x1="230.0" y1="28" x2="230.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="230.0" y="452" text-anchor="middle">20</text>
+<line x1="310.0" y1="28" x2="310.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="310.0" y="452" text-anchor="middle">40</text>
+<line x1="390.0" y1="28" x2="390.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="390.0" y="452" text-anchor="middle">60</text>
+<line x1="470.0" y1="28" x2="470.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="470.0" y="452" text-anchor="middle">80</text>
+<line x1="550.0" y1="28" x2="550.0" y2="438" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="550.0" y="452" text-anchor="middle">100</text>
+<text class="ch-lbl" x="142" y="56" text-anchor="end">DailyOmni</text>
+<rect class="bar-q" x="150" y="37" width="338.4" height="11" rx="2"/>
+<text class="ch-val" x="493.4" y="46.5">84.6</text>
+<rect class="bar-qi" x="150" y="50" width="327.2" height="11" rx="2"/>
+<text class="ch-val" x="482.2" y="59.5">81.8</text>
+<rect class="bar-o" x="150" y="63" width="330.8" height="11" rx="2"/>
+<text class="ch-val" x="485.8" y="72.5">82.7</text>
+<text class="ch-lbl" x="142" y="106" text-anchor="end">WorldSense</text>
+<rect class="bar-q" x="150" y="87" width="251.2" height="11" rx="2"/>
+<text class="ch-val" x="406.2" y="96.5">62.8</text>
+<rect class="bar-qi" x="150" y="100" width="231.6" height="11" rx="2"/>
+<text class="ch-val" x="386.6" y="109.5">57.9</text>
+<rect class="bar-o" x="150" y="113" width="262.0" height="11" rx="2"/>
+<text class="ch-val" x="417.0" y="122.5">65.5</text>
+<text class="ch-lbl" x="142" y="156" text-anchor="end">AVUT</text>
+<rect class="bar-q" x="150" y="137" width="340.0" height="11" rx="2"/>
+<text class="ch-val" x="495.0" y="146.5">85.0</text>
+<rect class="bar-qi" x="150" y="150" width="325.6" height="11" rx="2"/>
+<text class="ch-val" x="480.6" y="159.5">81.4</text>
+<rect class="bar-o" x="150" y="163" width="342.4" height="11" rx="2"/>
+<text class="ch-val" x="497.4" y="172.5">85.6</text>
+<text class="ch-lbl" x="142" y="206" text-anchor="end">AV-SpeakerBench</text>
+<rect class="bar-q" x="150" y="187" width="285.2" height="11" rx="2"/>
+<text class="ch-val" x="440.2" y="196.5">71.3</text>
+<rect class="bar-qi" x="150" y="200" width="260.8" height="11" rx="2"/>
+<text class="ch-val" x="415.8" y="209.5">65.2</text>
+<rect class="bar-o" x="150" y="213" width="300.4" height="11" rx="2"/>
+<text class="ch-val" x="455.4" y="222.5">75.1</text>
+<text class="ch-lbl" x="142" y="256" text-anchor="end">VideoMME w/ audio ᵃ</text>
+<rect class="bar-q" x="150" y="237" width="334.8" height="11" rx="2"/>
+<text class="ch-val" x="489.8" y="246.5">83.7</text>
+<rect class="bar-qi" x="150" y="250" width="317.2" height="11" rx="2"/>
+<text class="ch-val" x="472.2" y="259.5">79.3</text>
+<rect class="bar-o" x="150" y="263" width="356.0" height="11" rx="2"/>
+<text class="ch-val" x="511.0" y="272.5">89.0</text>
+<text class="ch-lbl" x="142" y="306" text-anchor="end">Qualcomm IVD</text>
+<rect class="bar-q" x="150" y="287" width="274.0" height="11" rx="2"/>
+<text class="ch-val" x="429.0" y="296.5">68.5</text>
+<rect class="bar-qi" x="150" y="300" width="265.2" height="11" rx="2"/>
+<text class="ch-val" x="420.2" y="309.5">66.3</text>
+<rect class="bar-o" x="150" y="313" width="264.8" height="11" rx="2"/>
+<text class="ch-val" x="419.8" y="322.5">66.2</text>
+<text class="ch-lbl" x="142" y="356" text-anchor="end">Omni-Cloze</text>
+<rect class="bar-q" x="150" y="337" width="259.2" height="11" rx="2"/>
+<text class="ch-val" x="414.2" y="346.5">64.8</text>
+<rect class="bar-qi" x="150" y="350" width="252.0" height="11" rx="2"/>
+<text class="ch-val" x="407.0" y="359.5">63.0</text>
+<rect class="bar-o" x="150" y="363" width="228.8" height="11" rx="2"/>
+<text class="ch-val" x="383.8" y="372.5">57.2</text>
+<text class="ch-lbl" x="142" y="406" text-anchor="end">OmniGAIA ᵇ</text>
+<rect class="bar-q" x="150" y="387" width="228.8" height="11" rx="2"/>
+<text class="ch-val" x="383.8" y="396.5">57.2</text>
+<rect class="bar-qi" x="150" y="400" width="135.6" height="11" rx="2"/>
+<text class="ch-val" x="290.6" y="409.5">33.9</text>
+<rect class="bar-o" x="150" y="413" width="275.6" height="11" rx="2"/>
+<text class="ch-val" x="430.6" y="422.5">68.9</text>
+<line class="axis" x1="150" y1="28" x2="150" y2="438"/>
+</svg>
+      <div class="chart-legend"><span class="l1">Qwen3.5-Omni-Plus</span><span class="l2">Qwen3.5-Omni-Flash</span><span class="l3">Gemini-3.1 Pro</span></div>
+      <div class="cap">ᵃ VideoMME 以 <code>use_audio_in_video=True</code> 评测。ᵇ OmniGAIA 不加 thinking prompt、不要求 &lt;answer&gt; 格式，全部用 DeepSeek-V3.2-Thinking 作评判<span class="src">表 7 脚注</span>。Plus 领先：DailyOmni、Qualcomm IVD、Omni-Cloze；落后：WorldSense、AVUT（-0.6）、AV-SpeakerBench、VideoMME w/ audio、OmniGAIA。</div>
+    </div>
+
+    <h3>音频 → 文本（表 5 节选）</h3>
+    <div class="tbl-wrap wide">
+      <table>
+        <thead><tr><th>基准</th><th>Gemini-3.1 Pro</th><th>Omni-Flash</th><th class="q">Omni-Plus</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="4">Audio Understanding ↑</td></tr>
+          <tr><td>MMAU</td><td>81.1</td><td>80.4</td><td class="q best">82.2</td></tr>
+          <tr><td>MMAR</td><td class="best">83.7</td><td>74.0</td><td class="q">80.0</td></tr>
+          <tr><td>MMSU</td><td>81.3</td><td>72.2</td><td class="q best">82.8</td></tr>
+          <tr><td>RUL-MuchoMusic</td><td>59.6</td><td>60.5</td><td class="q best">72.4</td></tr>
+          <tr><td>SongFormBench-HarmonixSet<sup>a</sup> (acc|hr.5f|hr3f)</td><td>75.6 | 46.8 | 77.9</td><td>80.6 | 67.8 | 83.4</td><td class="q">81.1 | 72.9 | 85.3</td></tr>
+          <tr class="grp"><td colspan="4">Dialogue ↑</td></tr>
+          <tr><td>VoiceBench</td><td>88.9</td><td>87.8</td><td class="q best">93.1</td></tr>
+          <tr><td>URO-Bench-pro<sup>b</sup> (U|R|O)</td><td>69.1 | 84.0 | 99.2</td><td>64.1 | 83.8 | 98.7</td><td class="q">66.3 | 86.3 | 99.8</td></tr>
+          <tr><td>SpeechRole</td><td class="best">124.2</td><td>119.8</td><td class="q">123.5</td></tr>
+          <tr><td>WildSpeech-Bench</td><td class="best">76.3</td><td>72.2</td><td class="q">75.4</td></tr>
+          <tr class="grp"><td colspan="4">S2TT ↑</td></tr>
+          <tr><td>Fleurs xx↔zh/en (top59)<sup>c</sup></td><td>32.1</td><td>29.4</td><td class="q best">32.8</td></tr>
+          <tr class="grp"><td colspan="4">ASR（WER ↓）</td></tr>
+          <tr><td>Fleurs (top60)</td><td>7.32</td><td>10.75</td><td class="q best">6.55</td></tr>
+          <tr><td>Librispeech (clean|other)</td><td>3.36 | 4.41</td><td>1.30 | 2.43</td><td class="q">1.11 | 2.23</td></tr>
+          <tr><td>Kespeech</td><td>23.67</td><td>4.47</td><td class="q best">3.46</td></tr>
+          <tr><td>Opencpop</td><td>6.83</td><td class="best">1.11</td><td class="q">1.49</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="keybox"><span class="k-best">该行最好</span><span class="k-q">Qwen3.5-Omni-Plus 列</span></div>
+    <p class="tbl-note">脚注（表 5 原文）：<b>a</b> SongFormBench 用统一 prompt 规定类 SRT 时间戳输出格式和封闭词表（SongForm-HX-8Class）；<b>b</b> URO-Bench 取 pro 赛道，U = 理解、R = 推理、O = 口语对话；<b>c</b> Fleurs S2TT 用 top59 语言，比 ASR 的 top60 少 Afrikaans（S2TT 测试集不含）；<b>d</b> MIR-1K 转写统一转为简体中文。MMAR 原文称“comparable”，实际 Plus 低 3.7<span class="src calc">推算</span>。</p>
+
+    <details class="more wide">
+      <summary>表 5 其余行 <span class="hint">SongForm-CN、S2TT 分项、其余 ASR</span></summary>
+      <div class="body"><div class="tbl-wrap">
+        <table>
+          <thead><tr><th>基准</th><th>Gemini-3.1 Pro</th><th>Omni-Flash</th><th class="q">Omni-Plus</th></tr></thead>
+          <tbody>
+            <tr><td>SongFormBench-CN<sup>a</sup> (acc|hr.5f|hr3f)</td><td>78.1 | 43.2 | 71.9</td><td>86.7 | 66.4 | 84.6</td><td class="q">87.1 | 65.7 | 84.2</td></tr>
+            <tr><td>Fleurs xx↔zh (top59)<sup>c</sup></td><td>29.5</td><td>26.9</td><td class="q">30.2</td></tr>
+            <tr><td>Fleurs xx↔en (top59)<sup>c</sup></td><td>34.6</td><td>32.0</td><td class="q">35.4</td></tr>
+            <tr><td>CV15 (zh|yue|zh-tw)</td><td>8.59 | 13.40 | 6.78</td><td>4.25 | 3.45 | 2.68</td><td class="q">3.46 | 1.95 | 2.27</td></tr>
+            <tr><td>CV15 (en)</td><td>8.73</td><td>5.90</td><td class="q">4.83</td></tr>
+            <tr><td>Wenetspeech (net|meeting)</td><td>11.53 | 14.21</td><td>4.41 | 5.51</td><td class="q">4.30 | 5.84</td></tr>
+            <tr><td>MIR-1K (vocal-only)<sup>d</sup></td><td>8.76</td><td>4.94</td><td class="q">4.56</td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </details>
+
+    <h3>文本 / 视觉：有没有退化（表 4、表 6）</h3>
+    <div class="wide">
+      <div class="card diagram" style="max-width:860px">
+        <svg class="chart" viewBox="0 0 640 388" role="img" aria-label="Qwen3.5-Omni-Plus 减 Qwen3.5-Plus-Instruct 的分差">
+<text class="ch-t" x="0" y="14">Omni-Plus − Qwen3.5-Plus-Instruct（分差，0 为同分）</text>
+<line x1="190" y1="28" x2="190" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="190" y="380" text-anchor="middle">-6</text>
+<line x1="250" y1="28" x2="250" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="250" y="380" text-anchor="middle">-4</text>
+<line x1="310" y1="28" x2="310" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="310" y="380" text-anchor="middle">-2</text>
+<line x1="370" y1="28" x2="370" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="370" y="380" text-anchor="middle">0</text>
+<line x1="430" y1="28" x2="430" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="430" y="380" text-anchor="middle">+2</text>
+<line x1="490" y1="28" x2="490" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="490" y="380" text-anchor="middle">+4</text>
+<line x1="550" y1="28" x2="550" y2="366" stroke="var(--line)"/>
+<text class="ch-ax" x="550" y="380" text-anchor="middle">+6</text>
+<text class="ch-lbl" x="182" y="46" text-anchor="end">AA-LCR <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-neg" x="220.0" y="36" width="150.0" height="13" rx="2"/>
+<text class="ch-val" x="215.0" y="46.5" text-anchor="end">-5.0</text>
+<text class="ch-lbl" x="182" y="68" text-anchor="end">IMOAnswerBench <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-neg" x="286.0" y="58" width="84.0" height="13" rx="2"/>
+<text class="ch-val" x="281.0" y="68.5" text-anchor="end">-2.8</text>
+<text class="ch-lbl" x="182" y="90" text-anchor="end">BFCL-V4 <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-neg" x="286.0" y="80" width="84.0" height="13" rx="2"/>
+<text class="ch-val" x="281.0" y="90.5" text-anchor="end">-2.8</text>
+<text class="ch-lbl" x="182" y="112" text-anchor="end">GPQA <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-neg" x="310.0" y="102" width="60.0" height="13" rx="2"/>
+<text class="ch-val" x="305.0" y="112.5" text-anchor="end">-2.0</text>
+<text class="ch-lbl" x="182" y="134" text-anchor="end">MMLU-Pro <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-neg" x="343.0" y="124" width="27.0" height="13" rx="2"/>
+<text class="ch-val" x="338.0" y="134.5" text-anchor="end">-0.9</text>
+<text class="ch-lbl" x="182" y="156" text-anchor="end">IFBench <tspan class="ch-ax">表 4</tspan></text>
+<rect class="d-pos" x="370.0" y="146" width="45.0" height="13" rx="2"/>
+<text class="ch-val" x="420.0" y="156.5" text-anchor="start">+1.5</text>
+<text class="ch-lbl" x="182" y="178" text-anchor="end">MMLongBench-Doc <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-neg" x="304.0" y="168" width="66.0" height="13" rx="2"/>
+<text class="ch-val" x="299.0" y="178.5" text-anchor="end">-2.2</text>
+<text class="ch-lbl" x="182" y="200" text-anchor="end">CharXiv (RQ) <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-neg" x="319.0" y="190" width="51.0" height="13" rx="2"/>
+<text class="ch-val" x="314.0" y="200.5" text-anchor="end">-1.7</text>
+<text class="ch-lbl" x="182" y="222" text-anchor="end">MMMU <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-neg" x="343.0" y="212" width="27.0" height="13" rx="2"/>
+<text class="ch-val" x="338.0" y="222.5" text-anchor="end">-0.9</text>
+<text class="ch-lbl" x="182" y="244" text-anchor="end">OCRBench <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-neg" x="367.0" y="234" width="3.0" height="13" rx="2"/>
+<text class="ch-val" x="362.0" y="244.5" text-anchor="end">-0.1</text>
+<text class="ch-lbl" x="182" y="266" text-anchor="end">EmbSpatialBench <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-pos" x="370.0" y="256" width="60.0" height="13" rx="2"/>
+<text class="ch-val" x="435.0" y="266.5" text-anchor="start">+2.0</text>
+<text class="ch-lbl" x="182" y="288" text-anchor="end">MVBench <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-pos" x="370.0" y="278" width="69.0" height="13" rx="2"/>
+<text class="ch-val" x="444.0" y="288.5" text-anchor="start">+2.3</text>
+<text class="ch-lbl" x="182" y="310" text-anchor="end">LVBench <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-pos" x="370.0" y="300" width="78.0" height="13" rx="2"/>
+<text class="ch-val" x="453.0" y="310.5" text-anchor="start">+2.6</text>
+<text class="ch-lbl" x="182" y="332" text-anchor="end">MME-VideoOCR <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-pos" x="370.0" y="322" width="84.0" height="13" rx="2"/>
+<text class="ch-val" x="459.0" y="332.5" text-anchor="start">+2.8</text>
+<text class="ch-lbl" x="182" y="354" text-anchor="end">RealWorldQA <tspan class="ch-ax">表 6</tspan></text>
+<rect class="d-pos" x="370.0" y="344" width="150.0" height="13" rx="2"/>
+<text class="ch-val" x="525.0" y="354.5" text-anchor="start">+5.0</text>
+<line x1="370" y1="26" x2="370" y2="366" stroke="var(--ink)" stroke-width="1.4"/>
+</svg>
+        <div class="cap">分差 = Omni-Plus − Qwen3.5-Plus-Instruct<span class="src calc">推算</span>，原始分数来自表 4 / 表 6。选取了跌幅最大和涨幅最大的若干项。</div>
+      </div>
+      <div class="card mod">
+        <h4>怎么读</h4>
+        <ul>
+          <li><b>文本</b>：14 项里只有 IFBench 高于基线（52.6 vs 51.1），IFEval 持平，其余低 0.1–5.0；最大是 AA-LCR 57.0 vs 62.0<span class="src">表 4</span>。论文把 IFBench 的提升归功于 OPD 和交互 RL<span class="src">§5.1.1</span>，但无消融。</li>
+          <li><b>视觉</b>：静态图像多数低 0.1–2.2；<em>视频六项全部高于基线</em>，如 LVBench 71.2 vs 68.6、MME-VideoOCR 77.0 vs 74.2；RealWorldQA 84.1 vs 79.1<span class="src">表 6</span>。论文归因于音视频联合训练<span class="src">§5.1.3</span>。</li>
+          <li><b>Flash</b> 与基线差距大得多，如 HMMT Nov 25 59.0 vs 86.2<span class="src">表 4</span>，但两者规模不同，不能当“退化”读。</li>
+        </ul>
+      </div>
+    </div>
+
+    <details class="more wide">
+      <summary>表 6 视觉 → 文本 全表 <span class="hint">30 项</span></summary>
+      <div class="body"><div class="tbl-wrap tall">
+        <table>
+          <thead><tr><th>基准</th><th>Qwen3.5-Plus-Instruct</th><th>Omni-Flash</th><th class="q">Omni-Plus</th></tr></thead>
+          <tbody>
+            <tr class="grp"><td colspan="4">STEM and Puzzle</td></tr>
+            <tr><td>MMMU</td><td>81.0</td><td>76.9</td><td class="q">80.1</td></tr>
+            <tr><td>MMMU-Pro</td><td>73.8</td><td>68.2</td><td class="q">73.9</td></tr>
+            <tr><td>MathVision</td><td>73.6</td><td>65.4</td><td class="q">73.0</td></tr>
+            <tr><td>Mathvista (mini)</td><td>86.9</td><td>82.9</td><td class="q">86.1</td></tr>
+            <tr><td>DynaMath</td><td>84.2</td><td>79.3</td><td class="q">83.8</td></tr>
+            <tr><td>ZEROBench</td><td>6</td><td>1</td><td class="q">5</td></tr>
+            <tr><td>ZEROBench_sub</td><td>31.1</td><td>26.0</td><td class="q">34.4</td></tr>
+            <tr class="grp"><td colspan="4">General VQA</td></tr>
+            <tr><td>RealWorldQA</td><td>79.1</td><td>77.5</td><td class="q">84.1</td></tr>
+            <tr><td>MMStar</td><td>80.3</td><td>75.7</td><td class="q">79.4</td></tr>
+            <tr><td>MMBenchEN-DEV-v1.1</td><td>93.8</td><td>88.8</td><td class="q">92.8</td></tr>
+            <tr><td>SimpleVQA</td><td>66.1</td><td>54.4</td><td class="q">65.3</td></tr>
+            <tr class="grp"><td colspan="4">Text Recognition and Document Understanding</td></tr>
+            <tr><td>CharXiv (RQ)</td><td>74.2</td><td>64.4</td><td class="q">72.5</td></tr>
+            <tr><td>CC-OCR</td><td>83.0</td><td>80.8</td><td class="q">83.4</td></tr>
+            <tr><td>AI2D_TEST</td><td>92.1</td><td>89.0</td><td class="q">91.2</td></tr>
+            <tr><td>MMLongBench-Doc</td><td>59.7</td><td>53.6</td><td class="q">57.5</td></tr>
+            <tr><td>OCRBench</td><td>91.4</td><td>89.1</td><td class="q">91.3</td></tr>
+            <tr class="grp"><td colspan="4">Spatial Intelligence</td></tr>
+            <tr><td>ERQA</td><td>53.8</td><td>50.0</td><td class="q">54.8</td></tr>
+            <tr><td>CountBench</td><td>95.1</td><td>88.2</td><td class="q">95.1</td></tr>
+            <tr><td>RefCOCO (avg)</td><td>95.2</td><td>92.6</td><td class="q">95.0</td></tr>
+            <tr><td>ODInW13</td><td>50.3</td><td>46.8</td><td class="q">49.5</td></tr>
+            <tr><td>EmbSpatialBench</td><td>83.4</td><td>82.7</td><td class="q">85.4</td></tr>
+            <tr class="grp"><td colspan="4">Video Understanding</td></tr>
+            <tr><td>VideoMME (w/o sub.)</td><td>81.0</td><td>77.0</td><td class="q">81.9</td></tr>
+            <tr><td>MLVU (M-Avg)</td><td>85.1</td><td>81.9</td><td class="q">86.8</td></tr>
+            <tr><td>MVBench</td><td>76.7</td><td>70.8</td><td class="q">79.0</td></tr>
+            <tr><td>LVBench</td><td>68.6</td><td>65.7</td><td class="q">71.2</td></tr>
+            <tr><td>MMVU</td><td>67.1</td><td>62.7</td><td class="q">67.5</td></tr>
+            <tr><td>MME-VideoOCR</td><td>74.2</td><td>70.5</td><td class="q">77.0</td></tr>
+            <tr class="grp"><td colspan="4">Medical VQA</td></tr>
+            <tr><td>SLAKE</td><td>82.8</td><td>73.1</td><td class="q">84.7</td></tr>
+            <tr><td>PMC-VQA</td><td>62.4</td><td>58.7</td><td class="q">62.7</td></tr>
+            <tr><td>MedXpertQA-MM</td><td>55.3</td><td>44.8</td><td class="q">54.7</td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </details>
+
+    <details class="more wide">
+      <summary>表 4 文本 → 文本 全表 <span class="hint">14 项</span></summary>
+      <div class="body"><div class="tbl-wrap">
+        <table>
+          <thead><tr><th>基准</th><th>Qwen3.5-Plus-Instruct</th><th>Omni-Flash</th><th class="q">Omni-Plus</th></tr></thead>
+          <tbody>
+            <tr><td>MMLU-Pro</td><td>86.8</td><td>79.9</td><td class="q">85.9</td></tr>
+            <tr><td>MMLU-Redux</td><td>94.3</td><td>90.0</td><td class="q">94.2</td></tr>
+            <tr><td>SuperGPQA</td><td>67.4</td><td>54.9</td><td class="q">66.4</td></tr>
+            <tr><td>C-Eval</td><td>92.3</td><td>86.0</td><td class="q">92.0</td></tr>
+            <tr><td>IFEval</td><td>89.7</td><td>85.2</td><td class="q">89.7</td></tr>
+            <tr><td>IFBench</td><td>51.1</td><td>38.4</td><td class="q">52.6</td></tr>
+            <tr><td>AA-LCR</td><td>62.0</td><td>46.0</td><td class="q">57.0</td></tr>
+            <tr><td>LongBench v2</td><td>60.2</td><td>46.4</td><td class="q">59.6</td></tr>
+            <tr><td>GPQA</td><td>85.9</td><td>76.4</td><td class="q">83.9</td></tr>
+            <tr><td>LiveCodeBench v6</td><td>67.1</td><td>56.6</td><td class="q">65.6</td></tr>
+            <tr><td>HMMT Nov 25</td><td>86.2</td><td>59.0</td><td class="q">84.4</td></tr>
+            <tr><td>IMOAnswerBench</td><td>68.3</td><td>51.5</td><td class="q">65.5</td></tr>
+            <tr><td>BFCL-V4</td><td>66.1</td><td>55.3</td><td class="q">63.3</td></tr>
+            <tr><td>TAU2Bench</td><td>82.7</td><td>78.0</td><td class="q">81.0</td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </details>
+
+    <h3>X → 语音（表 8–12）</h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4>零样本 TTS · SEED <span class="tag">表 8</span></h4>
+        <p>Plus：test-zh 0.99、test-en <b>1.26</b>（表内最低）。test-zh 最低是 CosyVoice 3 的 0.71。前代 Qwen3-Omni-30B-A3B 为 1.07 | 1.39<span class="src">表 8</span>。</p></div>
+      <div class="card mod"><h4>多语 TTS <span class="tag">表 9 · 表 10</span></h4>
+        <p>论文称 29 种语言中 22 种 WER 最低<span class="src">§5.2.2</span>。但表 9 只有 20 种语言有 MiniMax / ElevenLabs 对比，Plus 在其中 13 种最低<span class="src calc">推算</span>；另外 9 种来自内部集（表 10），只和 Ground Truth 比。WER 用 GPT-4o-transcribe-2025-03-20 转写<span class="src">§5.2.2</span>。</p></div>
+      <div class="card mod"><h4>跨语种克隆 <span class="tag">表 11</span></h4>
+        <p>论文称 12 个方向中 10 个最好<span class="src">§5.2.3</span>；按表 11 数，只有 ja→zh（3.55 vs CosyVoice3 3.05）不是最低，即 11/12<span class="src calc">推算</span>。zh→ko 4.03 vs CosyVoice3 14.4，相对降低约 72%<span class="src">§5.2.3</span>。</p></div>
+      <div class="card mod"><h4>定制音色 <span class="tag">表 12</span></h4>
+        <p>只用单语数据做音色微调，迁移到 29 种语言；10 种语言 WER 最低，如日语 3.306、韩语 1.309<span class="src">表 12 · §5.2.4</span>。对比 API 为 2026 年 3 月调用的 ElevenLabs Multilingual v2、Gemini-2.5 Pro-Preview-TTS、GPT-Audio-2025-08-28、MiniMax-Speech-2.8-HD，并写明了音色 ID<span class="src">§5.2.4</span>。</p></div>
+    </div>
+
+    <details class="more wide">
+      <summary>表 11 跨语种语音生成全表 <span class="hint">混合错误率 ↓</span></summary>
+      <div class="body"><div class="tbl-wrap">
+        <table>
+          <thead><tr><th>方向</th><th class="q">Qwen3.5-Omni-Plus</th><th>Qwen3-Omni-30B-A3B</th><th>CosyVoice3</th><th>CosyVoice2</th></tr></thead>
+          <tbody>
+            <tr><td>en → zh</td><td class="q best">4.86</td><td>5.37</td><td>5.09</td><td>13.5</td></tr>
+            <tr class="hl"><td>ja → zh</td><td class="q">3.55</td><td>3.32</td><td class="best">3.05</td><td>48.1</td></tr>
+            <tr><td>ko → zh</td><td class="q best">0.84</td><td>0.99</td><td>1.06</td><td>7.70</td></tr>
+            <tr><td>zh → en</td><td class="q best">2.18</td><td>2.76</td><td>2.98</td><td>6.47</td></tr>
+            <tr><td>ja → en</td><td class="q best">2.18</td><td>3.31</td><td>4.20</td><td>17.1</td></tr>
+            <tr><td>ko → en</td><td class="q best">2.51</td><td>3.34</td><td>4.19</td><td>11.2</td></tr>
+            <tr><td>zh → ja</td><td class="q best">5.92</td><td>8.29</td><td>7.08</td><td>13.1</td></tr>
+            <tr><td>en → ja</td><td class="q best">5.12</td><td>7.53</td><td>6.80</td><td>14.9</td></tr>
+            <tr><td>ko → ja</td><td class="q best">2.16</td><td>4.24</td><td>3.93</td><td>5.86</td></tr>
+            <tr><td>zh → ko</td><td class="q best">4.03</td><td>5.13</td><td>14.4</td><td>24.8</td></tr>
+            <tr><td>en → ko</td><td class="q best">3.72</td><td>4.96</td><td>5.87</td><td>21.9</td></tr>
+            <tr><td>ja → ko</td><td class="q best">5.12</td><td>6.23</td><td>7.92</td><td>21.5</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">英文为 WER，其余为 CER<span class="src">表 11</span>。“最好”圆点为本页按表内数字标注。</p></div>
+    </details>
+  </section>
+
+  <!-- 07 新在哪 -->
+  <section class="sec" id="novel">
+    <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+      <p class="sec-intro">只列能在原文里核对到具体做法的点。Hybrid MoE / GDN 是从 Qwen3.5 继承的骨干，不算本文发明。</p></div>
+    <div class="novel wide">
+      <div class="card nv"><h4>文本时间戳 + TM-RoPE 并用</h4><p>保留 160 ms 粒度的时间 ID，同时在每个时间片前写 <code>&lt;x.x seconds&gt;</code>，音频随机插戳<span class="src">§2.3</span>。</p><p class="why">为什么值得看：理由里明确写了“降低数据构建成本”——不再要求跨帧率均匀采样的训练集。</p></div>
+      <div class="card nv"><h4>ARIA：前缀比约束的单流交错</h4><p>用“任意前缀语音/文本累计比 ≤ 样本全局比”这一条约束替代 MFA 对齐和固定交错率<span class="src">§2.4</span>。</p><p class="why">为什么值得看：不依赖外部对齐器，对编码效率低的语言也适用；但原文没给 ARIA 的单独消融。</p></div>
+      <div class="card nv"><h4>音色用 system prompt 表达</h4><p>Talker 的 system prompt 可包含文字描述和 codec 序列，替代 speaker embedding，统一零样本克隆与可控生成<span class="src">§2.4</span>。</p></div>
+      <div class="card nv"><h4>文本条件 → 音频条件的 on-policy 蒸馏</h4><p>同一问题的文本版回答当音频版目标，专门缩小语音输入下的质量差<span class="src">§4.1</span>。</p></div>
+      <div class="card nv"><h4>Captioner 介入语音生成的数据管线</h4><p>Talker 长上下文 CPT 阶段先做质量分层，再用 Qwen3-Omni-Captioner 增强高质量子集，用来压低噪声数据导致的幻觉<span class="src">§4.2</span>。</p></div>
+    </div>
+  </section>
+
+  <!-- 08 启示 -->
+  <section class="sec" id="impl">
+    <div class="impl-wrap wide">
+      <div class="sec-num">08 · FOR IMAGE-EDITING DATA / EVAL / CAPTION</div>
+      <h2 style="margin-top:8px">对图像编辑数据、评测和 caption 的启示</h2>
+      <p class="sec-intro">Qwen3.5-Omni 不是编辑模型，但它在“结构化描述、伪标注、跨条件蒸馏、评测口径冻结”上的做法可以直接借。每条先写论文怎么做，再写<b>迁移建议</b>。迁移建议是本页的推断，不是论文内容。</p>
+
+      <div class="impl-group">Caption</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">C1</span>把结构信息写成文本，而不是只靠位置编码</h4>
+          <p class="paper">论文：时间不再只靠位置 ID，而是写成 <code>&lt;4.0 seconds&gt;</code> 文本插进序列；理由之一是省掉“各帧率均匀覆盖”的数据成本<span class="src">§2.3 · §3</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>多图编辑（原图 + 参考图 + mask）的样本里，用显式文本标记 <code>&lt;图1 原图&gt;</code> <code>&lt;图2 参考&gt;</code> 引出每张图，caption 里按标记引用。这样训练集不必均匀覆盖“参考图数量 × 位置”的所有组合。</p></div>
+        <div class="impl"><h4><span class="ix">C2</span>分段 + 时间戳 + 角色关系的剧本级 caption</h4>
+          <p class="paper">论文：主打可控、结构化 caption，含自动分段、时间戳、角色及其与音频的关系<span class="src">§1</span>；Omni-Cloze 上 Plus 64.8，Gemini-3.1 Pro 57.2<span class="src">表 7</span>。schema 未公开。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 也按“段”组织：全局场景 → 编辑区域与操作 → 必须保持的主体 / 属性 → 主体间关系。视频编辑再加时间段。可控粒度（简 / 详）作为 prompt 参数，同一条样本出多档 caption。</p></div>
+        <div class="impl"><h4><span class="ix">C3</span>Captioner 当数据质量工具用</h4>
+          <p class="paper">论文：Talker 长上下文 CPT 前做质量分层，并用 Qwen3-Omni-Captioner 增强，目标是减少噪声数据带来的幻觉<span class="src">§4.2</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>对编辑三元组（原图、指令、结果图）分别跑密集 caption，用“指令要求的变化是否出现在两份 caption 的差异里”给样本打质量档，最后阶段只用高档样本继续训练。</p></div>
+      </div>
+
+      <div class="impl-group">数据构建</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">D1</span>用上一代专家模型规模化伪标注，并把配比写死</h4>
+          <p class="paper">论文：AuT 的 4000 万小时标签来自 Qwen3-ASR，中:英:多语固定为 3.5:3.5:3<span class="src">§2.2</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>用上一版编辑模型 + VLM 判分批量造数据时，先定好编辑任务类型配比（如替换 / 删除 / 风格 / 文字），按比例采样，并在数据卡里记录。论文本身没披露伪标注的过滤阈值，这一步要自己补上。</p></div>
+        <div class="impl"><h4><span class="ix">D2</span>跨条件自蒸馏：强条件的输出当弱条件的目标</h4>
+          <p class="paper">论文：同一 query 在文本条件下的回答，作为音频条件下的训练目标，缩小模态质量差<span class="src">§4.1</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>同一编辑任务写一条详细结构化指令和一条口语短指令；用详细指令生成并筛出的结果，同时作为短指令的目标。这样短指令 / 口语指令的效果可以向详细指令靠拢。</p></div>
+        <div class="impl"><h4><span class="ix">D3</span>后期阶段只喂高质量子集</h4>
+          <p class="paper">论文：Talker 先在 2000 万小时数据上做通用预训练，再在质量分层后的高质量子集上 CPT<span class="src">§4.2</span>；Thinker 预训练 S3 提高长样本占比<span class="src">§3</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型训练也按“广覆盖 → 高质量 → 难例 / 长指令”分阶段，后期阶段提高多步编辑、长指令样本的占比，每阶段的数据档位和比例都记下来。</p></div>
+      </div>
+
+      <div class="impl-group">评测协议</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">E1</span>加新能力后，对同尺寸单能力模型做全套回归</h4>
+          <p class="paper">论文：文本 14 项、视觉 30 项都和同尺寸的 Qwen3.5-Plus-Instruct 并排比较<span class="src">表 4 · 表 6</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>在文生图底座上加编辑能力后，固定跑一套文生图基准和底座并排比较，并画逐项分差图（像本页 §06 那样）。只报平均分会掩盖 AA-LCR −5.0 这种单项跌幅。</p></div>
+        <div class="impl"><h4><span class="ix">E2</span>把判官、转写模型和 API 版本写死</h4>
+          <p class="paper">论文：OmniGAIA 固定 DeepSeek-V3.2-Thinking 判分；内部 TTS 集固定 GPT-4o-transcribe-2025-03-20；商业 API 注明 2026 年 3 月调用并给出音色 ID；SongFormBench 统一 prompt + 封闭词表<span class="src">表 5 · 表 7 · §5.2</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测报告里固定写出：VLM 判官型号与日期、判分 prompt 哈希、竞品 API 调用日期与参数、输出格式约束。换判官就单独开一版分数，不和旧版混排。</p></div>
+        <div class="impl"><h4><span class="ix">E3</span>给参考答案也打一次分</h4>
+          <p class="paper">论文：内部多语 TTS 集把 Ground Truth 录音也用同一 ASR 算 WER，和模型并排列出<span class="src">表 10</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测集里人工修图的参考结果也用同一判官打分，作为“判官噪声底”。模型分数接近或超过参考结果时，先怀疑判官，再下结论。</p></div>
+        <div class="impl"><h4><span class="ix">E4</span>“赢了几项”只在有对手的行里数</h4>
+          <p class="paper">论文：多语 TTS “29 种中 22 种最低”，但其中 9 种只有 Ground Truth 对照<span class="src">§5.2.2 · 表 10</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑基准的胜场统计只计入有竞品结果的子类，并把“无对照子类”单列；对外宣称时同时给出分母。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 09 局限 -->
+  <section class="sec" id="limits">
+    <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+    <ul class="limits wide">
+      <li class="key"><b>没有消融。</b>文本时间戳、ARIA、音色 prompt、OPD、Interaction-Aligned RL 都只有描述，没有单独的对照实验；ARIA 宣称减少的跳字、读错没有量化。</li>
+      <li class="key"><b>数据配比只露一半。</b>S2 给了各模态 token 数，但 S1、S3、后训练各阶段的规模与比例、过滤规则、质量分层标准、视觉数据规模都未披露<span class="src">§3 · §4</span>。</li>
+      <li><b>S2 总量对不上。</b>五个模态相加为 4.29T<span class="src calc">推算</span>，正文写“约 4 万亿”<span class="src">§3</span>。</li>
+      <li><b>摘要与正文语种数不一致。</b>摘要写语音生成 10 种语言，§1 / 表 3 是 36 种，§5.2.2 评测 29 种。</li>
+      <li><b>胜场统计与表格不一致。</b>表 11 按数字是 11/12 方向最好，正文写 10/12<span class="src calc">推算</span>；“29 种中 22 种 WER 最低”包含 9 种无竞品对照的语言<span class="src">表 9 · 表 10</span>。zh→ko 的 72% 降幅是对 CosyVoice3 算的，对表内第二名 Qwen3-Omni（5.13）约降 21%<span class="src calc">推算</span>。</li>
+      <li><b>“音视频持平 Gemini-3.1 Pro”偏乐观。</b>表 7 七项可比分数里 Plus 赢 3 项（另一项 OmniGAIA 为工具使用）；VideoMME 带音频低 5.3，AV-SpeakerBench 低 3.8，WorldSense 低 2.7<span class="src calc">推算</span>。</li>
+      <li><b>“文本不退化”偏乐观。</b>14 项中 12 项低于 Qwen3.5-Plus-Instruct，AA-LCR 低 5.0、BFCL-V4 和 IMOAnswerBench 各低 2.8<span class="src calc">推算</span>。</li>
+      <li><b>“215 项 SOTA”无法核对。</b>正文只列出部分基准，215 个子任务的清单与计数口径未给出。</li>
+      <li><b>caption 能力只有一个数。</b>剧本级结构化 caption 是三大新能力之一，但只报了 Omni-Cloze；分段、时间戳准确率没有评测，schema 与训练数据未公开。Audio-Visual Vibe Coding 只有描述，没有量化。</li>
+      <li><b>部分评测不可复现。</b>内部多语 TTS 集、内部 vLLM 延迟测量；模型仅 API 提供，规模只写“数千亿参数”，许可证原文未披露。延迟为理论值，Flash 与 Plus 不可横比<span class="src">§2.5</span>。</li>
+    </ul>
+  </section>
+
+  <!-- 10 图表索引 -->
+  <section class="sec" id="figs">
+    <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+    <div class="tbl-wrap wide">
+      <table class="idx-table">
+        <thead><tr><th>编号</th><th style="text-align:left">内容</th><th style="text-align:left">本页位置</th></tr></thead>
+        <tbody>
+          <tr><td>图 1</td><td>Plus / Plus-Realtime 能力概览插画（宣传图，未在正文引用） · <a href="figures/fig1.jpg" target="_blank" rel="noopener">查看</a></td><td>—</td></tr>
+          <tr><td>图 2</td><td>Qwen3.5-Omni 总览：Thinker–Talker、MTP、Codec Decoder</td><td><a href="#arch">§03 架构</a></td></tr>
+          <tr><td>图 3</td><td>AuT 编码器-解码器结构</td><td><a href="#arch">§03 架构</a></td></tr>
+          <tr><td>首页裁图</td><td>论文首页文字区域裁切（非图示） · <a href="figures/fig0-teaser.jpg" target="_blank" rel="noopener">查看</a></td><td>—</td></tr>
+          <tr><td>表 1</td><td>模块结构与首包延迟</td><td><a href="#arch">§03 架构</a></td></tr>
+          <tr><td>表 2</td><td>不同并发下的理论首包延迟</td><td><a href="#arch">§03 折叠表</a></td></tr>
+          <tr><td>表 3</td><td>支持的语言与方言</td><td><a href="#data">§04 折叠表</a></td></tr>
+          <tr><td>表 4</td><td>文本 → 文本</td><td><a href="#eval">§06 分差图 + 折叠表</a></td></tr>
+          <tr><td>表 5</td><td>音频 → 文本（对比 Gemini-3.1 Pro）</td><td><a href="#eval">§06</a></td></tr>
+          <tr><td>表 6</td><td>视觉 → 文本</td><td><a href="#eval">§06 分差图 + 折叠表</a></td></tr>
+          <tr><td>表 7</td><td>音视频 → 文本（含 caption、Agent）</td><td><a href="#eval">§06 柱状图</a></td></tr>
+          <tr><td>表 8</td><td>SEED 零样本 TTS</td><td><a href="#eval">§06</a></td></tr>
+          <tr><td>表 9–10</td><td>多语 TTS（公开集 / 内部集）</td><td><a href="#eval">§06</a></td></tr>
+          <tr><td>表 11</td><td>跨语种语音生成</td><td><a href="#eval">§06 折叠表</a></td></tr>
+          <tr><td>表 12</td><td>定制音色多语生成</td><td><a href="#eval">§06</a></td></tr>
+          <tr><td>示意图</td><td>双轨 vs ARIA 单流（本页绘制，非原图）</td><td><a href="#arch">§03</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Qwen Team《Qwen3.5-Omni Technical Report》（<a href="https://arxiv.org/abs/2604.15804" target="_blank" rel="noopener">arXiv:2604.15804</a>；v1 发布于 2026-04-17，本页依据 v2，2026-04-21）。文中数字均来自原文正文与表格，标有“推算”的是本页自行计算的结果；“迁移建议”是本页的推断，不代表论文观点；ARIA 示意图为本页绘制。论文插图版权归原作者所有，仅用于学习交流。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

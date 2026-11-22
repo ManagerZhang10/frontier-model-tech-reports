@@ -27,4 +27,7 @@
   - [Gemma 4](./reports/llm/gemma-4/)（LLM）
   - [DeepSeek-V3.2](./reports/llm/deepseek-v3.2/)（LLM）
   - [MiMo-V2-Flash](./reports/llm/mimo-v2-flash/)（LLM）
+  - [GLM-5](./reports/llm/glm-5/)（LLM）
+  - [ERNIE 5.0](./reports/llm/ernie-5/)（LLM · 原生多模态）
+  - [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/)（VLM / Omni）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

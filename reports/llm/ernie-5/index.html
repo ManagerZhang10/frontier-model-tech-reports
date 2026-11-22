@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERNIE 5.0 中文深读 · 万亿级统一自回归全模态模型、超稀疏 MoE 与弹性训练 | 前沿模型技术报告</title>
+<meta name="description" content="ERNIE 5.0（ERNIE Team, Baidu, arXiv 2602.04705）中文深读：统一 Next-Group-of-Tokens 目标、模态无关路由的超稀疏 MoE、视觉理解/生成双路设计（NFSP）、弹性训练、统一多模态 RL、评测，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: architecture schematic, charts, small grids */
+.arch .dg-vis { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.arch .dg-aud { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.2; }
+.arch .dg-txt { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+.arch .dg-bb { fill: color-mix(in srgb, var(--accent) 12%, var(--card)); stroke: var(--accent); stroke-width: 1.6; }
+.arch .dg-exp { fill: var(--card); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); stroke-width: 1; }
+.arch .dg-dash { stroke: var(--muted); stroke-width: 1.3; stroke-dasharray: 5 4; fill: none; }
+.arch .dg-dbox { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.arch .dg-arr { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.arch .dg-k { fill: var(--accent-ink); font: 700 11px var(--f-mono); }
+.arch .dg-tag { fill: var(--muted); font: 600 10.5px var(--f-mono); letter-spacing: .06em; }
+.nfsp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.nfsp .chip > b:first-child { display: block; color: var(--accent-ink); font-size: .82rem; margin-bottom: 2px; }
+.nfsp .chip::after { display: none; }
+.iou td.hi { font-weight: 700; color: var(--accent-ink); }
+.iou td.lo { color: var(--warn); font-weight: 600; }
+.small-sub { font-size: .78em; color: var(--muted); font-weight: 500; }
+td .sub-shot { font-size: .72em; color: var(--muted); margin-left: 3px; }
+.rl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 12px 0; }
+.rl-grid .mod { margin: 0; }
+.mini-kv { font-size: .86rem; color: var(--muted); margin-top: 4px; }
+@media (max-width: 960px) { .nfsp { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型（原生多模态）</div>
+    <h1>ERNIE 5.0<span class="sub">ERNIE 5.0 Technical Report</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>ERNIE Team, Baidu</b></span>
+      <span>发布 <b>2026-02-04</b>（arXiv v1）</span>
+      <span>arXiv <b>2602.04705</b></span>
+      <span>本页依据 <b>v1</b> 全文</span>
+    </div>
+    <p class="lede">文本、图像、视频、音频<b>全部从零</b>在同一个 <b>Next-Group-of-Tokens Prediction</b> 目标下训练，骨干是<b>激活率 &lt;3%</b><span class="src">§2.1</span>、路由不看模态 ID 的超稀疏 MoE；一次预训练用「弹性训练」顺带得到不同深度/宽度/稀疏度的子模型。作者称这是公开模型里首个生产规模、万亿参数级的统一自回归「理解 + 生成」模型<span class="src">摘要</span>。对编辑方向的读者：看 §2.2 的「理解用量化前特征、生成用离散 token」双路设计和 NFSP 生成训练技巧；数据与 caption 细节原文几乎没给。</p>
+    <div class="badges">
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>开源：原文未提及权重发布</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>万亿参数级 MoE · 激活率 &lt;3%</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>语言模型（原生多模态）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>文本 · 图像 · 视频 · 音频｜理解 + 生成</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2602.04705" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2602.04705</a>
+      <a href="https://arxiv.org/pdf/2602.04705" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg>PDF</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v1；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num sm">万亿参数级</span><span class="stat-sub">具体总参数 / 激活参数<span class="nd">原文未披露</span>；只给激活率 &lt;3%</span><span class="src">摘要 · §2.1</span></div>
+    <div class="card stat"><span class="stat-k">模态与任务</span><span class="stat-num sm">4 模态 · 理解 + 生成</span><span class="stat-sub">文本/图像/视频/音频全部从零联合训练</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num sm">8K → 32K → 128K</span><span class="stat-sub">RoPE base 从 8K 阶段起即为 1,000,000</span><span class="src">§3.2</span></div>
+    <div class="card stat"><span class="stat-k">Global batch</span><span class="stat-num sm">14M → 56M tokens</span><span class="stat-sub">8K 阶段早期逐步放大；中训保持不变</span><span class="src">§3.2</span></div>
+    <div class="card stat"><span class="stat-k">弹性子模型</span><span class="stat-num sm">53.7% 激活 · 35.8% 总参</span><span class="stat-sub">均分 75.17 vs 全模型 75.55（Exp 版）</span><span class="src">表 12</span></div>
+    <div class="card stat"><span class="stat-k">推理降 top-k 到 25%</span><span class="stat-num">&gt;15%</span><span class="stat-sub">解码提速；均分 75.55 → 74.43</span><span class="src">§6.4.2 · 表 12</span></div>
+    <div class="card stat"><span class="stat-k">GenEval / VBench Overall</span><span class="stat-num sm">90.1 / 84.20</span><span class="stat-sub">Qwen-Image 91.0；Veo3 85.06</span><span class="src">表 5–6</span></div>
+    <div class="card stat"><span class="stat-k">SimpleQA / ChineseSimpleQA</span><span class="stat-num sm">74.01 / 86.03</span><span class="stat-sub">表 2 该两行最高（含 Gemini 3-Pro）</span><span class="src">表 2</span></div>
+    <div class="card stat"><span class="stat-k">并行配置</span><span class="stat-num sm">TP4 · PP12 · EP64</span><span class="stat-sub">+ ZeRO-1 DP + CP；FP8 混精；PaddlePaddle</span><span class="src">§5.1</span></div>
+    <div class="card stat"><span class="stat-k">训练数据量</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只说「trillions of text tokens and multimodal instances」；无模态配比</span><span class="src">§3.1</span></div>
+  </div>
+  <p class="footnote">版本：本页对照的 <code>PDF</code> 页眉为 <code>arXiv:2602.04705v1 [cs.CL] 4 Feb 2026</code>，即 v1。评测均在内部框架 ERNIE-Eval 上完成<span class="src">§6</span>。</p>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>真·统一：一个自回归 MoE 管四模态理解与生成</h3><p>文本 NTP（+MTP），视觉 NFSP（next-scale / next-frame），音频 NCP（逐 codec 层）全部归入 Next-Group-of-Tokens 预测<span class="src">§2.1</span>；路由只看 token 表示、不看模态 ID，共享专家池<span class="src">§2.1</span>。高分辨率细节则交给<b>独立训练的级联扩散 refiner</b><span class="src">§2.2.3</span>——不是「纯 AR 到像素」。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>理解与生成走两条视觉通路</h3><p>生成用 bit-wise 量化的离散 token；理解<b>不用</b>量化后 token，而是取量化前的 CNN + ViT 双路特征，用 Attention-based Patch Merger 融合（图像 K=4、视频 K=16 个 patch 合一）<span class="src">§2.2.2</span>。作者称 MLP 融合会互相干扰，但未给数字。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>弹性训练：一次预训练得到一族子模型</h3><p>深度/宽度/top-k 三维随机采样子网络与全模型同步反传<span class="src">§3.3</span>。Exp 版上，53.7% 激活参数 + 35.8% 总参数的子模型均分 75.17，全模型 75.55<span class="src">表 12</span>；仅把 top-k 降到 25% 可解码提速 &gt;15%<span class="src">§6.4.2</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>知识与指令遵循强，硬推理落后</h3><p>SimpleQA 74.01、MultiChallenge 65.98、Multi-IF 85.56 为表 2 各行最高；AIME 2025 89.06、HMMT 2025 79.58 低于 GPT-5 (High) 与 Gemini 3-Pro<span class="src">表 2</span>。作者自己承认与 Gemini 3-Pro 在最难推理上有差距<span class="src">§6.1</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>生成评测只有 GenEval + VBench</h3><p>GenEval 90.1（Qwen-Image 91.0）<span class="src">表 5</span>；VBench Semantic 83.40 为表内最高、Quality 84.40 低于三个外部基线<span class="src">表 6</span>。正文提到支持像素级图像/视频编辑<span class="src">§2.2.2</span>，但<b>没有任何编辑评测</b>，也没说评测是否经过 refiner。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：统一自回归骨干 + 超稀疏 MoE</h2>
+    <p class="sec-intro">相对前代 ERNIE 4.5：从「模态隔离路由」改为模态无关路由<span class="src">§2.1</span>，并新增视觉/音频的生成输出口。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="ERNIE 5.0 总体架构：文本/视觉/音频 embedding 进入统一 Transformer 层，Router 分发到 N 个 FFN 专家，顶部为文本/视觉/音频 head 与解码器" loading="lazy"></div>
+    <figcaption><b>ERNIE 5.0 总体架构。</b>文本、视觉、音频分别编码并序列化后进入统一骨干；超稀疏 MoE 采用模态无关路由，不同模态 token 被分发到同一个专家池。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide arch">
+    <svg viewBox="0 0 1000 440" role="img" aria-label="ERNIE 5.0 信息流示意图">
+      <text class="dg-tag" x="30" y="20">输出侧</text>
+      <!-- decoders -->
+      <rect class="dg-txt" x="30" y="30" width="210" height="44" rx="9"/>
+      <text class="dg-t" x="135" y="50" text-anchor="middle">文本输出</text>
+      <text class="dg-s" x="135" y="66" text-anchor="middle">直接 detokenize</text>
+      <rect class="dg-vis" x="270" y="30" width="200" height="44" rx="9"/>
+      <text class="dg-t" x="370" y="50" text-anchor="middle">Vision Decoder</text>
+      <text class="dg-s" x="370" y="66" text-anchor="middle">低分辨率图像/视频</text>
+      <rect class="dg-dbox" x="490" y="30" width="230" height="44" rx="9"/>
+      <text class="dg-t" x="605" y="50" text-anchor="middle">级联扩散 refiner</text>
+      <text class="dg-s" x="605" y="66" text-anchor="middle">独立训练 · 补高分辨率细节</text>
+      <path class="dg-dash" d="M470 52 H488"/>
+      <rect class="dg-aud" x="750" y="30" width="220" height="44" rx="9"/>
+      <text class="dg-t" x="860" y="50" text-anchor="middle">Audio Decoder → 波形</text>
+      <text class="dg-s" x="860" y="66" text-anchor="middle">TTS 可加 speaker embedding</text>
+      <!-- heads -->
+      <rect class="dg-txt" x="30" y="100" width="210" height="44" rx="9"/>
+      <text class="dg-t" x="135" y="120" text-anchor="middle">Text Head</text>
+      <text class="dg-s" x="135" y="136" text-anchor="middle">NTP + MTP</text>
+      <rect class="dg-vis" x="270" y="100" width="450" height="44" rx="9"/>
+      <text class="dg-t" x="495" y="120" text-anchor="middle">Vision Head · NFSP</text>
+      <text class="dg-s" x="495" y="136" text-anchor="middle">图像 = next-scale；视频 = 逐帧 × 逐尺度；尺度内双向、并行预测</text>
+      <rect class="dg-aud" x="750" y="100" width="220" height="44" rx="9"/>
+      <text class="dg-t" x="860" y="120" text-anchor="middle">Audio Heads · NCP</text>
+      <text class="dg-s" x="860" y="136" text-anchor="middle">顶层多层逐级预测 RVQ 码</text>
+      <path class="dg-arr" d="M135 100 V76 M370 100 V76 M860 100 V76"/>
+      <!-- backbone -->
+      <rect class="dg-bb" x="30" y="168" width="940" height="112" rx="12"/>
+      <text class="dg-t" x="50" y="192">统一 Transformer × L（从零训练）</text>
+      <text class="dg-s" x="50" y="212">Unified Multimodal Attention · FlashMask：文本/音频因果，视觉「全局因果 + 局部双向」</text>
+      <text class="dg-s" x="50" y="230">Uni-RoPE (t, h, w)：文本/音频 t=h=w=序号；视觉 t=帧号、(h,w)=空间位置，多尺度中心对齐</text>
+      <text class="dg-k" x="50" y="262">Router（模态无关）→ 共享专家池 · 激活率 &lt;3% · aux-loss-free 负载均衡</text>
+      <g>
+        <rect class="dg-exp" x="640" y="246" width="26" height="20" rx="4"/><rect class="dg-exp" x="672" y="246" width="26" height="20" rx="4"/>
+        <rect class="dg-exp" x="704" y="246" width="26" height="20" rx="4"/><rect class="dg-exp" x="736" y="246" width="26" height="20" rx="4"/>
+        <rect class="dg-exp" x="768" y="246" width="26" height="20" rx="4"/><rect class="dg-exp" x="800" y="246" width="26" height="20" rx="4"/>
+        <rect class="dg-exp" x="832" y="246" width="26" height="20" rx="4"/><rect class="dg-exp" x="864" y="246" width="26" height="20" rx="4"/>
+        <text class="dg-s" x="900" y="261">… FFN 专家</text>
+      </g>
+      <path class="dg-arr" d="M135 168 V146 M495 168 V146 M860 168 V146"/>
+      <!-- inputs -->
+      <text class="dg-tag" x="30" y="306">输入侧</text>
+      <path class="dg-arr" d="M135 316 V282 M370 316 V282 M605 316 V282 M860 316 V282"/>
+      <rect class="dg-txt" x="30" y="316" width="210" height="58" rx="9"/>
+      <text class="dg-t" x="135" y="338" text-anchor="middle">Text Embedding</text>
+      <text class="dg-s" x="135" y="356" text-anchor="middle">重训 tokenizer · UTF-16BE</text>
+      <rect class="dg-vis" x="260" y="316" width="220" height="58" rx="9"/>
+      <text class="dg-t" x="370" y="338" text-anchor="middle">理解：CNN + ViT（量化前）</text>
+      <text class="dg-s" x="370" y="356" text-anchor="middle">→ Attention-based Patch Merger</text>
+      <rect class="dg-vis" x="495" y="316" width="220" height="58" rx="9"/>
+      <text class="dg-t" x="605" y="338" text-anchor="middle">生成：因果 3D 多尺度 tokenizer</text>
+      <text class="dg-s" x="605" y="356" text-anchor="middle">bit-wise 量化 · 位数逐步加大</text>
+      <rect class="dg-aud" x="750" y="316" width="220" height="58" rx="9"/>
+      <text class="dg-t" x="860" y="338" text-anchor="middle">音频 RVQ codec · 12.5 Hz</text>
+      <text class="dg-s" x="860" y="356" text-anchor="middle">首层蒸馏 Whisper；各层 embedding 相加</text>
+      <text class="dg-s" x="30" y="404">紫 = 共享骨干　橙 = 视觉　绿 = 音频　虚线框 = 与骨干分开训练的组件</text>
+      <text class="dg-s" x="30" y="424">tokenizer 部署在独立 GPU 节点，骨干通过远程调用取编码（§5.2）</text>
+    </svg>
+    <p class="cap">示意（本页绘制）：按 §2.1–2.3、§5.2–5.3 的文字整理。图 1 的 Router 标为 Router<sub>Shared</sub>，与 §6.4.1「所有模态由同一路由网络处理」一致；是否另设常驻共享专家原文未说明，此处不画；refiner 与 Vision Decoder 的具体衔接方式原文未给，用虚线表示。</p>
+  </div>
+
+  <h3>视觉：一套 tokenizer 给生成，量化前特征给理解</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="统一视觉理解与生成：理解侧用 CNN+ViT 经 Attention-Based Patch Merger 的量化前特征；生成侧图像为 next-scale prediction，视频为 next-frame-and-scale prediction" loading="lazy"></div>
+    <figcaption><b>视觉理解与生成的统一结构。</b>理解：CNN–ViT 混合特征经 Attention-Based Patch Merger 压缩；生成：图像做 Next-Scale Prediction，视频在时间维再加 Next-Frame，合称 NFSP。（裁图下缘图例略有截断。）<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="nfsp wide">
+    <div class="chip m"><b>Tokenizer（§2.2.1）</b>先训因果 2D 多尺度图像 tokenizer，再「膨胀」成因果 3D 卷积 tokenizer 统一图像与视频；辅以 GAN 对抗损失 + 来自视觉基础模型的语义正则分支；bit-wise 量化，位数=词表规模。训练中<b>从低 bit 逐步切到高 bit</b> tokenizer。</div>
+    <div class="chip m"><b>理解通路（§2.2.2）</b>量化前的降维会丢细粒度语义，所以理解侧直接取 CNN 感知特征 + ViT 语义特征：CNN 投影到 ViT 空间 → 沿 patch 维拼成 2K 个 → 多头自注意力 → 均值池化 → 投到骨干维度。图像 K=4 相邻 patch；视频 K=16（4 帧）。</div>
+    <div class="chip m"><b>生成训练技巧（§2.2.3）</b>历史 token <b>随机翻 bit</b> 并监督模型纠回当前尺度真值；对早期尺度重加权；视频加窗口时间注意力 + 随机历史帧 mask。高分辨率交给独立训练的级联扩散 refiner（低分辨率受控退化 ↔ 高分辨率配对）。</div>
+  </div>
+
+  <h3>音频：depth-wise 自回归，避免把多码本摊平</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="音频 depth-wise 架构：理解时多层残差码 embedding 相加；生成时在顶部若干 Transformer 层逐层预测 codec 码并回灌" loading="lazy"></div>
+    <figcaption><b>音频理解与生成的 depth-wise 结构。</b>理解：多个残差层级的 embedding 相加成一个音频 token；生成：Next-Codec Prediction 在顶层若干 Transformer 层间逐级预测，训练时回灌真值码 embedding、推理时回灌预测码。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+  <p class="prose">codec 为 RVQ 设计，token rate <b>12.5 Hz</b><span class="src">§2.3.1</span>；第一个码对齐（平均池化后的）Whisper encoder 输出以承载语义，其余码承载音色、韵律等残差细节<span class="src">§2.3.1</span>。RVQ 层数原文未写明。</p>
+
+  <details class="more"><summary>相对 ERNIE 4.5 / 常见方案的改动清单<span class="hint">展开</span></summary><div class="body">
+    <ul>
+      <li><b>路由</b>：ERNIE 4.5 是模态隔离路由；5.0 改为模态无关，免去「多于两种模态时怎么手工分配专家」的难题<span class="src">§2.1</span>。</li>
+      <li><b>训练起点</b>：不在预训练 LLM 上外挂模态解码器（late fusion），而是所有模态从零联合训练，作者称可缓解「能力跷跷板」<span class="src">§1</span>。</li>
+      <li><b>文本 tokenizer</b>：重训，UTF-16BE 编码 + BPE dropout<span class="src">§3.1</span>。</li>
+      <li><b>负载均衡</b>：aux-loss-free（bias 更新速度 1e-4 → 中训 1e-5）<span class="src">§2.1 · §3.2</span>。</li>
+      <li><b>首层 MoE</b>：路由熵分析显示文本在第一层并不严重失衡，作者据此质疑「早期 MoE 层需做成 dense」的常见假设<span class="src">§6.4.1</span>（是否因此去掉 dense 首层，原文未说）。</li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：能写的都在这里，但原文给得很少</h2>
+    <p class="sec-intro">§3.1 只有约一页。没有任何模态配比、token 数或 caption 模型——下面没有比例条，因为原文没有比例。</p></div>
+
+  <div class="legend-dots"><span>来源</span><span class="m">处理 / 过滤</span><span class="o">进入模型</span></div>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>来源</span><span>处理 / 过滤</span><span>进入模型</span></div>
+    <div class="pipe-row"><div class="lbl">文本</div>
+      <div class="chip">多语种网页、精选语料、书籍、科学论文、代码仓库、结构化知识<span class="src">§3.1</span></div>
+      <div class="chip m">中文等无空格语言：过滤可被标准分词工具拆开的<b>超长无空格短语</b>，减词表稀疏<span class="src">§3.1</span></div>
+      <div class="chip o">重训 tokenizer：UTF-16BE（稳定字节回退、非拉丁字符更紧凑）+ BPE dropout<span class="src">§3.1</span></div>
+    </div>
+    <div class="pipe-row"><div class="lbl">多模态</div>
+      <div class="chip">图–文、视频–文、音频–文配对 + 文本与图/视频/音频交错序列，<b>均附 metadata 与 caption</b><span class="src">§3.1</span></div>
+      <div class="chip m">启发式 + 模型过滤（低质、不安全）；大规模去重；基准去污染<span class="src">§3.1</span></div>
+      <div class="chip o">按「输入模态 × 输出模态」在统一平台上组织；各模态 tokenizer 作为独立服务编码<span class="src">§3.1 · §5.2</span></div>
+    </div>
+    <div class="pipe-row"><div class="lbl">后训练</div>
+      <div class="chip">「全面的高质量指令对」用于 SFT；推理 / agent / 指令遵循等多任务 RL 数据<span class="src">§4</span></div>
+      <div class="chip m">统一 verifier 系统产出跨多模态场景的奖励<span class="src">§4</span></div>
+      <div class="chip o">SFT → 多阶段 UM-RL（流程与 ERNIE 4.5 相同）<span class="src">§4</span></div>
+    </div>
+  </div>
+
+  <h3>已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项</th><th style="text-align:left">原文写法</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>预训练语料总量</td><td style="text-align:left;white-space:normal">「trillions of text tokens and multimodal instances」——无具体数字</td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>文本 / 图像 / 视频 / 音频配比</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>caption 生成方式、caption 模型、长度分布</td><td style="text-align:left"><span class="nd">原文未披露</span>（只说「附 caption」）</td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>过滤器种类、阈值、去重粒度</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>合成数据</td><td style="text-align:left"><span class="nd">原文未提及</span></td><td>—</td></tr>
+        <tr><td>SFT / RL 数据量与构成</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>Global batch</td><td style="text-align:left">14M → 56M tokens（8K 阶段早期逐步放大）</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>音频 token rate</td><td style="text-align:left">12.5 Hz</td><td><span class="src">§2.3.1</span></td></tr>
+        <tr><td>视觉理解 token 合并</td><td style="text-align:left">图像 K=4 patch / token；视频 K=16 patch（跨 4 帧）/ token</td><td><span class="src">§2.2.2</span></td></tr>
+        <tr><td>弹性消融小模型数据</td><td style="text-align:left">250B tokens（64 专家，454M 激活 / 3.2B 总参）</td><td><span class="src">§6.4.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>跨模态 loss 怎么配平 <span class="tag">§3.2</span></h4><p>不给数据配比，但说了 loss 侧的做法：<b>posterior-based loss weighting</b>，把不同模态的自回归 loss 重缩放到同一区间，以防模态间失衡。具体缩放公式<span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>视觉生成数据的「课程」 <span class="tag">§2.2.1</span></h4><p>不是数据课程，而是 tokenizer 课程：先用低 bit（小词表）tokenizer，再逐步换到高 bit。各档 bit 数与切换时机<span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>refiner 训练对 <span class="tag">§2.2.3</span></h4><p>级联扩散 refiner 用「受控退化的低分辨率样本 ↔ 对应高分辨率图像/视频」配对训练，与骨干分开训练。退化种类<span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>去污染 <span class="tag nd-tag">只有一句</span></h4><p>「decontamination safeguards keep benchmarks out of the training data」<span class="src">§3.1</span>。针对哪些基准、用什么匹配方法，原文未写。</p></div>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2>
+    <p class="sec-intro">原文称 §3.2 只是「a part of training recipe」——总步数、总 token 数、优化器参数都没给。</p></div>
+
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">S1</span><h4>8K 预训练</h4><dl>
+      <dt>上下文</dt><dd>8K</dd><dt>LR 调度</dt><dd>WSD</dd><dt>warmup</dt><dd>2,000 步 → 1e-4</dd><dt>batch</dt><dd>14M → 56M tok</dd><dt>RoPE base</dt><dd>1,000,000</dd><dt>MTP 权重</dt><dd>0.3</dd><dt>均衡 bias 速</dt><dd>1e-4</dd></dl>
+      <div class="mini-kv">同时进行弹性训练 <span class="src">§3.2–3.3</span></div></div>
+    <div class="card stage"><span class="sid">S2</span><h4>32K &amp; 128K 中训</h4><dl>
+      <dt>上下文</dt><dd>32K → 128K</dd><dt>LR 调度</dt><dd>cosine</dd><dt>LR</dt><dd>1e-4 → 1e-5</dd><dt>batch</dt><dd>不变</dd><dt>MTP 权重</dt><dd>0.1</dd><dt>均衡 bias 速</dt><dd>1e-5</dd></dl>
+      <div class="mini-kv">另加跨模态 posterior loss 重加权 <span class="src">§3.2</span></div></div>
+    <div class="card stage"><span class="sid">P1</span><h4>SFT</h4><dl>
+      <dt>目标</dt><dd>指令遵循 + 长 CoT</dd><dt>数据量</dt><dd><span class="nd">未披露</span></dd><dt>超参</dt><dd><span class="nd">未披露</span></dd></dl>
+      <div class="mini-kv">与 ERNIE 4.5 同流程 <span class="src">§4</span></div></div>
+    <div class="card stage"><span class="sid">P2</span><h4>UM-RL（多阶段）</h4><dl>
+      <dt>任务</dt><dd>推理 / agent / IF 合并</dd><dt>奖励</dt><dd>统一 verifier</dd><dt>算法</dt><dd>GSPO + IcePop 改</dd><dt>超参</dt><dd><span class="nd">未披露</span></dd></dl>
+      <div class="mini-kv">U-RB · MISC · WPSM · AHRL <span class="src">§4.1–4.3</span></div></div>
+  </div>
+
+  <h3>弹性训练：三个正交维度</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="弹性训练框架：Elastic Depth 改变层数，Elastic Width 改变每层专家总数，Elastic Sparsity 改变每 token 的 top-k" loading="lazy"></div>
+    <figcaption><b>弹性训练框架。</b>Elastic Depth 随机改变激活层数；Elastic Width 改变每个 MoE 层的专家总数；Elastic Sparsity 改变每个 token 的 top-k。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>维度</th><th>全配置概率</th><th>子网络概率</th><th style="text-align:left">子网络怎么采</th><th>小模型消融（val loss，越低越好）</th></tr></thead>
+      <tbody>
+        <tr><td>Depth</td><td>75%<sup>†</sup></td><td>25%<sup>†</sup></td><td style="text-align:left">随机减少激活层数；消融里 Layers ∈ [1, 16]</td><td>全深 1.941（基线 1.945）；12 层 2.137 <span class="src">表 9</span></td></tr>
+        <tr><td>Width</td><td>80%</td><td>20%</td><td style="text-align:left">路由限定在随机采样的专家子集；消融里 64 → 32</td><td>64 专家 1.964（基线 1.957）；32 专家 2.218 <span class="src">表 10</span></td></tr>
+        <tr><td>Sparsity</td><td>80%</td><td>20%</td><td style="text-align:left">top-k 在小于默认值的预设范围内随机；消融里 k ∈ [1, 8]</td><td>k=8 1.969 / 4 1.971 / 2 2.003 / 1 2.175（基线 k=8 1.945）<span class="src">表 11</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note"><sup>†</sup> §3.3 写 ERNIE 5.0 的深度弹性为 75% / 25%；§6.4.2 小模型消融却写「与 ERNIE 5.0 配置一致，80% 样本保留全深」——原文自相矛盾，见「局限」。消融小模型：64 专家、454M 激活 / 3.2B 总参、250B tokens、默认 top-k=8<span class="src">§6.4.2</span>。</p>
+
+  <h3>后训练 RL：四个针对「超稀疏 MoE + 多模态」的补丁</h3>
+  <div class="rl-grid wide">
+    <div class="card mod"><h4>U-RB <span class="tag">§4.1</span></h4><p>rollout 占 RL 总时长 <b>&gt;90%</b>。在 APRIL「超发请求、凑够即停」上加数据顺序约束：只有本轮分配的数据组能进训练池，长尾样本跨轮续写，避免「先训短的=先训简单的」带来的难度分布漂移。</p></div>
+    <div class="card mod"><h4>MISC <span class="tag">§4.2 · 图 6</span></h4><p>直接把 IcePop 套到 GSPO（序列级截断 IS）会砍掉大量低熵回复，导致熵快速坍塌；改为 <b>token 级 mask + 序列级比率</b>（J<sup>Mixed</sup><sub>IcePop</sub>）。α、β、ε 取值<span class="nd">未披露</span>。</p></div>
+    <div class="card mod"><h4>WPSM <span class="tag">§4.2</span></h4><p>按 query 记录成功率：准确率 &gt; τ 且回复熵 &lt; η 的正样本视为「已学会」，以系数 α∈[0,1] 降权，把梯度预算让给难题。τ、η、α 取值<span class="nd">未披露</span>。</p></div>
+    <div class="card mod"><h4>AHRL <span class="tag">§4.3 · 图 7</span></h4><p>全零奖励的难题，把参考 think 的前 p<sub>hint</sub> 比例拼进 query；p<sub>hint</sub> = p<sub>initial</sub>·exp(−γ·t·pass<sub>initial</sub>) 随训练退火，pass 来自 SFT 模型 pass@k。p<sub>initial</sub>、γ、k<span class="nd">未披露</span>。</p></div>
+  </div>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="两条 RL 训练曲线：深蓝 J Mixed IcePop 稳定，浅蓝 J GSPO IcePop 在后期出现熵坍塌" loading="lazy"></div>
+    <figcaption><b>RL 训练动态。</b>深蓝 = J<sup>Mixed</sup><sub>IcePop</sub>（MISC），浅蓝 = J<sup>GSPO</sup><sub>IcePop</sub>；后者出现熵坍塌，前者稳定。裁图中纵轴名称未标出，左右子图对应指标原文题注未逐一说明。<span class="from">来源：论文图 6</span></figcaption>
+  </figure>
+
+  <details class="more"><summary>基础设施要点<span class="hint">§5 · 展开</span></summary><div class="body">
+    <ul>
+      <li><b>并行</b>：TP 4 + PP 12（virtual stages）+ EP 64 + ZeRO-1 DP + CP；DeepEP 跨节点通信；全程 no-token-dropping<span class="src">§5.1</span>。</li>
+      <li><b>显存</b>：FP8 混精（激活存 FP8）、OOM 时自适应 offload 激活、子 batch 拆分大分配、基于 CUDA VMM 的自动碎片整理<span class="src">§5.1</span>。</li>
+      <li><b>tokenizer–骨干解耦</b>：tokenizer 作为可横向扩展的独立服务部署在专用节点，骨干远程调用<span class="src">§5.2</span>。</li>
+      <li><b>FlashMask</b>：算子级比 FlexAttention 最高快 200%，端到端训练加速 &gt;20%；与 CP 内核级集成，比 Megatron-LM 方案提升 80%<span class="src">§5.3</span>。</li>
+      <li><b>RL 基础设施</b>：中心化控制器的解耦异步控制面；训推同一套 FP8 算子 + Rollout Router Replay；保序 replay buffer；弹性 CPU 池跑环境交互与校验<span class="src">§5.4</span>。</li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+    <p class="sec-intro">全部在内部框架 ERNIE-Eval 上跑<span class="src">§6</span>；代码类任务用 LiveCodeBench 与 SandboxFusion 做执行校验（原文脚注 1）。基线数字是复测还是引用，原文未说明。</p></div>
+
+  <h3>生成：GenEval 与 VBench（柱从 0 起）</h3>
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 330 190" role="img" aria-label="GenEval 柱状图">
+        <text class="ch-t" x="0" y="14">GenEval（↑）</text><text class="ch-src" x="330" y="14" text-anchor="end">表 5</text>
+        <rect class="bar-o" x="115" y="30" width="163.8" height="14" rx="3"/><text class="ch-lbl" x="110" y="41" text-anchor="end">Qwen-Image</text><text class="ch-val" x="282.8" y="41">91.0</text>
+        <rect class="bar-q" x="115" y="54" width="162.2" height="14" rx="3"/><text class="ch-lbl" x="110" y="65" text-anchor="end">ERNIE 5.0</text><text class="ch-val" x="281.2" y="65">90.1</text>
+        <rect class="bar-o" x="115" y="78" width="160.2" height="14" rx="3"/><text class="ch-lbl" x="110" y="89" text-anchor="end">Nano Banana Pro</text><text class="ch-val" x="279.2" y="89">89.0</text>
+        <rect class="bar-qi" x="115" y="102" width="159.1" height="14" rx="3"/><text class="ch-lbl" x="110" y="113" text-anchor="end">ERNIE 5.0-Base</text><text class="ch-val" x="278.1" y="113">88.4</text>
+        <rect class="bar-o" x="115" y="126" width="153.7" height="14" rx="3"/><text class="ch-lbl" x="110" y="137" text-anchor="end">Seedream 4.0</text><text class="ch-val" x="272.7" y="137">85.4</text>
+        <rect class="bar-o" x="115" y="150" width="151.2" height="14" rx="3"/><text class="ch-lbl" x="110" y="161" text-anchor="end">GPT-Image</text><text class="ch-val" x="270.2" y="161">84.0</text>
+        <line class="axis" x1="115" y1="172" x2="295" y2="172"/><text class="ch-ax" x="115" y="184" text-anchor="middle">0</text><text class="ch-ax" x="205" y="184" text-anchor="middle">50</text><text class="ch-ax" x="295" y="184" text-anchor="middle">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 330 190" role="img" aria-label="VBench Semantic 柱状图">
+        <text class="ch-t" x="0" y="14">VBench Semantic（↑）</text><text class="ch-src" x="330" y="14" text-anchor="end">表 6</text>
+        <rect class="bar-q" x="115" y="30" width="150.1" height="14" rx="3"/><text class="ch-lbl" x="110" y="41" text-anchor="end">ERNIE 5.0</text><text class="ch-val" x="269.1" y="41">83.40</text>
+        <rect class="bar-o" x="115" y="54" width="148.5" height="14" rx="3"/><text class="ch-lbl" x="110" y="65" text-anchor="end">Veo3</text><text class="ch-val" x="267.5" y="65">82.49</text>
+        <rect class="bar-qi" x="115" y="78" width="148.2" height="14" rx="3"/><text class="ch-lbl" x="110" y="89" text-anchor="end">ERNIE 5.0-Base</text><text class="ch-val" x="267.2" y="89">82.31</text>
+        <rect class="bar-o" x="115" y="102" width="138.4" height="14" rx="3"/><text class="ch-lbl" x="110" y="113" text-anchor="end">HunyuanVideo-1</text><text class="ch-val" x="257.4" y="113">76.88</text>
+        <rect class="bar-o" x="115" y="126" width="137.0" height="14" rx="3"/><text class="ch-lbl" x="110" y="137" text-anchor="end">Wan2.1-14B-0725</text><text class="ch-val" x="256.0" y="137">76.11</text>
+        <line class="axis" x1="115" y1="148" x2="295" y2="148"/><text class="ch-ax" x="115" y="160" text-anchor="middle">0</text><text class="ch-ax" x="205" y="160" text-anchor="middle">50</text><text class="ch-ax" x="295" y="160" text-anchor="middle">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 330 190" role="img" aria-label="VBench Overall 柱状图">
+        <text class="ch-t" x="0" y="14">VBench Overall（↑）</text><text class="ch-src" x="330" y="14" text-anchor="end">表 6</text>
+        <rect class="bar-o" x="115" y="30" width="153.1" height="14" rx="3"/><text class="ch-lbl" x="110" y="41" text-anchor="end">Veo3</text><text class="ch-val" x="272.1" y="41">85.06</text>
+        <rect class="bar-q" x="115" y="54" width="151.6" height="14" rx="3"/><text class="ch-lbl" x="110" y="65" text-anchor="end">ERNIE 5.0</text><text class="ch-val" x="270.6" y="65">84.20</text>
+        <rect class="bar-qi" x="115" y="78" width="150.8" height="14" rx="3"/><text class="ch-lbl" x="110" y="89" text-anchor="end">ERNIE 5.0-Base</text><text class="ch-val" x="269.8" y="89">83.78</text>
+        <rect class="bar-o" x="115" y="102" width="150.6" height="14" rx="3"/><text class="ch-lbl" x="110" y="113" text-anchor="end">Wan2.1-14B-0725</text><text class="ch-val" x="269.6" y="113">83.69</text>
+        <rect class="bar-o" x="115" y="126" width="150.2" height="14" rx="3"/><text class="ch-lbl" x="110" y="137" text-anchor="end">HunyuanVideo-1</text><text class="ch-val" x="269.2" y="137">83.43</text>
+        <line class="axis" x1="115" y1="148" x2="295" y2="148"/><text class="ch-ax" x="115" y="160" text-anchor="middle">0</text><text class="ch-ax" x="205" y="160" text-anchor="middle">50</text><text class="ch-ax" x="295" y="160" text-anchor="middle">100</text>
+      </svg>
+    </div>
+  </div>
+  <div class="chart-legend"><span class="l1">ERNIE 5.0（后训练）</span><span class="l2">ERNIE 5.0-Base</span><span class="l3">对比模型</span></div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>VBench</th><th>HunyuanVideo-1</th><th>Wan2.1-14B-0725</th><th>Veo3</th><th class="q">ERNIE 5.0-Base</th><th class="q">ERNIE 5.0</th></tr></thead>
+      <tbody>
+        <tr><td>Quality</td><td>85.07</td><td>85.59</td><td class="best">85.70</td><td class="q">84.14</td><td class="q">84.40</td></tr>
+        <tr><td>Semantic</td><td>76.88</td><td>76.11</td><td>82.49</td><td class="q">82.31</td><td class="q best">83.40</td></tr>
+        <tr><td>Overall</td><td>83.43</td><td>83.69</td><td class="best">85.06</td><td class="q">83.78</td><td class="q">84.20</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">差值<span class="src calc">推算</span>：GenEval 比 Qwen-Image 低 0.9、比 Nano Banana Pro 高 1.1；Base → 后训练 +1.7。VBench Semantic 比 Veo3 高 0.91，Overall 低 0.86，Quality 低于全部三个外部基线。原文未说明这些数字是否经过级联扩散 refiner、用什么分辨率与采样设置。</p>
+  <div class="keybox"><span class="k-best">本页按数值标出该行最高</span><span class="k-q">ERNIE 列</span></div>
+
+  <h3>文本：后训练模型（节选，表 2）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>Benchmark</th><th>DS V3.2-Thinking</th><th>Gemini 2.5-Pro</th><th>GPT-5 (High)</th><th>Gemini 3-Pro</th><th class="q">ERNIE 5.0</th></tr></thead>
+      <tbody>
+        <tr><td>SimpleQA</td><td>28.02</td><td>54.00</td><td>51.30</td><td>69.33</td><td class="q best">74.01</td></tr>
+        <tr><td>ChineseSimpleQA</td><td>72.37</td><td>76.50</td><td>75.10</td><td>84.08</td><td class="q best">86.03</td></tr>
+        <tr><td>MMLU-Pro</td><td>85.00</td><td>86.20</td><td class="best">87.10</td><td>86.88</td><td class="q">83.80</td></tr>
+        <tr><td>HLE</td><td>25.10</td><td>21.60</td><td>24.80</td><td class="best">37.50</td><td class="q">25.81</td></tr>
+        <tr><td>GPQA-Diamond</td><td>82.40</td><td>86.40</td><td>85.70</td><td class="best">91.90</td><td class="q">86.36</td></tr>
+        <tr class="hl"><td>AIME 2025</td><td>93.10</td><td>88.00</td><td>94.60</td><td class="best">95.00</td><td class="q">89.06</td></tr>
+        <tr class="hl"><td>HMMT 2025</td><td>86.67</td><td>81.20</td><td>93.30</td><td class="best">93.33</td><td class="q">79.58</td></tr>
+        <tr><td>LiveCodeBench v6</td><td>81.06</td><td>72.90</td><td>81.70</td><td class="best">86.34</td><td class="q">76.21</td></tr>
+        <tr><td>MultiChallenge</td><td>42.43</td><td>51.50</td><td>58.30</td><td>62.50</td><td class="q best">65.98</td></tr>
+        <tr><td>Multi-IF</td><td>71.17</td><td>76.10</td><td>70.00</td><td>81.15</td><td class="q best">85.56</td></tr>
+        <tr><td>TAU2-Bench</td><td>80.30</td><td>56.20</td><td>80.10</td><td class="best">85.40</td><td class="q">78.79</td></tr>
+        <tr><td>ACEBench-zh</td><td>83.40</td><td>87.50</td><td>83.60</td><td>85.00</td><td class="q best">89.60</td></tr>
+        <tr><td>SpreadSheetBench</td><td>35.29</td><td>27.70</td><td>34.00</td><td class="best">55.36</td><td class="q">40.08</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">表 2 全部 21 行中，ERNIE 5.0 有 6 行为该行最高；对 GPT-5 (High) 12 胜 9 负，对 Gemini 3-Pro 9 胜 12 负<span class="src calc">推算</span>。高亮行为作者承认的「最难推理」差距<span class="src">§6.1</span>。</p>
+
+  <details class="more"><summary>表 1：预训练 Base 模型（22 项，含 n-shot 记号）<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap tall">
+      <table>
+        <thead><tr><th>Benchmark</th><th>DS V3.2-Exp-Base</th><th>Kimi K2-Base</th><th class="q">ERNIE 5.0-Base</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="4">Knowledge</td></tr>
+          <tr><td>PreciseWikiQA<span class="sub-shot">10-shot</span></td><td>52.60</td><td>61.66</td><td class="q best">74.48</td></tr>
+          <tr><td>PopQA<span class="sub-shot">10-shot</span></td><td>48.73</td><td>51.74</td><td class="q best">65.24</td></tr>
+          <tr><td>HotPotQA<span class="sub-shot">10-shot</span></td><td>53.11</td><td>57.07</td><td class="q best">67.08</td></tr>
+          <tr><td>ChineseSimpleQA<span class="sub-shot">10-shot</span></td><td>74.19</td><td>78.29</td><td class="q best">90.09</td></tr>
+          <tr class="grp"><td colspan="4">General</td></tr>
+          <tr><td>MMLU-Pro<span class="sub-shot">5-shot</span></td><td>68.27</td><td>67.19</td><td class="q best">75.58</td></tr>
+          <tr><td>MMCU<span class="sub-shot">5-shot</span></td><td>91.16</td><td>90.63</td><td class="q best">93.92</td></tr>
+          <tr><td>AGIEval<span class="sub-shot">5-shot</span></td><td>78.20</td><td>76.43</td><td class="q best">80.22</td></tr>
+          <tr><td>MMLU<span class="sub-shot">5-shot</span></td><td>88.60</td><td>88.40</td><td class="q best">90.58</td></tr>
+          <tr><td>MMLU-Redux<span class="sub-shot">5-shot</span></td><td>90.50</td><td>89.88</td><td class="q best">92.19</td></tr>
+          <tr><td>C-Eval<span class="sub-shot">5-shot</span></td><td>90.70</td><td class="best">92.49</td><td class="q">91.98</td></tr>
+          <tr><td>CMMLU<span class="sub-shot">5-shot</span></td><td>88.43</td><td class="best">90.61</td><td class="q">89.69</td></tr>
+          <tr><td>BBH<span class="sub-shot">5-shot, w.o.-cot (Direct)</span></td><td>73.50</td><td>70.07</td><td class="q best">75.69</td></tr>
+          <tr><td>WinoGrande<span class="sub-shot">5-shot</span></td><td>88.87</td><td>87.61</td><td class="q best">92.66</td></tr>
+          <tr class="grp"><td colspan="4">STEM</td></tr>
+          <tr><td>MATH (CoT)<span class="sub-shot">8-shot</span></td><td>65.70</td><td>65.90</td><td class="q best">73.89</td></tr>
+          <tr><td>GPQA-Diamond<span class="sub-shot">5-shot</span></td><td>53.01</td><td>48.10</td><td class="q best">57.30</td></tr>
+          <tr class="grp"><td colspan="4">Coding</td></tr>
+          <tr><td>LiveCodeBench v6<span class="sub-shot">1-shot</span></td><td>24.90</td><td>26.30</td><td class="q best">31.94</td></tr>
+          <tr><td>HumanEval+<span class="sub-shot">0-shot</span></td><td>53.99</td><td>70.73</td><td class="q best">80.86</td></tr>
+          <tr><td>MBPP+<span class="sub-shot">0-shot</span></td><td>78.77</td><td class="best">79.36</td><td class="q">79.10</td></tr>
+          <tr><td>CRUXEval-I<span class="sub-shot">1-shot</span></td><td>59.54</td><td>73.64</td><td class="q best">79.75</td></tr>
+          <tr><td>CRUXEval-O<span class="sub-shot">1-shot</span></td><td>71.28</td><td>81.61</td><td class="q best">84.01</td></tr>
+          <tr class="grp"><td colspan="4">Multilingual</td></tr>
+          <tr><td>MMMLU<span class="sub-shot">5-shot</span></td><td>70.99</td><td>61.50</td><td class="q best">78.94</td></tr>
+          <tr><td>INCLUDE<span class="sub-shot">5-shot</span></td><td>77.45</td><td>72.29</td><td class="q best">77.81</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">小字为原表下标（few-shot 数；BBH 为不带 CoT 的直接作答）。原表称每行最佳加粗，纯文本无法确认加粗位置，本页按数值标注：ERNIE 5.0-Base 22 项中 19 项最高<span class="src calc">推算</span>，C-Eval、CMMLU、MBPP+ 落后 Kimi K2-Base。LiveCodeBench v6 题目区间为 2408–2505<span class="src">§6.1</span>。</p>
+  </div></details>
+
+  <details class="more"><summary>表 2 余下 8 项<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th>DS V3.2-Thinking</th><th>Gemini 2.5-Pro</th><th>GPT-5 (High)</th><th>Gemini 3-Pro</th><th class="q">ERNIE 5.0</th></tr></thead>
+        <tbody>
+          <tr><td>HumanEval+</td><td>90.80</td><td>94.50</td><td>92.70</td><td class="best">95.12</td><td class="q">94.48</td></tr>
+          <tr><td>MBPP+</td><td>81.48</td><td>73.80</td><td>83.10</td><td class="best">86.21</td><td class="q">82.54</td></tr>
+          <tr><td>ZebraLogic</td><td>97.60</td><td>92.90</td><td class="best">98.80</td><td>95.50</td><td class="q">96.50</td></tr>
+          <tr><td>BBEH</td><td>67.04</td><td>68.80</td><td>69.00</td><td class="best">78.80</td><td class="q">66.63</td></tr>
+          <tr><td>IFEval</td><td>91.87</td><td>89.50</td><td class="best">94.10</td><td>92.24</td><td class="q">93.35</td></tr>
+          <tr><td>ACEBench-en</td><td>81.40</td><td>80.90</td><td>79.30</td><td>80.90</td><td class="q best">87.70</td></tr>
+          <tr><td>BFCL v4</td><td>61.18</td><td>52.30</td><td>61.60</td><td class="best">68.14</td><td class="q">66.47</td></tr>
+          <tr><td>BrowseComp-zh</td><td class="best">65.00</td><td>28.70</td><td>61.90</td><td>63.67</td><td class="q">64.71</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></details>
+
+  <h3>视觉理解：后训练模型（节选，表 3）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>Benchmark</th><th>Qwen3-VL Thinking</th><th>Gemini 2.5-Pro</th><th>GPT-5 (High)</th><th>Gemini 3-Pro</th><th class="q">ERNIE 5.0</th></tr></thead>
+      <tbody>
+        <tr><td>MMMU-Pro</td><td>68.28</td><td>68.80</td><td>78.40</td><td class="best">81.00</td><td class="q">68.63</td></tr>
+        <tr><td>VLMAreBlind</td><td>75.13</td><td>76.54</td><td>69.60</td><td>80.83</td><td class="q best">91.38</td></tr>
+        <tr><td>ChartQA</td><td>84.60</td><td>84.08</td><td>78.24</td><td class="best">89.44</td><td class="q">87.80</td></tr>
+        <tr><td>DocVQA<span class="sub-shot">val</span></td><td>95.44</td><td>91.43</td><td>94.16</td><td>90.70</td><td class="q best">95.45</td></tr>
+        <tr><td>OCRBench</td><td>863</td><td>866</td><td>804</td><td class="best">909</td><td class="q">878</td></tr>
+        <tr><td>ChartXiv-RQ</td><td>63.00</td><td>67.80</td><td>81.10</td><td class="best">81.40</td><td class="q">67.10</td></tr>
+        <tr><td>CountBench</td><td>92.67</td><td>91.00</td><td>88.88</td><td class="best">97.35</td><td class="q">96.54</td></tr>
+        <tr><td>HallusionBench</td><td>64.01</td><td>63.70</td><td>66.58</td><td class="best">73.48</td><td class="q">63.87</td></tr>
+        <tr><td>VideoMME (w sub)</td><td>80.97</td><td>86.90</td><td>87.36</td><td class="best">88.40</td><td class="q">81.35</td></tr>
+        <tr><td>MMVU</td><td>71.10</td><td>76.10</td><td class="best">87.34</td><td>76.30</td><td class="q">72.24</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">表 3 共 22 行，ERNIE 5.0 仅 VLMAreBlind 与 DocVQA（领先 Qwen3-VL 0.01）两行最高<span class="src calc">推算</span>；OCRBench 为 0–1000 分制。视频理解三项都在 GPT-5 (High) 和 Gemini 3-Pro 之后。</p>
+
+  <details class="more"><summary>表 3 余下 12 项 + 表 4（预训练视觉 Base，仅报自家数字）<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th>Qwen3-VL Thinking</th><th>Gemini 2.5-Pro</th><th>GPT-5 (High)</th><th>Gemini 3-Pro</th><th class="q">ERNIE 5.0</th><th class="q">ERNIE 5.0-Base（表 4）</th></tr></thead>
+        <tbody>
+          <tr><td>MathVista</td><td>86.80</td><td>82.70</td><td>82.10</td><td class="best">89.20</td><td class="q">84.80</td><td class="q">84.40</td></tr>
+          <tr><td>MathVerse</td><td>83.96</td><td>86.27</td><td>84.19</td><td class="best">91.62</td><td class="q">85.13</td><td class="q">81.45</td></tr>
+          <tr><td>MathVision</td><td>71.84</td><td>73.30</td><td>78.06</td><td class="best">87.27</td><td class="q">74.34</td><td class="q">68.75</td></tr>
+          <tr><td>VisualPuzzle</td><td>57.01</td><td>61.51</td><td>57.75</td><td class="best">71.48</td><td class="q">64.82</td><td class="q">54.24</td></tr>
+          <tr><td>VisuLogic</td><td>31.93</td><td>32.80</td><td>29.80</td><td class="best">37.60</td><td class="q">32.00</td><td class="q">28.50</td></tr>
+          <tr><td>AI2D</td><td>96.96</td><td>97.09</td><td>95.63</td><td class="best">97.70</td><td class="q">96.89</td><td class="q">96.02</td></tr>
+          <tr><td>ChartXiv-DQ</td><td>92.92</td><td>93.38</td><td>91.17</td><td class="best">95.95</td><td class="q">89.05</td><td class="q">90.35</td></tr>
+          <tr><td>SimpleVQA</td><td>62.37</td><td>68.19</td><td>55.84</td><td class="best">74.06</td><td class="q">67.64</td><td class="q">61.54</td></tr>
+          <tr><td>MMStar</td><td>76.88</td><td>77.50</td><td>82.10</td><td class="best">82.96</td><td class="q">75.54</td><td class="q">74.07</td></tr>
+          <tr><td>BLINK</td><td>66.60</td><td>70.60</td><td>70.39</td><td class="best">77.49</td><td class="q">70.02</td><td class="q">64.12</td></tr>
+          <tr><td>CV-Bench</td><td>87.57</td><td>84.87</td><td>84.99</td><td class="best">90.07</td><td class="q">87.19</td><td class="q">86.96</td></tr>
+          <tr><td>Video-MMMU</td><td>80.00</td><td>83.60</td><td>84.60</td><td class="best">87.60</td><td class="q">81.11</td><td class="q">—</td></tr>
+          <tr><td>ChartQA</td><td colspan="4" style="text-align:center;color:var(--muted)">见上表</td><td class="q">87.80</td><td class="q">87.68</td></tr>
+          <tr><td>OCRBench</td><td colspan="4" style="text-align:center;color:var(--muted)">见上表</td><td class="q">878</td><td class="q">875</td></tr>
+          <tr><td>ChartXiv-RQ</td><td colspan="4" style="text-align:center;color:var(--muted)">见上表</td><td class="q">67.10</td><td class="q">62.70</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">表 4 只报 ERNIE 5.0-Base 自身，原文理由是「公开的视觉 base 模型及结果很少」。注意 ChartXiv-DQ 后训练（89.05）反而低于 Base（90.35）<span class="src calc">推算</span>。</p>
+  </div></details>
+
+  <h3>音频（表 7–8）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>Benchmark</th><th>Kimi Audio</th><th>GPT-4o-Audio</th><th>Qwen3-Omni-Instruct</th><th>LongCat-Flash-Omni</th><th>Gemini-3-Pro</th><th class="q">ERNIE 5.0-Base</th><th class="q">ERNIE 5.0</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="8">ASR · WER（↓）</td></tr>
+        <tr><td>AISHELL-1</td><td>0.60</td><td>3.52</td><td>0.84</td><td>0.63</td><td>3.04</td><td class="q">0.75</td><td class="q best">0.31</td></tr>
+        <tr><td>WenetSpeech net | meeting</td><td>5.37 | 6.28</td><td>15.30 | 32.27</td><td class="best">4.69 | 5.89</td><td>6.09 | 6.69</td><td>10.94 | 12.08</td><td class="q">11.57 | 22.85</td><td class="q">7.27 | 7.36</td></tr>
+        <tr><td>LibriSpeech clean | other</td><td>1.28 | 2.42</td><td>1.39 | 3.75</td><td>1.22 | 2.48</td><td>1.57 | 4.01</td><td>2.74 | 4.40</td><td class="q">1.47 | 3.73</td><td class="q">1.16 | 2.61</td></tr>
+        <tr><td>Fleurs-zh</td><td>2.69</td><td>2.44</td><td>2.20</td><td>3.99</td><td>4.98</td><td class="q">1.58</td><td class="q best">0.83</td></tr>
+        <tr class="grp"><td colspan="8">VoiceBench / 音频理解（↑）</td></tr>
+        <tr><td>MMSU</td><td>62.17</td><td>78.90</td><td>69.00</td><td>81.95</td><td class="best">92.16</td><td class="q">76.61</td><td class="q">84.68</td></tr>
+        <tr><td>MMAU</td><td>65.20</td><td>68.40</td><td>77.50</td><td>75.90</td><td class="best">80.80</td><td class="q best">80.80</td><td class="q">80.40</td></tr>
+        <tr><td>TUT2017</td><td>65.25</td><td>20.74</td><td>40.74</td><td>65.43</td><td>61.42</td><td class="q">57.65</td><td class="q best">68.09</td></tr>
+        <tr><td>CochlScene</td><td>80.42</td><td>34.94</td><td>43.03</td><td>70.02</td><td>74.60</td><td class="q">75.24</td><td class="q best">82.77</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">SEED-TTS WER（↓，test-zh | test-en）：ERNIE 5.0 <b>1.35 | 1.54</b>，Base 3.41 | 2.44；Qwen3-Omni 1.07 | 1.39，CosyVoice 3 0.71 | 1.45<span class="src">表 8</span>。作者承认专用 TTS 更强<span class="src">§6.3</span>。LibriSpeech clean 1.16 为该列最低，other 2.61 落后 Kimi Audio 2.42。</p>
+
+  <details class="more"><summary>表 7 余下行（AISHELL-2、Fleurs-en、VoiceBench 其余、ClothoAQA、VocalSound）<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th>Kimi Audio</th><th>GPT-4o-Audio</th><th>Qwen3-Omni-Instruct</th><th>LongCat-Flash-Omni</th><th>Gemini-3-Pro</th><th class="q">ERNIE 5.0-Base</th><th class="q">ERNIE 5.0</th></tr></thead>
+        <tbody>
+          <tr><td>AISHELL-2（↓）</td><td>2.56</td><td>4.26</td><td class="best">2.34</td><td>2.78</td><td>4.98</td><td class="q">2.90</td><td class="q">2.64</td></tr>
+          <tr><td>Fleurs-en（↓）</td><td>4.44</td><td>3.32</td><td class="best">2.72</td><td>5.02</td><td>3.63</td><td class="q">4.39</td><td class="q">3.14</td></tr>
+          <tr><td>AlpacaEval</td><td>4.46</td><td>4.73</td><td>4.74</td><td class="best">4.94</td><td>4.80</td><td class="q">4.65</td><td class="q">4.62</td></tr>
+          <tr><td>CommonEval</td><td>3.97</td><td>4.37</td><td>4.54</td><td>4.32</td><td class="best">4.68</td><td class="q">4.39</td><td class="q">3.74</td></tr>
+          <tr><td>SD-QA</td><td>63.12</td><td>90.10</td><td>76.90</td><td>82.46</td><td class="best">94.39</td><td class="q">86.44</td><td class="q">77.58</td></tr>
+          <tr><td>OpenBookQA</td><td>83.52</td><td>87.90</td><td>89.70</td><td>93.41</td><td class="best">96.26</td><td class="q">88.35</td><td class="q">92.97</td></tr>
+          <tr><td>IFEval</td><td>61.10</td><td>66.81</td><td>77.80</td><td>77.99</td><td class="best">87.45</td><td class="q">71.17</td><td class="q">72.67</td></tr>
+          <tr><td>AdvBench</td><td class="best">100.00</td><td>99.23</td><td>99.30</td><td class="best">100.00</td><td>98.46</td><td class="q">98.65</td><td class="q">99.23</td></tr>
+          <tr><td>ClothoAQA</td><td>72.21</td><td>61.87</td><td class="best">75.16</td><td>72.83</td><td>74.41</td><td class="q">65.70</td><td class="q">73.68</td></tr>
+          <tr><td>VocalSound</td><td class="best">94.85</td><td>82.37</td><td>91.60</td><td>92.76</td><td>92.01</td><td class="q">91.48</td><td class="q">90.73</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">VoiceBench 中 CommonEval（4.39 → 3.74）与 SD-QA（86.44 → 77.58）后训练低于 Base<span class="src calc">推算</span>，原文未解释。</p>
+  </div></details>
+
+  <h3>弹性子模型 vs 全模型（ERNIE 5.0-Exp，表 12）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>Model</th><th>AVG.</th><th>ZebraLogic</th><th>LCB v6</th><th>TAU2</th><th>MMMU</th><th>MathVista</th><th>VisualPuzzle</th><th>SimpleVQA</th></tr></thead>
+      <tbody>
+        <tr><td>ERNIE 5.0-Exp</td><td class="best">75.55</td><td>95.00</td><td class="best">73.35</td><td class="best">79.35</td><td>74.11</td><td>83.70</td><td>59.93</td><td class="best">63.40</td></tr>
+        <tr><td>-ES<sub>25.0%</sub>（top-k 降到 25%）</td><td>74.43</td><td>94.10</td><td>70.70</td><td>77.34</td><td>73.78</td><td class="best">84.90</td><td>57.98</td><td>62.19</td></tr>
+        <tr class="hl"><td>-EA<sub>35.8%</sub>（三维弹性全开）</td><td>75.17</td><td class="best">95.20</td><td>70.93</td><td>77.23</td><td class="best">75.11</td><td>84.50</td><td class="best">60.39</td><td>62.86</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">ES<sub>25.0%</sub>：只在推理时减 top-k，均分 −1.12；EA<sub>35.8%</sub>：53.7% 激活 / 35.8% 总参，从 Exp-Base 抽出后用同样数据与策略重做中训与后训练，均分 −0.38<span class="src calc">推算</span>。这是实验版模型，不是最终 ERNIE 5.0；LCB v6 与 TAU2 掉得最多（−2.4 / −2.1）。</p>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>万亿级、四模态、理解 + 生成同一个自回归 MoE</h4><p>不是 LLM + 外挂扩散解码器，而是所有模态从零在 Next-Group-of-Tokens 目标下联合训练，路由与模态无关<span class="src">§2.1</span>。作者称公开模型中首例<span class="src">摘要</span>。</p><p class="why">可核对点：图 8–10 给了专家利用率、跨模态 IoU 与路由熵；但缺「模态隔离 vs 模态无关」的对照消融。</p></div>
+    <div class="card nv"><h4>把 Once-For-All 弹性搬进万亿级预训练</h4><p>深度 / 宽度（专家总数）/ top-k 三维同时弹性，子网络与全模型同一次反传<span class="src">§3.3</span>；在 Exp 规模上给了量化结果<span class="src">表 12</span>。</p><p class="why">可核对点：表 9–12；规模放大后只给均分与 7 项基准，没有 loss 曲线。</p></div>
+    <div class="card nv"><h4>视觉理解绕开量化瓶颈：量化前 CNN+ViT 双路 + 注意力 Patch Merger</h4><p>生成 token 与理解特征出自同一视觉前端的不同位置——理解取量化前特征<span class="src">§2.2.2</span>。</p><p class="why">可核对点：作者称优于 CNN-only / ViT-only 与 MLP 融合，但正文无对比数字。</p></div>
+    <div class="card nv"><h4>NFSP 生成的一组稳定化技巧</h4><p>低→高 bit 的渐进 tokenizer 切换、历史 token 随机翻 bit 自纠、早期尺度 loss 重加权、Uni-RoPE 多尺度中心对齐<span class="src">§2.2.1 · §2.2.3</span>。NFSP 本身引自 Ji et al., 2026。</p><p class="why">可核对点：均无单项消融。</p></div>
+    <div class="card nv"><h4>超稀疏 MoE 上的统一多模态 RL 稳定化</h4><p>U-RB（保序的长尾 rollout 复用）、MISC（token 级 IcePop mask + GSPO 序列比率）、WPSM（已掌握正样本降权）、AHRL（退火的 think 前缀提示）<span class="src">§4</span>。</p><p class="why">可核对点：只有图 6 一组 MISC 对照曲线；其余三项无量化结果。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING PEOPLE</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">ERNIE 5.0 不是编辑模型，也没报编辑评测；下面每条先写论文怎么做（带来源），再给一条<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">表征与条件</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>源图条件别只用生成 latent</h4>
+        <p class="paper">论文：量化前的降维会丢细粒度语义，所以理解侧改用量化前 CNN+ViT 双路特征；作者明确说这套表示要支撑「像素级图像和视频编辑」<span class="src">§2.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型里源图同时以「语义编码（ViT 类）」和「VAE/离散 latent」两路进入，并在评测里做一次去掉语义路的消融，重点看文字类与计数类指令。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>保留区评测单拆文字与人脸</h4>
+        <p class="paper">论文：tokenizer 设计目标点名「场景文字和人脸」的忠实重建，并加 GAN 损失和语义正则<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑保真评测把未编辑区域里的文字区（OCR 字符差异）和人脸区（身份相似度）单独出分，并先测 tokenizer/VAE 的纯重建上限，区分「编辑改坏」和「编码就坏」。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>理解与生成的容量几乎不共享</h4>
+        <p class="paper">论文：图像理解与图像生成在 top 25% 专家上的 IoU 首/中/末层仅 0.22 / 0.22 / 0.25，而图像生成与视频生成为 0.64 / 0.83 / 0.78<span class="src">图 9</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>不要默认「加理解数据就能提升编辑」；做统一编辑模型时按任务记录路由或激活重叠，再决定理解数据配多少、是否单独加 VQA 式指令校验数据。</p></div>
+    </div>
+
+    <div class="impl-group">数据与 caption</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>caption 与 metadata 分开存</h4>
+        <p class="paper">论文：所有配对和交错数据都「附 metadata 与 caption」，并按「输入模态 × 输出模态」在统一平台上组织<span class="src">§3.1</span>；caption 怎么生成<span class="nd">原文未披露</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按 (源模态, 目标模态, 编辑类型) 建索引；自然语言指令、结构化编辑描述（op / 区域 / 属性）与来源 metadata 三者分字段存，caption 写明生成模型与版本，方便日后按版本重洗。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>编辑训练集对评测集去污染</h4>
+        <p class="paper">论文：启发式 + 模型过滤、大规模去重、基准去污染三步并列<span class="src">§3.1</span>，但没写方法。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>对 GEdit / ImgEdit 等编辑基准，用源图感知哈希 + 指令文本近重复双重匹配做去污染，并在报告中写明命中数与匹配阈值——ERNIE 这里的空白正好是反例。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>多任务混训按 loss 尺度配平</h4>
+        <p class="paper">论文：不公开数据配比，而是用 posterior-based loss weighting 把各模态 AR loss 缩放到同一区间<span class="src">§3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>T2I、局部编辑、全局风格、多图参考混训时，先按任务分别记录 loss 量级；配比调参前先做 loss 归一化，否则「配比」实际是在调 loss 权重。</p></div>
+    </div>
+
+    <div class="impl-group">训练与评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">T1</span>多轮编辑用「污染历史」训自纠</h4>
+        <p class="paper">论文：训练时随机翻转历史 token 的 bit，监督模型纠回当前尺度真值，以抵抗长序列误差累积<span class="src">§2.2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>多轮编辑数据里，把上一轮的输入替换为带轻度退化（压缩、模糊、模型自身输出）的版本，而目标仍是干净图，专门评测第 3–5 轮的累计漂移。</p></div>
+      <div class="impl"><h4><span class="ix">T2</span>refiner 之后再测保真</h4>
+        <p class="paper">论文：高分辨率细节交给独立训练的级联扩散 refiner，训练对是「受控退化低清 ↔ 高清」<span class="src">§2.2.3</span>；评测是否经过 refiner<span class="nd">原文未说明</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>若编辑链路有超分/refiner，保留区一致性指标必须在 refiner 之后算，并报告 refiner 前后两组数字；退化种类要写进数据卡。</p></div>
+      <div class="impl"><h4><span class="ix">T3</span>编辑 RL：已掌握样本降权 + 难题给提示</h4>
+        <p class="paper">论文：WPSM 按 query 成功率与熵屏蔽「已学会」正样本；AHRL 对全零奖励难题拼接部分参考思路，并按 SFT pass@k 退火<span class="src">§4.2–4.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 中按「图 × 指令」记录 verifier 通过率，通过率高的降权；对一直 0 分的难指令，先提供 mask/区域提示或分步指令，再随通过率退火撤掉。</p></div>
+      <div class="impl"><h4><span class="ix">T4</span>报告里写清对比口径</h4>
+        <p class="paper">论文：生成只报 GenEval、VBench，内部 ERNIE-Eval 跑分，未说明基线是复测还是引用<span class="src">§6</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测表每列注明：复测 / 引用、分辨率、步数、是否 refiner、judge 模型版本；没有这几项的跨模型比较只当参考。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>规模与开放性不明。</b>只说「万亿参数级」与激活率 &lt;3%，总参数、激活参数、层数、专家数都没给；全文未提权重发布与许可证。</li>
+    <li class="key"><b>数据几乎不可复现。</b>无总 token 数、无模态配比、无 caption 方法、无过滤阈值、无 SFT/RL 数据规模<span class="src">§3.1 · §4</span>。</li>
+    <li><b>引言说「消融凸显模态无关路由的有效性」，正文只有可视化。</b>图 8–10 是利用率/IoU/熵分析，没有与 ERNIE 4.5 式模态隔离路由的对照实验<span class="src">§1 · §6.4.1</span>。</li>
+    <li><b>正文自相矛盾：深度弹性的采样概率。</b>§3.3 写全深 75% / 子网 25%；§6.4.2 写「与 ERNIE 5.0 一致」的 80% / 20%。</li>
+    <li><b>同一小模型基线 loss 不一致。</b>表 9、表 11 基线为 1.945，表 10 基线为 1.957，原文未解释差异来源。</li>
+    <li><b>关键设计缺消融。</b>Attention-based Patch Merger「一致优于」CNN-only / ViT-only / MLP 融合、渐进 tokenizer 切换、翻 bit 自纠、posterior loss 加权、U-RB / WPSM / AHRL，均无数字<span class="src">§2.2 · §3.2 · §4</span>。</li>
+    <li><b>生成评测窄且口径不清。</b>只有 GenEval 与 VBench；无编辑基准、无人评、无文字渲染评测；不说明是否经过级联扩散 refiner。VBench Quality 84.40 低于三个外部基线<span class="src">表 6</span>。</li>
+    <li><b>评测不可外部复现。</b>全部在内部 ERNIE-Eval 上跑，基线复测/引用未说明<span class="src">§6</span>。</li>
+    <li><b>MISC 的「按模态敏感度调节信赖域」在式 (3) 中看不到显式的模态项</b>，具体如何实现未说明；α、β、τ、η、γ、p<sub>initial</sub> 均未给值<span class="src">§4.2–4.3</span>。</li>
+    <li><b>部分指标后训练反降。</b>ChartXiv-DQ 90.35 → 89.05，VoiceBench CommonEval 4.39 → 3.74、SD-QA 86.44 → 77.58<span class="src">表 3–4 · 表 7</span>，原文未讨论。</li>
+    <li><b>弹性结果来自 Exp 版而非最终模型。</b>表 12 是 ERNIE 5.0-Exp 及其变体，最终 ERNIE 5.0 的子模型是否发布、表现如何未给。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th style="text-align:left">内容</th><th style="text-align:left">本页</th></tr></thead>
+      <tbody>
+        <tr><td>首页图</td><td>摘要页截图（fig0-teaser.jpg，p.1）——仅摘要文字，本页未引用</td><td>—</td></tr>
+        <tr><td>图 1</td><td>总体架构：统一骨干 + 模态无关路由的超稀疏 MoE（p.4）</td><td><a href="#arch">§03 架构</a></td></tr>
+        <tr><td>图 2</td><td>视觉理解（CNN+ViT → Patch Merger）与生成（NFSP）统一结构（p.6）</td><td><a href="#arch">§03 架构</a></td></tr>
+        <tr><td>图 3</td><td>音频 depth-wise 理解与 NCP 生成（p.8）</td><td><a href="#arch">§03 架构</a></td></tr>
+        <tr><td>图 4</td><td>弹性训练：深度 / 宽度 / 稀疏度（p.10）</td><td><a href="#train">§05 训练</a></td></tr>
+        <tr><td>图 5</td><td>U-RB 与 Sync RL / APRIL 对比示意（p.12）——未裁图</td><td><a href="#train">§05 文字</a></td></tr>
+        <tr><td>图 6</td><td>MISC vs GSPO-IcePop 训练曲线（p.13）</td><td><a href="#train">§05 训练</a></td></tr>
+        <tr><td>图 7</td><td>AHRL 提示增强示例（p.14）——未裁图</td><td><a href="#train">§05 文字</a></td></tr>
+        <tr><td>图 8</td><td>各模态/任务的专家利用率（首/中/末层，p.24）——未裁图</td><td><a href="#novel">§07</a></td></tr>
+        <tr><td>图 9</td><td>跨模态 top 25% 专家 IoU（p.24）——未裁图，数值引用于 E3</td><td><a href="#impl">§08 E3</a></td></tr>
+        <tr><td>图 10</td><td>各层各模态路由归一化熵（p.25）——未裁图</td><td><a href="#arch">§03 改动清单</a></td></tr>
+        <tr><td>表 1</td><td>预训练 Base 文本基准 vs DS V3.2-Exp-Base / Kimi K2-Base（p.18）</td><td><a href="#eval">§06 折叠</a></td></tr>
+        <tr><td>表 2</td><td>后训练文本基准（p.19）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 3</td><td>后训练视觉理解基准（p.20）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 4</td><td>预训练视觉 Base 自身结果（p.21）</td><td><a href="#eval">§06 折叠</a></td></tr>
+        <tr><td>表 5</td><td>GenEval（p.21）</td><td><a href="#eval">§06 图表</a></td></tr>
+        <tr><td>表 6</td><td>VBench（p.21–22）</td><td><a href="#eval">§06 图表</a></td></tr>
+        <tr><td>表 7</td><td>ASR / VoiceBench / 音频理解（p.22）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 8</td><td>SEED-TTS（p.23）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 9–11</td><td>小模型弹性深度 / 宽度 / 稀疏度消融（p.25–26）</td><td><a href="#train">§05</a></td></tr>
+        <tr><td>表 12</td><td>ERNIE 5.0-Exp 与弹性变体（p.27）</td><td><a href="#eval">§06</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 ERNIE Team, Baidu,《ERNIE 5.0 Technical Report》，<a href="https://arxiv.org/abs/2602.04705" target="_blank" rel="noopener">arXiv:2602.04705</a>（v1，2026-02-04；本页对照 v1 全文）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容；架构示意图为本页绘制。论文图片版权归原作者所有，此处仅用于学术解读。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

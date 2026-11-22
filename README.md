@@ -25,8 +25,11 @@
 | LLM | [Gemma 4](./reports/llm/gemma-4/) | Google DeepMind | 2026-07-02 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) |
 | LLM | [DeepSeek-V3.2](./reports/llm/deepseek-v3.2/) | DeepSeek | 2025-12-02 | [arXiv:2512.02556](https://arxiv.org/abs/2512.02556) |
 | LLM | [MiMo-V2-Flash](./reports/llm/mimo-v2-flash/) | Xiaomi | 2026-01-06 | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) |
+| LLM | [GLM-5](./reports/llm/glm-5/) | Zhipu AI | 2026-02-17 | [arXiv:2602.15763](https://arxiv.org/abs/2602.15763) |
+| LLM（原生多模态） | [ERNIE 5.0](./reports/llm/ernie-5/) | ERNIE Team, Baidu | 2026-02-04 | [arXiv:2602.04705](https://arxiv.org/abs/2602.04705) |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
 | VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
+| VLM | [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/) | Qwen Team | 2026-04-17 | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |

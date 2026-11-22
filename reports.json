@@ -368,6 +368,54 @@
       "one_liner": "309B 总参 / 15B 激活 MoE：滑窗 128、局部:全局 5:1，长上下文 KV 与注意力约降 6×；后训练提出多教师 on-policy 蒸馏（MOPD）。SWE-Bench Verified 73.4、Multilingual 71.7。",
       "path": "reports/llm/mimo-v2-flash/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "qwen3.5-omni",
+      "title": "Qwen3.5-Omni",
+      "subtitle": "Qwen3.5-Omni Technical Report",
+      "vendor": "Qwen Team",
+      "vendor_key": "qwen",
+      "category": "vlm",
+      "date": "2026-04-17",
+      "paper": "https://arxiv.org/abs/2604.15804",
+      "arxiv": "2604.15804",
+      "open_weights": false,
+      "params": "数千亿参数级（Plus / Flash，具体未披露）",
+      "one_liner": "Thinker–Talker + Hybrid-Attention MoE，256K 上下文；超过 1 亿小时音视频预训练。AuT 用 Qwen3-ASR 伪标注的 4000 万小时音频，时间戳改用文本字符串以降低数据构建成本。仅 API，权重未开源。五个模态 token 相加 4.29T，正文写「约 4 万亿」。",
+      "path": "reports/vlm/qwen3.5-omni/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "ernie-5",
+      "title": "ERNIE 5.0",
+      "subtitle": "ERNIE 5.0 Technical Report",
+      "vendor": "ERNIE Team, Baidu",
+      "vendor_key": "baidu",
+      "category": "llm",
+      "date": "2026-02-04",
+      "paper": "https://arxiv.org/abs/2602.04705",
+      "arxiv": "2602.04705",
+      "open_weights": false,
+      "params": "万亿参数级 MoE（激活率 <3%）",
+      "one_liner": "文本/图像/视频/音频从零在同一 Next-Group-of-Tokens 目标下训练的超稀疏 MoE（激活率 <3%），弹性训练一次跑出多种子模型。作者称是公开的生产规模万亿参数级统一自回归理解+生成模型。权重与数据配比原文未披露。",
+      "path": "reports/llm/ernie-5/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "glm-5",
+      "title": "GLM-5",
+      "subtitle": "GLM-5: from Vibe Coding to Agentic Engineering",
+      "vendor": "Zhipu AI",
+      "vendor_key": "zhipu",
+      "category": "llm",
+      "date": "2026-02-17",
+      "paper": "https://arxiv.org/abs/2602.15763",
+      "arxiv": "2602.15763",
+      "open_weights": true,
+      "params": "744B / 40B 激活",
+      "one_liner": "744B 总参 / 40B 激活 MoE，注意力改为 DSA，仅用 20B token 完成稀疏化适配（对比 DeepSeek-V3.2 的 943.7B）。后训练 Reasoning→Agentic→General RL，再跨阶段 on-policy 蒸馏。基座 28.5T token、200K 上下文。正文未写许可证，图 3 截图出现 MIT。",
+      "path": "reports/llm/glm-5/",
+      "added": "2026-11-22"
     }
   ]
 }

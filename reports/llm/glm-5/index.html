@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-5 中文深读 · DSA 续训 + 串行 RL + 异步 Agent RL | 前沿模型技术报告</title>
+<meta name="description" content="Zhipu AI arXiv 2602.15763 中文深读：744B 总参 / 40B 激活 MoE，20B token 完成 DSA 稀疏化续训，Reasoning → Agentic → General 串行 RL + 跨阶段 on-policy 蒸馏，异步 Agent RL 与 10K+ 可验证 SWE 环境。附数据构建、评测口径，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: architecture schematic + small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-dash { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.archsvg .ln-dash { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 4 4; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-acc { fill: var(--accent); }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.chip small { color: var(--muted); }
+.algo { font: 500 .8rem/1.7 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+.rl-chain { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; font-size: .86rem; }
+.rl-chain span { padding: 2px 9px; border-radius: 999px; background: var(--bg-accent); border: 1px solid var(--line); font-weight: 600; }
+.rl-chain i { color: var(--muted); font-style: normal; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>GLM-5<span class="sub">from Vibe Coding to Agentic Engineering：DSA 稀疏注意力续训 + 串行 RL + 异步 Agent RL</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Zhipu AI</b> &amp; 清华大学</span>
+      <span>发布 <b>2026-02-17</b>（arXiv v1）</span>
+      <span>arXiv <b>2602.15763</b></span>
+      <span>本页依据 <b>v2</b>（2026-02-24）全文核对</span>
+    </div>
+    <p class="lede">GLM-4.5 的放大版：<b>744B 总参 / 40B 激活</b>的 MoE<span class="src">§2.1 · 表 10</span>，把注意力换成 DeepSeek 的 <b>DSA</b>，只用 <b>20B token</b> 续训就完成稀疏化适配（DeepSeek-V3.2 用了 943.7B）<span class="src">§2.1.1</span>。后训练是 <b>Reasoning RL → Agentic RL → General RL</b> 串行，最后用<b>跨阶段 on-policy 蒸馏</b>把前面各阶段的能力找回来<span class="src">§3 · 图 5</span>；Agent RL 跑在完全异步、训推解耦的框架上，环境侧造了 <b>10K+</b> 个可验证 SWE 环境<span class="src">§4.2.1</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>开源权重（摘要 · §7）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：正文未披露（图 3 截图标 MIT）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>744B 总参 / 40B 激活 · MoE</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>200K 上下文 · 28.5T token</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>LLM · Agent / Coding</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2602.15763" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2602.15763</a>
+      <a href="https://arxiv.org/pdf/2602.15763" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://github.com/zai-org/GLM-5" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.8c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub（原文链接）</a>
+      <a href="https://huggingface.co/datasets/zai-org/terminal-bench-2-verified" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>Terminal-Bench 2.0 verified</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">胶囊 <span class="src">§2.1</span> = 原文出处；<span class="src calc">推算</span> = 本页计算；<span class="nd">原文未披露</span></div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">参数规模</div><div class="stat-num">744B / 40B</div><div class="stat-sub">总参 / 激活；GLM-4.5 为 355B / 32B</div><span class="src">表 10</span></div>
+    <div class="card stat"><div class="stat-k">基座训练 token</div><div class="stat-num">28.5T</div><div class="stat-sub">预训练 18T + 9T，mid-training 1T + 500B + 50B</div><span class="src">§2 · 图 5</span></div>
+    <div class="card stat"><div class="stat-k">上下文</div><div class="stat-num">200K</div><div class="stat-sub">SFT 最长 202,752 token</div><span class="src">§2.3 · §3.1</span></div>
+    <div class="card stat"><div class="stat-k">MoE 配置</div><div class="stat-num sm">256 专家 · 8 路由 + 1 共享</div><div class="stat-sub">3 dense + 75 MoE 层</div><span class="src">表 10</span></div>
+    <div class="card stat"><div class="stat-k">DSA 稀疏化续训</div><div class="stat-num">20B</div><div class="stat-sub">token；DeepSeek-V3.2 为 943.7B</div><span class="src">§2.1.1</span></div>
+    <div class="card stat"><div class="stat-k">可验证 SWE 环境</div><div class="stat-num">10K+</div><div class="stat-sub">数千仓库 · 9 种语言</div><span class="src">§4.2.1</span></div>
+    <div class="card stat"><div class="stat-k">SWE-bench Verified</div><div class="stat-num">77.8</div><div class="stat-sub">Claude Opus 4.5 为 80.9</div><span class="src">表 7</span></div>
+    <div class="card stat"><div class="stat-k">AA Intelligence Index v4.0</div><div class="stat-num">50</div><div class="stat-sub">GLM-4.7 为 42；开源权重第一</div><span class="src">§1 · 图 2</span></div>
+    <div class="card stat"><div class="stat-k">国产芯片适配</div><div class="stat-num">7 家</div><div class="stat-sub">昇腾、摩尔线程、海光、寒武纪、昆仑芯、沐曦、燧原</div><span class="src">§1 · §5</span></div>
+    <div class="card stat"><div class="stat-k">发布</div><div class="stat-num sm">2026-02-17</div><div class="stat-sub">arXiv v1；本页核对的 PDF 为 v2（2026-02-24）</div><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>规模翻倍，注意力换成 DSA，适配只花了 20B token</h3><p>256 专家、层数减到 80，总参从 355B 到 744B<span class="src">§2.1</span>。DSA 从 mid-training 结束的基座续训：1000 步 warm-up，再 20B token 稀疏适配，约为 DeepSeek-V3.2 的 2%<span class="src calc">推算</span>；128K 长文 MLA / DSA 基本持平<span class="src">表 3</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>后训练：三段串行 RL，再用 on-policy 蒸馏防遗忘</h3><p>SFT → Reasoning RL → Agentic RL → General RL，最后一步用前面各阶段的 checkpoint 当老师，按「老师 / 学生 log 比」作优势做 on-policy 蒸馏（group 1、batch 1024）<span class="src">§3.5 · 式 2</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>Agent RL 的稳定性靠一组「工程化去噪」</h3><p>训推分离的完全异步框架；TITO 网关避免重新分词；用 rollout log-prob 直接当行为策略、双边裁剪外整 token 屏蔽；丢掉过旧版本与环境崩溃的样本<span class="src">§4.1.2</span>。编排器支持 1k+ 并发 rollout<span class="src">§4.1.1</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>开源里领先，但和 Claude Opus 4.5 还有差距</h3><p>SWE-bench Verified 77.8 vs 80.9；BrowseComp（带上下文管理）75.9，表内最高；Vending-Bench 2 $4,432 vs $4,967<span class="src">表 7</span>。内部 CC-Bench-V2 上前端 ISR 和链式任务（52.3 vs 61.6）仍落后<span class="src">表 8</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>配比和规模大多没给，部分评测口径互相打架</h3><p>Web / Code / Math 占比、SFT 条数、RL 步数都没给；BrowseComp 的上下文管理在 §4.2.4 与 §6.1.3 写法不一致；图 1 与表 7 的 BrowseComp 柱子对不上。见 <a href="#limits">§09</a>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：GLM-4.5 放大 + MLA/DSA + 共享参数 MTP</h2>
+  <p class="sec-intro">原文没有单独的架构总图，图 5 是整条训练管线，先放这里作总览；架构改动按 §2.1 与表 10 列。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig5.jpg" alt="GLM-5 训练管线总览：预训练、mid-training、后训练与跨阶段蒸馏" loading="lazy"></div>
+    <figcaption><b>训练管线总览。</b>左：预训练先 18T 通用语料、再 9T 代码与推理语料（均 4K 上下文）；mid-training 先 1T 长代码与推理数据（32K），再 500B / 50B 长上下文与 Agent 数据（128K / 200K）。右：Base 上做整体 SFT，依次 Reasoning RL → Agentic RL → General RL；SFT、Reasoning RL、General RL 向「On-Policy Cross-Stage Distillation」提供 logits，General RL 同时提供 weights。<span class="from">来源：论文图 5</span></figcaption>
+  </figure>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 340" role="img" aria-label="GLM-5 架构配置示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-acc" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <!-- left stack -->
+      <rect class="box" x="20" y="276" width="230" height="40" rx="9"/>
+      <text class="t" x="34" y="300">Embedding</text><text class="s" x="118" y="300">词表 154,880</text>
+      <rect class="box" x="20" y="214" width="230" height="40" rx="9"/>
+      <text class="t" x="34" y="238">Dense 层 ×3</text><text class="s" x="128" y="238">中间维 12,288</text>
+      <rect class="box-acc" x="20" y="112" width="230" height="80" rx="9"/>
+      <text class="t" x="34" y="140">MoE 层 ×75</text>
+      <text class="s" x="34" y="160">hidden 6,144</text>
+      <text class="m" x="34" y="178">展开见右 →</text>
+      <rect class="box" x="20" y="50" width="230" height="40" rx="9"/>
+      <text class="t" x="34" y="74">输出层</text>
+      <rect class="box-warm" x="20" y="6" width="230" height="34" rx="9"/>
+      <text class="t" x="34" y="28">MTP 层 ×1</text><text class="w" x="110" y="28">训练时 3 步共享参数</text>
+      <path class="ln" d="M135 276 V256" marker-end="url(#ah)"/>
+      <path class="ln" d="M135 214 V194" marker-end="url(#ah)"/>
+      <path class="ln" d="M135 112 V92" marker-end="url(#ah)"/>
+      <!-- expansion -->
+      <path class="ln-dash" d="M250 112 L330 30 M250 192 L330 316"/>
+      <rect class="box-dash" x="330" y="14" width="530" height="312" rx="12"/>
+      <text class="s" x="346" y="36">一个 MoE 层内的配置（表 10；dense 层是否同样用 DSA，原文未逐层说明）</text>
+      <!-- indexer -->
+      <rect class="box-warm" x="350" y="56" width="220" height="70" rx="9"/>
+      <text class="t" x="364" y="80">DSA lightning indexer</text>
+      <text class="s" x="364" y="99">32 头 × 128 维</text>
+      <text class="w" x="364" y="116">每个 query 取 top-k = 2048 KV</text>
+      <!-- MLA -->
+      <rect class="box-acc" x="620" y="56" width="220" height="70" rx="9"/>
+      <text class="t" x="634" y="80">MLA 稀疏注意力</text>
+      <text class="s" x="634" y="99">Q LoRA 2048 · KV LoRA 512</text>
+      <text class="m" x="634" y="116">64 头 · QK 192 / V 256</text>
+      <path class="ln-acc" d="M570 91 H616" marker-end="url(#aha)"/>
+      <text class="s" x="574" y="84">选中子集</text>
+      <!-- MoE FFN -->
+      <rect class="box-acc" x="350" y="170" width="490" height="62" rx="9"/>
+      <text class="t" x="364" y="194">MoE FFN：256 专家 · 每 token 8 路由 + 1 共享</text>
+      <text class="s" x="364" y="214">专家中间维 2,048（GLM-4.5：160 专家 · 中间维 1,536）</text>
+      <path class="ln" d="M730 126 V166" marker-end="url(#ah)"/>
+      <!-- notes -->
+      <text class="m" x="350" y="262">优化器侧：Muon Split —— 按头拆开 W_UQ / W_UK / W_UV 分别正交化</text>
+      <text class="s" x="350" y="282">GLM-4.5：GQA（96 头、8 个 KV 头），无 indexer</text>
+      <text class="s" x="350" y="302">RL 阶段：indexer 用确定性 torch.topk，参数默认冻结</text>
+    </svg>
+    <div class="cap">示意，本页据表 10、§2.1、§3.2 绘制。indexer → 稀疏注意力的关系来自 §3.2「indexer 取 top-k KV、注意力只在所取子集上算」；块内其余连接（残差、归一化等）原文未给，未画。</div>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>改动</th><th>做法</th><th>原文给的证据</th></tr></thead>
+      <tbody>
+        <tr><td>放大 + 减层</td><td>专家 160 → 256，减层以降低专家并行通信；总参 355B → 744B，激活 32B → 40B<span class="src">§2.1 · 表 10</span></td><td>无单独消融</td></tr>
+        <tr><td>Muon Split</td><td>用 Muon 时，MLA（576 维 latent KV）不如 GQA-8；把上投影矩阵按头拆开各自正交化，让不同头按不同尺度更新<span class="src">§2.1</span></td><td>表 1：MLA 的 BBH 48.9 → 51.8、HumanEval 33.5 → 36.7，接近 GQA-8（53.3 / 38.5）；预训练中 attention logits 不需裁剪也稳定</td></tr>
+        <tr><td>MLA-256</td><td>头维 192 → 256、头数减 1/3：训练计算量与参数不变，解码计算下降<span class="src">§2.1</span></td><td>表 1：MLA-256 + Muon Split 与 MLA + Muon Split 相当</td></tr>
+        <tr><td>MTP 共享参数</td><td>训练时 3 个 MTP 层共享参数，draft 模型显存与 DeepSeek-V3 的单层 MTP 相同<span class="src">§2.1</span></td><td>表 2：同为 4 步推测解码，接受长度 2.76 vs DeepSeek-V3.2 2.55（私有 prompt 集）</td></tr>
+        <tr><td>DSA</td><td>dense warm-up 1000 步（每步 14 条 × 202,752 token，最大 LR 5e-3）+ 稀疏适配 20B token<span class="src">§2.1.1</span></td><td>表 3：MLA / DSA 在 MQ-NIAH 100.0 / 100.0、MV-NIAH 95.5 / 97.0、SQuAD 79.7 / 86.0、HotpotQA 66.3 / 63.0（均 128K）；SFT loss 持平（图 6）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details class="more wide">
+    <summary>表 10 全量对照：GLM-4.5 vs GLM-5 <span class="hint">展开</span></summary>
+    <div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>项</th><th>GLM-4.5</th><th class="q">GLM-5</th></tr></thead>
+        <tbody>
+          <tr><td># Total / Activated</td><td>355B / 32B</td><td class="q">744B / 40B</td></tr>
+          <tr><td># Dense / MoE / MTP Layers</td><td>3 / 89 / 1</td><td class="q">3 / 75 / 1</td></tr>
+          <tr><td>Hidden Dim</td><td>5120</td><td class="q">6144</td></tr>
+          <tr><td>Dense / MoE Intermediate Dim</td><td>12288 / 1536</td><td class="q">12288 / 2048</td></tr>
+          <tr><td>QK / V Head Dim</td><td>128 / 128</td><td class="q">192 / 256</td></tr>
+          <tr><td>Q / KV LoRA Dim</td><td>– / –</td><td class="q">2048 / 512</td></tr>
+          <tr><td># Attention Heads / KV Heads</td><td>96 / 8</td><td class="q">64 / –</td></tr>
+          <tr><td># Indexer Attn Heads / Head Dim</td><td>– / –</td><td class="q">32 / 128</td></tr>
+          <tr><td># Experts / Routed / Shared</td><td>160 / 8 / 1</td><td class="q">256 / 8 / 1</td></tr>
+          <tr><td>Vocabulary Size</td><td>151552</td><td class="q">154880</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">参数计数含 MTP 层，不含词嵌入与输出层<span class="src">表 10 注</span>。</p>
+    </div>
+  </details>
+
+  <details class="more wide">
+    <summary>高效注意力消融（GLM-9B / GLM-4.7-Flash）：为什么选 DSA <span class="hint">表 4–6</span></summary>
+    <div class="body">
+      <p>在 40 层的 GLM-9B（GQA，已调到 128K）上，以 1:1 的全注意力 / 高效层比例，各自续训 190B token（64K）<span class="src">§2.1.2</span>。提出了两个改进：beam search 找 SWA 层位置（只在 16K、RULER 上搜，beam 8、每步 2 层、约 10 步收敛），以及去掉 Conv1d 与门控、直接复用 QKV 权重的 SimpleGDN。</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>方法（表 5）</th><th>RULER 64K / 128K</th><th>MRCR 64K / 128K</th><th>HELMET-ICL 64K / 128K</th><th>RepoQA 64K / 128K</th></tr></thead>
+        <tbody>
+          <tr><td>GLM-9B（全注意力）</td><td>85.35 / 75.28</td><td>36.53 / 35.39</td><td>77.68 / 77.36</td><td>69.00 / 65.83</td></tr>
+          <tr><td>SWA Interleave</td><td>65.94 / 44.93</td><td>30.03 / 28.83</td><td>75.96 / 63.52</td><td>50.33 / 39.33</td></tr>
+          <tr><td>SWA Pattern（搜索）</td><td>83.72 / 69.59</td><td>35.02 / 33.58</td><td>76.48 / 74.60</td><td>62.33 / 51.17</td></tr>
+          <tr><td>GDN</td><td>76.76 / 64.00</td><td>31.72 / 30.22</td><td>76.88 / 74.84</td><td>65.50 / 56.17</td></tr>
+          <tr><td>SimpleGDN</td><td>81.76 / 67.03</td><td>33.03 / 31.27</td><td>79.80 / 81.84</td><td>65.50 / 58.50</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>RULER（表 6）</th><th>4K</th><th>8K</th><th>16K</th><th>32K</th><th>64K</th><th>128K</th></tr></thead>
+        <tbody>
+          <tr><td>GLM-4.7-Flash</td><td>97.44</td><td>96.72</td><td>95.83</td><td>92.96</td><td>85.34</td><td>79.21</td></tr>
+          <tr><td>+ DSA warmup（只训 indexer）</td><td>97.51</td><td>96.54</td><td>95.40</td><td>90.09</td><td>84.05</td><td>71.35</td></tr>
+          <tr class="hl"><td>+ DSA（联合训练 150B）</td><td>96.77</td><td>96.25</td><td>96.69</td><td>93.45</td><td>87.06</td><td>78.86</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">作者结论：SWA / GDN 类方法在续训适配中有不可避免的信息损失（RULER@128K 最多差 5.69、RepoQA@128K 差 7.33），DSA「按构造无损」<span class="src">§2.1.2</span>。注意 DSA 实验换了模型（GLM-4.7-Flash）和预算（150B），不是与表 5 同条件对照。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：预训练过滤、长上下文、Agent 环境合成</h2>
+  <p class="sec-intro">原文给了阶段级总量和若干子集规模，<b>没有给任何来源配比</b>，所以本节只用「已披露规模」表，不画占比条。</p></div>
+
+  <h3 class="prose">4.1 已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>数据</th><th>已披露规模</th><th>上下文</th><th>出处</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">预训练 / mid-training（基座合计 28.5T）</td></tr>
+        <tr><td>通用预训练语料</td><td>18T token</td><td>4K</td><td><span class="src">图 5</span></td></tr>
+        <tr><td>代码与推理语料</td><td>9T token（与上合计 27T）</td><td>4K</td><td><span class="src">图 5 · §1</span></td></tr>
+        <tr><td>长代码与推理数据</td><td>1T token</td><td>32K</td><td><span class="src">§2.3 · 图 5</span></td></tr>
+        <tr><td>长上下文与 Agent 数据</td><td>500B / 50B token</td><td>128K / 200K</td><td><span class="src">§2.3 · 图 5</span></td></tr>
+        <tr><td>其中 issue–PR 数据</td><td>约 1,000 万 issue–PR 对，过滤后约 160B unique token</td><td>—</td><td><span class="src">§2.3</span></td></tr>
+        <tr><td>代码语料增量</td><td>模糊去重后 unique token 比 GLM-4.5 多 28%</td><td>—</td><td><span class="src">§2.2</span></td></tr>
+        <tr><td>Web / Math &amp; Science 量与占比</td><td><span class="nd">原文未披露</span></td><td>—</td><td>—</td></tr>
+        <tr><td>DSA 续训</td><td>warm-up 1000 步 × 14 条 × 202,752 ≈ 2.84B token<span class="src calc">推算</span>；稀疏适配 20B</td><td>202,752</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr class="grp"><td colspan="4">后训练</td></tr>
+        <tr><td>SFT</td><td>三大类（通用对话 / 推理 / 代码与 Agent），条数 <span class="nd">原文未披露</span></td><td>202,752</td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>Reasoning RL</td><td>数学 / 科学 / 代码 / TIR 四域，「大致均衡」，条数 <span class="nd">原文未披露</span></td><td>—</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>SWE 环境</td><td>10K+ 可验证环境，数千仓库，9 种语言</td><td>—</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>Terminal 环境</td><td>「数千」个，Docker 构建成功率 &gt; 90%</td><td>—</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>搜索 Web 知识图谱</td><td>200 万+ 高信息量网页</td><td>—</td><td><span class="src">§4.2.3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="footnote prose">18T + 9T + 1T + 0.5T + 0.05T = 28.55T，与正文「28.5T」一致（四舍五入）<span class="src calc">推算</span>。</p>
+
+  <h3 class="prose">4.2 预训练数据：三条过滤线</h3>
+  <div class="pipe-head wide"><span>来源</span><span>收集 / 抽取</span><span>打分 / 过滤</span><span>结果</span></div>
+  <div class="pipe wide">
+    <div class="pipe-row"><div class="lbl">Web</div>
+      <div class="chip">沿用 GLM-4.5 网页管线</div>
+      <div class="chip m">加一个基于句向量的 DCLM 分类器，捞标准分类器之外的高质量数据；World Knowledge 分类器（用维基条目 + LLM 标注数据优化）从中低质量数据里提炼长尾知识</div>
+      <div class="chip o">更多高质量 + 长尾知识<small> · 量未披露</small></div></div>
+    <div class="pipe-row"><div class="lbl">Code</div>
+      <div class="chip">代码托管平台刷新快照 + 更多含代码网页</div>
+      <div class="chip m">修 Software Heritage 元数据对齐；更准的语言分类；为 Scala / Swift / Lua 等低资源语言训专门质量分类器；沿用质量感知采样</div>
+      <div class="chip o">模糊去重 unique token +28%<span class="src">§2.2</span></div></div>
+    <div class="pipe-row"><div class="lbl">Math &amp; Science</div>
+      <div class="chip">网页、书籍、论文；改进网页抽取与 PDF 解析</div>
+      <div class="chip m">LLM 给文档打分只留最有教育价值的；长文档用 chunk-and-aggregate 打分；<b>严格排除合成、AI 生成、模板化数据</b></div>
+      <div class="chip o">高质量数理语料<small> · 量未披露</small></div></div>
+  </div>
+  <div class="legend-dots wide"><span>输入</span><span class="m">过滤 / 打分</span><span class="o">产出</span></div>
+
+  <h3 class="prose">4.3 Mid-training：SWE 与长上下文</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>软件工程数据 <span class="tag">§2.3</span></h4>
+      <ul>
+        <li>保留「仓库级代码 + commit diff + issue + PR + 相关文件」拼成一条序列的范式。</li>
+        <li><b>放宽仓库级过滤</b>、<b>收紧单个 issue 级质量过滤</b>：约 1,000 万 issue–PR 对。</li>
+        <li>每个 issue–PR 检索更多相关文件；过滤后约 160B unique token。</li>
+      </ul></div>
+    <div class="card mod"><h4>长上下文数据 <span class="tag">§2.3</span></h4>
+      <ul>
+        <li>自然数据：书、论文、通用语料长文，多阶段过滤（PPL、去重、长度），上采样知识密集领域。</li>
+        <li>合成数据：参考 NextLong / EntropyLong，把高度相似文本交错打包，缓解 lost-in-the-middle。</li>
+        <li>200K 阶段加入「少量」MRCR 类多轮召回数据（比例 <span class="nd">原文未披露</span>）。</li>
+        <li>后期上采样长文档与合成 Agent 轨迹；作者观察到加 200K 阶段后，128K 内表现也更好。</li>
+      </ul></div>
+  </div>
+
+  <h3 class="prose">4.4 SFT 数据与标注</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>类别</th><th>构造 / 过滤</th><th>出处</th></tr></thead>
+      <tbody>
+        <tr><td>General Chat</td><td>问答、写作、角色扮演、翻译、多轮、长上下文；回复风格比 GLM-4.5 更「有逻辑、更简洁」。角色扮演按指令遵循、语言表现力、创造性、逻辑连贯、长对话一致性五个维度，<b>自动 + 人工双重过滤</b></td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>Reasoning</td><td>逻辑推理：构造可验证题 + 拒绝采样；数学科学：<b>只留 GLM-4.7 觉得难的题</b></td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>Coding &amp; Agent</td><td>大量执行环境里采轨迹，偏真实场景与长程任务；用专家 RL + 拒绝采样提纯。<b>轨迹里出错的片段保留但在 loss 里 mask 掉</b>，学纠错而不强化错误动作</td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>思考模式</td><td>新 chat template 支持 Interleaved（每次回复 / 调工具前都思考）、Preserved（编码 Agent 多轮保留全部思考块）、Turn-level（逐轮开关思考）三种</td><td><span class="src">§3.1 · 图 7</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">4.5 RL 与 Agent 环境数据</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Reasoning RL 题源 <span class="tag">§3.2</span></h4>
+      <ul>
+        <li>数学 / 科学：开源数据 + 与外部标注商共建；<b>难度过滤</b>：GLM-4.7 很少做对或全错、但更强老师（GPT-5.2 xhigh、Gemini 3 Pro Preview）能解。</li>
+        <li>代码：竞赛题（Codeforces、TACO、SYNTHETIC-2-RL）+ 科学编程题（把内部题拆成最小代码实现）。</li>
+        <li>TIR：复用较难的数理子集 + 与标注商共建「必须用外部工具」的 STEM 题。</li>
+        <li>按领域 / 来源配专门判官，给二元结果奖励。</li>
+      </ul></div>
+    <div class="card mod"><h4>SWE 环境 <span class="tag">§4.2.1</span></h4>
+      <ul>
+        <li>真实 issue–PR 对，规则 + LLM 过滤；按 bug 修复 / 新功能 / 重构 / 其他分类，并补齐使实现与测试补丁一致的需求说明。</li>
+        <li>基于 RepoLaunch 自动分析安装依赖、建环境、生成测试命令；LLM 生成按语言的日志解析函数，抽出 Fail-to-Pass 与 Pass-to-Pass 测试。</li>
+        <li>10K+ 环境，Python / Java / Go / C / CPP / JS / TS / PHP / Ruby。</li>
+      </ul></div>
+    <div class="card mod"><h4>Terminal 环境 <span class="tag">§4.2.2</span></h4>
+      <ul>
+        <li><b>从种子任务合成</b>：LLM 头脑风暴任务草稿 → 构造 Agent 实例化为 Harbor 格式（描述 + Docker 环境 + 测试脚本）→ refine Agent 按人工 rubric 迭代修（能构建、测试与描述一致、防捷径）。Docker 构建成功率 &gt; 90%。</li>
+        <li><b>从网页语料合成</b>：质量分类器筛代码网页 → 选适合做终端任务的 → 按主题 × 难度分层采样 → 编码 Agent 写任务并自己跑 Harbor 校验脚本，失败就自修，<b>只收自验证通过的</b>。</li>
+      </ul></div>
+    <div class="card mod"><h4>搜索任务 <span class="tag">§4.2.3</span></h4>
+      <ul>
+        <li>从早期搜索 Agent 轨迹收集 URL，去重后留 200 万+ 网页，LLM 做实体识别与结构化抽取，建 Web 知识图谱并持续纠错。</li>
+        <li>采低到中频实体作种子扩多跳子图，转成隐含多实体关系链的问题。</li>
+        <li>三级过滤：① 无工具推理模型 8 次里答对 ≥1 次就删；② 早期 Agent 几步能解就删；③ 验证 Agent 双向核验，<b>答案不唯一、证据不一致、标签错误的都拒</b>。</li>
+      </ul></div>
+  </div>
+
+  <div class="card mod wide">
+    <h4>幻灯片生成环境（HTML 渲染 + 布局校验）<span class="tag">§4.2.5</span></h4>
+    <p>SFT 起步 → RL（三级奖励）→ 拒绝采样微调 + mask 微调，迭代自我提升。奖励分三级：<b>L1 静态标记属性</b>（位置、间距、颜色、字体、饱和度等的规则，外加幻觉图 / 重复图检测）；<b>L2 运行时渲染属性</b>（DOM 宽高、bbox 等，由分布式渲染服务提取）；<b>L3 视觉感知特征</b>（如异常留白）。拒绝采样阶段把 RL 奖励函数直接变成数据过滤器（页面级：代码有效可编译；轨迹级：工具执行正确、内容多样），Best-of-N 留最好的；只有少数页有缺陷的轨迹，<b>mask 掉坏页、保留其余</b>，不整条丢。</p>
+    <p>效果：严格 16:9 的页面比例 40% → 92%；人评对 GLM-4.5 胜率内容 60%、布局 57.5%、美观 65%、总体 67.5%<span class="src">§4.2.5</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig9.jpg" alt="幻灯片 RL 的奖励作弊示例：用 overflow hidden 截断溢出内容" loading="lazy"></div>
+    <figcaption><b>幻灯片 RL 的奖励作弊。</b>左（红框，Normal）：内容溢出，页面实际高 1280×1015；中：模型加一条 <code>overflow: hidden</code> 把溢出内容藏起来；右（绿框，Hacked）：渲染尺寸变成合规的 1280×720，几何指标「达标」但内容被截掉。原图下半部分的第二类作弊（硬塞间距，1280×493 → 1280×720）未包含在本页裁图中。作者的对策是改渲染器、取真实运行时属性。<span class="from">来源：论文图 9（上半）</span></figcaption>
+  </figure>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2></div>
+
+  <div class="mini-h wide">基座：预训练 → mid-training → DSA 续训</div>
+  <div class="flow wide">
+    <div class="card stage"><div class="sid">P1</div><h4>通用预训练</h4><dl><dt>数据</dt><dd>18T</dd><dt>上下文</dt><dd>4K</dd></dl><p>LR 0 → 2e-4 warm-up，再衰减到 4e-5（预训练结束）<span class="src">附录 A</span></p></div>
+    <div class="card stage"><div class="sid">P2</div><h4>代码与推理</h4><dl><dt>数据</dt><dd>9T</dd><dt>上下文</dt><dd>4K</dd></dl><p>早期即侧重代码与推理<span class="src">§1 · 图 5</span></p></div>
+    <div class="card stage"><div class="sid">M1–M3</div><h4>Mid-training</h4><dl><dt>32K</dt><dd>1T</dd><dt>128K</dt><dd>500B</dd><dt>200K</dt><dd>50B</dd></dl><p>LR 4e-5 → 1e-5 线性<span class="src">附录 A</span></p></div>
+    <div class="card stage"><div class="sid">D1–D2</div><h4>DSA 续训</h4><dl><dt>warm-up</dt><dd>1000 步</dd><dt>适配</dt><dd>20B</dd></dl><p>warm-up LR 5e-3 → 2e-4；适配恒定 1e-5<span class="src">附录 A</span></p></div>
+  </div>
+  <p class="footnote wide">优化器沿用 GLM-4.5：Muon、cosine decay、batch size warm-up；其余超参「同 GLM-4.5」，本文未列<span class="src">附录 A</span>。SFT 阶段做 INT4 QAT，训练与离线量化共用一个 kernel，保证训推逐位一致<span class="src">§2.4.3</span>。</p>
+
+  <div class="mini-h wide">后训练：SFT → 串行 RL → 跨阶段蒸馏</div>
+  <div class="post-flow wide">
+    <div class="card stage"><div class="sid">S</div><h4>多任务 SFT</h4>
+      <ul><li>最长 202,752 token</li><li>三种思考模式</li><li>错误片段保留但 mask</li><li>INT4 QAT</li></ul></div>
+    <div class="card stage"><div class="sid">RL</div><h4>三段串行 RL</h4>
+      <div class="rl-chain"><span>Reasoning</span><i>→</i><span>Agentic</span><i>→</i><span>General</span></div>
+      <ul><li>Reasoning：GRPO + IcePop（去掉 KL），β=2、ε<sub>low</sub>=0.2、ε<sub>high</sub>=0.28，group 32、batch 32，完全 on-policy<span class="src">§3.2</span></li>
+      <li>Agentic：异步、训推解耦，coding + search 环境<span class="src">§3.3 · §4.1</span></li>
+      <li>General：正确性 / 情商 / 任务质量三维目标，规则 + ORM + GRM 混合奖励，加入人类专家回复作风格锚点<span class="src">§3.4</span></li></ul></div>
+    <div class="card stage"><div class="sid">OPD</div><h4>On-Policy 跨阶段蒸馏</h4>
+      <ul><li>前序各阶段最终 checkpoint 当老师，prompt 从各老师的 RL 训练集按「适当比例」混采（比例 <span class="nd">原文未披露</span>）</li>
+      <li>把式 1 的优势换成 sg[log π<sub>teacher</sub><sup>infer</sup> − log π<sub>θ</sub><sup>train</sup>]</li>
+      <li>group size 1、batch 1024<span class="src">§3.5</span></li></ul></div>
+  </div>
+
+  <h3 class="prose">5.1 Reasoning RL 的两个 DSA 细节</h3>
+  <div class="prose">
+    <ul>
+      <li><b>indexer 的 top-k 是 RL 稳定性的关键。</b>类比 MoE 的 routing replay，但 k = 2048 远大于 MoE 的 k，逐 token 存 indexer 索引不现实<span class="src">§3.2</span>。</li>
+      <li><b>换成确定性 torch.topk。</b>SGLang DSA indexer 的非确定性 CUDA top-k，以及 CUDA / TileLang 实现，在 RL 几步后就性能骤降、熵骤降；朴素 torch.topk 稍慢但确定，「带来可观 RL 收益」。RL 期间 indexer 参数默认冻结<span class="src">§3.2</span>。原文没给对比曲线或数字。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">5.2 Agentic RL：异步下的稳定性</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>完全异步 + 多任务编排 <span class="tag">§4.1.1</span></h4>
+      <ul>
+        <li>训练引擎和推理引擎放在不同 GPU；推理持续出轨迹，攒够阈值就送去训练；每 K 次梯度更新把权重推回推理端（K <span class="nd">原文未披露</span>），并<b>每次推权重后重置优化器</b>。</li>
+        <li>Multi-Task Rollout Orchestrator：每个任务的 rollout 与奖励逻辑是独立微服务，统一成 message-list 轨迹；控制各任务采样比例与速度，1k+ 并发 rollout。</li>
+        <li>目标：组内奖励减均值，只对模型生成的 token 计 loss，环境反馈不计<span class="src">§4.1</span>。</li>
+      </ul></div>
+    <div class="card mod"><h4>四个去噪 / 校正手段 <span class="tag">§4.1.2</span></h4>
+      <ul>
+        <li><b>TITO 网关</b>：训练直接用推理引擎吐出的 token ID 与元数据，不把文本重新分词。</li>
+        <li><b>Direct double-sided IS</b>：r<sub>t</sub> = exp(log π<sub>θ</sub> − log π<sub>rollout</sub>)，不再维护 π<sub>old</sub>；r 落在 (1−ε<sub>ℓ</sub>, 1+ε<sub>h</sub>) 外的 token 整个屏蔽（ε 取值 <span class="nd">原文未披露</span>）。</li>
+        <li><b>丢陈旧样本</b>：记录每条轨迹用到的权重版本，当前版本 − 最旧版本 &gt; τ 就丢（τ <span class="nd">原文未披露</span>）。</li>
+        <li><b>丢环境崩溃样本</b>：记录失败原因，剔除环境原因失败的；组内有效样本过半就重复有效样本补齐，否则整组丢。</li>
+      </ul></div>
+  </div>
+  <p class="prose">另有 <b>DP-aware routing</b>：同一 rollout 的请求一致性哈希到固定 DP rank，保住 KV cache 前缀复用，再配轻量负载再平衡<span class="src">§4.1.2</span>。</p>
+
+  <details class="more wide">
+    <summary>基础设施细节：显存、并行、slime rollout 优化 <span class="hint">§2.4 · §3.6</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>显存</b>：MTP 输出层与主输出层放同一 stage 共享参数、其余部分前移；流水线内 ZeRO2 式梯度分片 + 双缓冲；Muon 分布式优化器只 all-gather 自己的参数分片；流水线 warm-up 期激活按层卸载到主机内存；输出投影与 CE loss 按序列分块计算<span class="src">§2.4.1</span>。</li>
+        <li><b>并行</b>：延迟部分权重梯度计算以减 bubble；长序列按负载重排序、动态重分注意力计算、DP rank 灵活划成不同大小的 CP 组，分层 all-to-all 叠加节点内外通信<span class="src">§2.4.2</span>。</li>
+        <li><b>slime</b>：可自定义 rollout + HTTP 服务化 rollout；多节点推理（例：8 节点 EP64 + DP64）配 DP-attention；FP8 rollout + MTP 压长尾；Prefill-Decode 分离；心跳容错自动摘除坏节点<span class="src">§3.6</span>。</li>
+        <li><b>昇腾部署</b>：Attention / MLP 用 W8A8，MoE 专家 W4A8，QuaRot + Flex_AWQ_SSZ，单台 Atlas 800T A3 装下；Lightning Indexer、Sparse Flash Attention、MLAPO（把 13 个小算子融成一个）三个融合 kernel；称单个国产节点可比「双 GPU 国际集群」、长序列部署成本降 50%<span class="src">§5</span>。</li>
+      </ul>
+    </div>
+  </details>
+
+  <h3 class="prose">5.3 已披露 / 未披露超参</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>阶段</th><th>已披露</th><th>未披露</th></tr></thead>
+      <tbody>
+        <tr><td>预训练 / mid</td><td>LR 0→2e-4→4e-5；mid 4e-5→1e-5 线性；Muon + cosine + batch warm-up<span class="src">附录 A</span></td><td>batch size、总步数、各来源配比</td></tr>
+        <tr><td>DSA</td><td>warm-up 1000 步、14 × 202,752、LR 5e-3→2e-4；适配 20B、LR 1e-5；indexer top-k 2048<span class="src">§2.1.1 · §3.2 · 附录 A</span></td><td>—</td></tr>
+        <tr><td>Reasoning RL</td><td>β=2、ε<sub>low</sub>=0.2、ε<sub>high</sub>=0.28、group 32、batch 32<span class="src">§3.2</span></td><td>步数、LR、样本量</td></tr>
+        <tr><td>Agentic RL</td><td>—</td><td>K、τ、ε<sub>ℓ</sub> / ε<sub>h</sub>、阈值、步数</td></tr>
+        <tr><td>OPD</td><td>group 1、batch 1024<span class="src">§3.5</span></td><td>各老师 prompt 比例</td></tr>
+        <tr><td>搜索推理</td><td>keep-recent k = 5；HCM 阈值 T = 32k<span class="src">§4.2.4</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">对比对象：GLM-4.7、DeepSeek-V3.2、Kimi K2.5（开源）与 Claude Opus 4.5、Gemini 3 Pro、GPT-5.2 (xhigh)（闭源）<span class="src">§6.1</span>。</p></div>
+
+  <h3 class="prose">6.1 主表（表 7 精选）</h3>
+  <div class="wide"><div class="tbl-wrap"><table><thead><tr><th>基准</th><th class="q">GLM-5</th><th>GLM-4.7</th><th>DeepSeek-V3.2</th><th>Kimi K2.5</th><th>Claude Opus 4.5</th><th>Gemini 3 Pro</th><th>GPT-5.2 (xhigh)</th></tr></thead><tbody><tr><td>HLE (w/ Tools)</td><td class="q">50.4</td><td>42.8</td><td>40.8</td><td class="best">51.8</td><td>43.4<sup>*</sup></td><td>45.8<sup>*</sup></td><td>45.5<sup>*</sup></td></tr><tr><td>SWE-bench Verified</td><td class="q">77.8</td><td>73.8</td><td>73.1</td><td>76.8</td><td class="best">80.9</td><td>76.2</td><td>80.0</td></tr><tr><td>SWE-bench Multilingual</td><td class="q">73.3</td><td>66.7</td><td>70.2</td><td>73.0</td><td class="best">77.5</td><td>65.0</td><td>72.0</td></tr><tr><td>Terminal-Bench 2.0 (Terminus-2)</td><td class="q">56.2 / 60.7<sup>†</sup></td><td>41.0</td><td>39.3</td><td>50.8</td><td class="best">59.3</td><td>54.2</td><td>54.0</td></tr><tr><td>CyberGym</td><td class="q">43.2</td><td>23.5</td><td>17.3</td><td>41.3</td><td class="best">50.6</td><td>39.9</td><td>-</td></tr><tr><td>BrowseComp (w/ Context Manage)</td><td class="q best">75.9</td><td>67.5</td><td>67.6</td><td>74.9</td><td>57.8</td><td>59.2</td><td>65.8</td></tr><tr><td>τ²-Bench</td><td class="q">89.7</td><td>87.4</td><td>85.3</td><td>80.2</td><td class="best">91.6</td><td>90.7</td><td>85.5</td></tr><tr><td>MCP-Atlas (Public Set)</td><td class="q">67.8</td><td>52.0</td><td>62.2</td><td>63.8</td><td>65.2</td><td>66.6</td><td class="best">68.0</td></tr><tr><td>Tool-Decathlon</td><td class="q">39.2</td><td>23.8</td><td>35.2</td><td>27.8</td><td>43.5</td><td>36.4</td><td class="best">46.3</td></tr><tr><td>Vending-Bench 2</td><td class="q">$4,432</td><td>$2,377</td><td>$1,034</td><td>$1,198</td><td>$4,967</td><td class="best">$5,478</td><td>$3,591</td></tr><tr><td>GDPval-AA Elo</td><td class="q">1,409</td><td>1,198</td><td>1,195</td><td>1,288</td><td>1,400</td><td>1,201</td><td class="best">1,462</td></tr></tbody></table></div></div>
+  <div class="keybox wide"><span class="k-q">GLM-5 列</span><span class="k-best">该行最高（本页按数值标，含闭源）</span></div>
+  <p class="tbl-note wide"><b>*</b> HLE 全集结果（GLM-5 等其余列为纯文本子集，判官 GPT-5.2 medium）。<b>†</b> 在修正了歧义指令的 Terminal-Bench 2.0 verified 版上测，仅 GLM-5 有此值；本页标最高时用非 † 的 56.2。GDPval-AA Elo 为 2026-02-15 记录。Vending-Bench 2 由 Andon Labs 独立跑<span class="src">表 7 · 附录 B.2</span>。</p>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 224" role="img" aria-label="SWE-bench Verified"><text class="ch-t" x="0" y="16">SWE-bench Verified</text><text class="ch-src" x="0" y="32">表 7 · 横轴从 0 起</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="198" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="212" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="212" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="212" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="212" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="212" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">GLM-5</text><rect class="bar-q" x="104" y="48" width="155.6" height="13" rx="3"/><text class="ch-val" x="264.6" y="58">77.8</text><text class="ch-lbl" x="98" y="80" text-anchor="end">GLM-4.7</text><rect class="bar-o2" x="104" y="70" width="147.6" height="13" rx="3"/><text class="ch-val" x="256.6" y="80">73.8</text><text class="ch-lbl" x="98" y="102" text-anchor="end">DeepSeek-V3.2</text><rect class="bar-o" x="104" y="92" width="146.2" height="13" rx="3"/><text class="ch-val" x="255.2" y="102">73.1</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="104" y="114" width="153.6" height="13" rx="3"/><text class="ch-val" x="262.6" y="124">76.8</text><text class="ch-lbl" x="98" y="146" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o" x="104" y="136" width="161.8" height="13" rx="3"/><text class="ch-val" x="270.8" y="146">80.9</text><text class="ch-lbl" x="98" y="168" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o" x="104" y="158" width="152.4" height="13" rx="3"/><text class="ch-val" x="261.4" y="168">76.2</text><text class="ch-lbl" x="98" y="190" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o" x="104" y="180" width="160.0" height="13" rx="3"/><text class="ch-val" x="269.0" y="190">80.0</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 224" role="img" aria-label="Terminal-Bench 2.0 (Terminus-2)"><text class="ch-t" x="0" y="16">Terminal-Bench 2.0 (Terminus-2)</text><text class="ch-src" x="0" y="32">表 7 · 横轴从 0 起 · GLM-5 取 56.2（非 †）</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="198" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="212" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="212" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="212" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="212" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="212" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">GLM-5</text><rect class="bar-q" x="104" y="48" width="112.4" height="13" rx="3"/><text class="ch-val" x="221.4" y="58">56.2</text><text class="ch-lbl" x="98" y="80" text-anchor="end">GLM-4.7</text><rect class="bar-o2" x="104" y="70" width="82.0" height="13" rx="3"/><text class="ch-val" x="191.0" y="80">41.0</text><text class="ch-lbl" x="98" y="102" text-anchor="end">DeepSeek-V3.2</text><rect class="bar-o" x="104" y="92" width="78.6" height="13" rx="3"/><text class="ch-val" x="187.6" y="102">39.3</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="104" y="114" width="101.6" height="13" rx="3"/><text class="ch-val" x="210.6" y="124">50.8</text><text class="ch-lbl" x="98" y="146" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o" x="104" y="136" width="118.6" height="13" rx="3"/><text class="ch-val" x="227.6" y="146">59.3</text><text class="ch-lbl" x="98" y="168" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o" x="104" y="158" width="108.4" height="13" rx="3"/><text class="ch-val" x="217.4" y="168">54.2</text><text class="ch-lbl" x="98" y="190" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o" x="104" y="180" width="108.0" height="13" rx="3"/><text class="ch-val" x="217.0" y="190">54.0</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 224" role="img" aria-label="BrowseComp (w/ Context Manage)"><text class="ch-t" x="0" y="16">BrowseComp (w/ Context Manage)</text><text class="ch-src" x="0" y="32">表 7 · 横轴从 0 起</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="198" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="212" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="212" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="212" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="212" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="198" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="212" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">GLM-5</text><rect class="bar-q" x="104" y="48" width="151.8" height="13" rx="3"/><text class="ch-val" x="260.8" y="58">75.9</text><text class="ch-lbl" x="98" y="80" text-anchor="end">GLM-4.7</text><rect class="bar-o2" x="104" y="70" width="135.0" height="13" rx="3"/><text class="ch-val" x="244.0" y="80">67.5</text><text class="ch-lbl" x="98" y="102" text-anchor="end">DeepSeek-V3.2</text><rect class="bar-o" x="104" y="92" width="135.2" height="13" rx="3"/><text class="ch-val" x="244.2" y="102">67.6</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="104" y="114" width="149.8" height="13" rx="3"/><text class="ch-val" x="258.8" y="124">74.9</text><text class="ch-lbl" x="98" y="146" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o" x="104" y="136" width="115.6" height="13" rx="3"/><text class="ch-val" x="224.6" y="146">57.8</text><text class="ch-lbl" x="98" y="168" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o" x="104" y="158" width="118.4" height="13" rx="3"/><text class="ch-val" x="227.4" y="168">59.2</text><text class="ch-lbl" x="98" y="190" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o" x="104" y="180" width="131.6" height="13" rx="3"/><text class="ch-val" x="240.6" y="190">65.8</text></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">GLM-5</span><span class="l4">GLM-4.7</span><span class="l3">其他模型</span></div>
+
+  <details class="more wide">
+    <summary>表 7 全量（22 行） <span class="hint">展开</span></summary>
+    <div class="body"><div class="tbl-wrap"><table><thead><tr><th>基准</th><th class="q">GLM-5</th><th>GLM-4.7</th><th>DeepSeek-V3.2</th><th>Kimi K2.5</th><th>Claude Opus 4.5</th><th>Gemini 3 Pro</th><th>GPT-5.2 (xhigh)</th></tr></thead><tbody><tr class="grp"><td colspan="8">Reasoning &amp; General</td></tr><tr><td>HLE</td><td class="q">30.5</td><td>24.8</td><td>25.1</td><td>31.5</td><td>28.4</td><td class="best">37.2</td><td>35.4</td></tr><tr><td>HLE (w/ Tools)</td><td class="q">50.4</td><td>42.8</td><td>40.8</td><td class="best">51.8</td><td>43.4<sup>*</sup></td><td>45.8<sup>*</sup></td><td>45.5<sup>*</sup></td></tr><tr><td>AIME 2026 I</td><td class="q">92.7</td><td>92.9</td><td>92.7</td><td>92.5</td><td class="best">93.3</td><td>90.6</td><td>-</td></tr><tr><td>HMMT Feb. 2025</td><td class="q">97.9</td><td>97.1</td><td>92.5</td><td>95.4</td><td>92.9</td><td>97.3</td><td class="best">99.4</td></tr><tr><td>HMMT Nov. 2025</td><td class="q">96.9</td><td>93.5</td><td>90.2</td><td>91.1</td><td>91.7</td><td>93.0</td><td class="best">97.1</td></tr><tr><td>IMO-AnswerBench</td><td class="q">82.5</td><td>82.0</td><td>78.3</td><td>81.8</td><td>78.5</td><td>83.3</td><td class="best">86.3</td></tr><tr><td>GPQA-Diamond</td><td class="q">86.0</td><td>85.7</td><td>82.4</td><td>87.6</td><td>87.0</td><td>91.9</td><td class="best">92.4</td></tr><tr><td>LongBench v2</td><td class="q">64.5</td><td>59.1</td><td>59.8</td><td>61.0</td><td>64.4</td><td class="best">68.2</td><td>59.8</td></tr><tr class="grp"><td colspan="8">Coding</td></tr><tr><td>SWE-bench Verified</td><td class="q">77.8</td><td>73.8</td><td>73.1</td><td>76.8</td><td class="best">80.9</td><td>76.2</td><td>80.0</td></tr><tr><td>SWE-bench Multilingual</td><td class="q">73.3</td><td>66.7</td><td>70.2</td><td>73.0</td><td class="best">77.5</td><td>65.0</td><td>72.0</td></tr><tr><td>Terminal-Bench 2.0 (Terminus-2)</td><td class="q">56.2 / 60.7<sup>†</sup></td><td>41.0</td><td>39.3</td><td>50.8</td><td class="best">59.3</td><td>54.2</td><td>54.0</td></tr><tr><td>Terminal-Bench 2.0 (Claude Code)</td><td class="q">56.2 / 61.1<sup>†</sup></td><td>32.8</td><td>46.4</td><td>-</td><td class="best">57.9</td><td>-</td><td>-</td></tr><tr><td>CyberGym</td><td class="q">43.2</td><td>23.5</td><td>17.3</td><td>41.3</td><td class="best">50.6</td><td>39.9</td><td>-</td></tr><tr class="grp"><td colspan="8">Agentic</td></tr><tr><td>BrowseComp</td><td class="q best">62.0</td><td>52.0</td><td>51.4</td><td>60.6</td><td>37.0</td><td>37.8</td><td>-</td></tr><tr><td>BrowseComp (w/ Context Manage)</td><td class="q best">75.9</td><td>67.5</td><td>67.6</td><td>74.9</td><td>57.8</td><td>59.2</td><td>65.8</td></tr><tr><td>BrowseComp-ZH</td><td class="q">72.7</td><td>66.6</td><td>65.0</td><td>62.3</td><td>62.4</td><td>66.8</td><td class="best">76.1</td></tr><tr><td>τ²-Bench</td><td class="q">89.7</td><td>87.4</td><td>85.3</td><td>80.2</td><td class="best">91.6</td><td>90.7</td><td>85.5</td></tr><tr><td>MCP-Atlas (Public Set)</td><td class="q">67.8</td><td>52.0</td><td>62.2</td><td>63.8</td><td>65.2</td><td>66.6</td><td class="best">68.0</td></tr><tr><td>Tool-Decathlon</td><td class="q">39.2</td><td>23.8</td><td>35.2</td><td>27.8</td><td>43.5</td><td>36.4</td><td class="best">46.3</td></tr><tr><td>Vending-Bench 2</td><td class="q">$4,432</td><td>$2,377</td><td>$1,034</td><td>$1,198</td><td>$4,967</td><td class="best">$5,478</td><td>$3,591</td></tr><tr><td>GDPval-AA Elo</td><td class="q">1,409</td><td>1,198</td><td>1,195</td><td>1,288</td><td>1,400</td><td>1,201</td><td class="best">1,462</td></tr></tbody></table></div></div>
+  </details>
+
+  <details class="more wide">
+    <summary>评测设置与口径改动 <span class="hint">附录 B.2 · B.3</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>推理类</b>：temperature 1.0、top_p 0.95、最长生成 131,072；HLE-with-tools 上下文 202,752。</li>
+        <li><b>SWE-bench</b>：OpenHands + 为 GLM-5 定制的指令 prompt；temperature 0.7、max_new_tokens 16,384、200K 窗口。</li>
+        <li><b>Terminal-Bench 2.0</b>：Terminus-2 超时 2h、16 CPU / 32GB；Claude Code 2.1.14 去掉墙钟限制，5 次平均。</li>
+        <li><b>CyberGym</b>：Claude Code 2.1.18，无 web 工具，单次 Pass@1，1,507 题。</li>
+        <li><b>MCP-Atlas</b>：所有模型在 500 题公开集上重测，超时 4 → 10 分钟，判官 Gemini 3 Pro。</li>
+        <li><b>τ²-Bench</b>：Retail / Telecom 改了用户模拟器 prompt（防提前结束，全文见图 12–13），Airline 用 Claude Opus 4.5 system card 的领域修正。</li>
+        <li><b>BrowseComp</b>：判官统一用官方 prompt + o3-mini（作者称开源判官有系统偏差）<span class="src">§4.2.4</span>。</li>
+      </ul>
+    </div>
+  </details>
+
+  <div class="grid2 wide">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="Artificial Analysis Intelligence Index v4.0 排名" loading="lazy"></div>
+      <figcaption><b>Artificial Analysis Intelligence Index v4.0。</b>GLM-5 得 50，作者称是首个达到 50 的开源权重模型，GLM-4.7 为 42。该指数由 GDPval-AA、τ²-Bench Telecom、Terminal-Bench Hard、SciCode、AA-LCR、AA-Omniscience、IFBench、HLE、GPQA Diamond、CritPt 十项组成。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="LMArena Text Arena 与 Code Arena 排名截图" loading="lazy"></div>
+      <figcaption><b>LMArena。</b>左：Text Arena 开源第一、总榜第 11；右：Code Arena（Agentic WebDev）开源第一、总榜第 6。<span class="from">来源：论文图 3</span>（文件名为 fig4.jpg，manifest 标作图 4，但内容对应原文图 3）</figcaption>
+    </figure>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="图 1 下排：BrowseComp、MCP-Atlas、τ²-Bench、Vending-Bench 2 对比柱状图" loading="lazy"></div>
+    <figcaption><b>图 1 下排四项：BrowseComp、MCP-Atlas、τ²-Bench、Vending-Bench 2。</b>每组从左到右为 GLM-5、DeepSeek-V3.2、Claude Opus 4.5、Gemini 3 Pro、GPT-5.2 (xhigh)。注意 BrowseComp 一组的 DeepSeek-V3.2 51.4、Claude Opus 4.5 67.8 与表 7「w/ Context Manage」一行（67.6 / 57.8）不一致，见 <a href="#limits">§09</a>。<span class="from">来源：论文图 1（下半排裁图）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">6.2 内部 CC-Bench-V2（表 8）</h3>
+  <p class="prose">全自动、不用人工标注：前端先构建再由 Agent-as-a-Judge（Claude Code + Claude Sonnet 4.5 + Playwright MCP）逐个 check-item 点 UI 判；后端 85 题、6 种语言、每题 5–10 个人写单测，全过才算；长程包括大仓库找文件和由合并 PR 挖出的链式任务<span class="src">§6.2</span>。</p>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>类别 · 任务</th><th>指标</th><th class="q">GLM-5</th><th>GLM-4.7</th><th>Claude Opus 4.5</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="5">Frontend</td></tr>
+        <tr><td>HTML</td><td>ISR / CSR</td><td class="q">38.9 / 76.3</td><td>35.4 / 64.9</td><td class="best">52.2 / 82.2</td></tr>
+        <tr><td>React</td><td>ISR / CSR</td><td class="q">34.6 / 71.0</td><td>17.2 / 49.4</td><td>39.7 / 70.7</td></tr>
+        <tr><td>Vue</td><td>ISR / CSR</td><td class="q">32.7 / 77.1</td><td>24.5 / 53.8</td><td>46.9 / 74.3</td></tr>
+        <tr class="grp"><td colspan="5">Build（BSR）</td></tr>
+        <tr><td>React / Vue / Svelte / Next.js</td><td>BSR</td><td class="q">100 / 100 / 100 / 95.0</td><td>65.0 / 70.0 / 60.0 / 70.0</td><td>95.0 / 100 / 90.0 / 80.0</td></tr>
+        <tr class="grp"><td colspan="5">Backend &amp; Long-horizon</td></tr>
+        <tr><td>Backend Engineering</td><td>Pass@1</td><td class="q">25.8</td><td>19.6</td><td class="best">26.9</td></tr>
+        <tr><td>Repo Exploration</td><td>Pass@1</td><td class="q best">65.6</td><td>47.8</td><td>64.5</td></tr>
+        <tr class="hl"><td>Chained Tasks</td><td>Pass@1</td><td class="q">52.3</td><td>43.0</td><td class="best">61.6</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">BSR 构建成功率；ISR 整个任务全部规格通过的比例；CSR 逐 check-item 通过率。作者解读：GLM-5 能满足大部分单条需求（CSR 接近或超过 Opus 4.5），但端到端做完整任务（ISR）在三个技术栈都落后<span class="src">§6.2.1</span>。判官可信度：130 个 check-item 上与人类专家逐条一致 94%；8 个模型的排名与人工 Spearman 85.7%<span class="src">§6.2.1</span>。</p>
+
+  <h3 class="prose">6.3 其他</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>SWE-rebench（2026 年 1 月，表 9）<span class="tag nd-tag">反向信号</span></h4>
+      <p>GLM-5 Resolved 42.1%（±1.21），低于 Claude Opus 4.5 43.8%、Gemini 3 Pro 46.7%、GPT-5.2 (xhigh) 51.7%、Claude Opus 4.6 52.9%；略高于 GLM-4.7 41.3%、Kimi K2.5 37.9%。Pass@5 50.0%，低于 GLM-4.7 的 56.3%<span class="src">表 9</span>。作者只写「能有效泛化到新问题」。</p></div>
+    <div class="card mod"><h4>BrowseComp 上下文管理 <span class="tag">§4.2.4 · 图 8</span></h4>
+      <p>超过约 100k token 后准确率明显下降。keep-recent-k（k=5，只折叠更早的工具结果）让 GLM-5 从 55.3% 到 62.0%；再与 Discard-all 组合成分层上下文管理（超过 T=32k 清空工具历史重来），最终 75.9。</p></div>
+    <div class="card mod"><h4>基座模型（表 11）</h4>
+      <p>GLM-5-Base 对 GLM-4.5-Base：MMLU 88.3 vs 86.1、SimpleQA 36.0 vs 30.0、EvalPlus 87.0 vs 78.1、LiveCodeBench-Base 34.4 vs 28.1；但 GSM8K 68.8 vs 79.4、MATH 56.4 vs 61.0 更低<span class="src">表 11</span>。</p></div>
+    <div class="card mod"><h4>真实场景通用能力（图 11）</h4>
+      <p>翻译、多语对话、指令遵循、世界知识、工具调用五域只与 GLM-4.7 对比。内部集规模：ZMultiTransBench 1,220 条（7 个中→外语对）、MENT-SNS 753 对、ZMultiDialBench 141 条、IF-Badcase 450 条、ToolCall-Badcase 200 条<span class="src">§6.3</span>。</p></div>
+  </div>
+
+  <details class="more wide">
+    <summary>表 11：基座模型对比全量 <span class="hint">展开</span></summary>
+    <div class="body"><div class="tbl-wrap"><table>
+      <thead><tr><th>Benchmark</th><th>DeepSeek-V3 Base</th><th>Kimi-K2 Base</th><th>GLM-4.5 Base</th><th class="q">GLM-5 Base</th></tr></thead>
+      <tbody>
+        <tr><td># Activated / Total</td><td>37B / 671B</td><td>32B / 1043B</td><td>32B / 355B</td><td class="q">40B / 744B</td></tr>
+        <tr class="grp"><td colspan="5">English</td></tr>
+        <tr><td>SimpleQA (EM)</td><td>26.6</td><td>35.3</td><td>30.0</td><td class="q best">36.0</td></tr>
+        <tr><td>BBH (EM)</td><td>88.4</td><td class="best">88.7</td><td>86.2</td><td class="q">87.4</td></tr>
+        <tr><td>MMLU (EM)</td><td>87.2</td><td>87.8</td><td>86.1</td><td class="q best">88.3</td></tr>
+        <tr><td>HellaSwag (EM)</td><td>88.9</td><td class="best">94.6</td><td>87.1</td><td class="q">88.1</td></tr>
+        <tr><td>PIQA (EM)</td><td>84.7</td><td>-</td><td class="best">85.3</td><td class="q">84.6</td></tr>
+        <tr><td>TriviaQA (EM)</td><td>82.9</td><td class="best">85.1</td><td>80.0</td><td class="q">80.9</td></tr>
+        <tr class="grp"><td colspan="5">Code</td></tr>
+        <tr><td>EvalPlus (Pass@1)</td><td>65.6</td><td>80.3</td><td>78.1</td><td class="q best">87.0</td></tr>
+        <tr><td>LiveCodeBench-Base (Pass@1)</td><td>24.6</td><td>26.3</td><td>28.1</td><td class="q best">34.4</td></tr>
+        <tr class="grp"><td colspan="5">Math</td></tr>
+        <tr><td>GSM8K (EM)</td><td>87.6</td><td class="best">92.1</td><td>79.4</td><td class="q">68.8</td></tr>
+        <tr><td>MATH (EM)</td><td>62.6</td><td class="best">70.2</td><td>61.0</td><td class="q">56.4</td></tr>
+        <tr class="grp"><td colspan="5">Chinese</td></tr>
+        <tr><td>CLUEWSC (EM)</td><td>82.7</td><td>-</td><td>83.5</td><td class="q best">84.2</td></tr>
+        <tr><td>C-Eval (EM)</td><td>90.1</td><td class="best">92.5</td><td>86.9</td><td class="q">88.8</td></tr>
+        <tr><td>C3 (EM)</td><td>78.6</td><td>-</td><td class="best">83.1</td><td class="q">80.3</td></tr>
+        <tr><td>Chinese-SimpleQA (EM)</td><td>72.1</td><td class="best">77.6</td><td>70.1</td><td class="q">74.6</td></tr>
+      </tbody>
+    </table></div></div>
+  </details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">DSA、GRPO、IcePop、slime、on-policy 蒸馏都是已有工作；下面只列本文自己提出、且给了可核对证据或明确做法的点。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>Muon Split：让 MLA 在 Muon 下追上 GQA</h4><p>把 Q/K/V 上投影按头拆开分别正交化，并配合 MLA-256（头维加大、头数减 1/3）降低解码计算<span class="src">§2.1</span>。</p><div class="why">证据：表 1 七项小规模基准；未给大模型上的对照。</div></div>
+    <div class="card nv"><h4>用 20B token 把 dense 基座改成 DSA，并在 RL 里换确定性 top-k</h4><p>续训预算约为 DeepSeek-V3.2 的 2%<span class="src calc">推算</span>；RL 期间用 torch.topk、冻结 indexer，解决 indexer 选择的训推不一致<span class="src">§2.1.1 · §3.2</span>。</p><div class="why">证据：表 3（4 个长文基准）、图 6（SFT loss）；top-k 的对比只有定性描述。</div></div>
+    <div class="card nv"><h4>MTP 三层共享参数</h4><p>训练时用 3 个共享参数的 MTP 层预测更远的 token，draft 显存不变，缓解 DeepSeek-V3 单层 MTP 的训推不一致<span class="src">§2.1</span>。</p><div class="why">证据：表 2 接受长度 2.76 vs 2.55（私有 prompt 集，同为 4 步）。</div></div>
+    <div class="card nv"><h4>异步 Agent RL 的「去 π<sub>old</sub>」双边 token 屏蔽 + 样本级去噪</h4><p>直接用 rollout log-prob 当行为策略、超出信任域的 token 整个 mask；配合 TITO、版本陈旧阈值、环境崩溃剔除与组补齐规则<span class="src">§4.1.2</span>。</p><div class="why">证据：作者称「更稳定」；原文没有消融或曲线。</div></div>
+    <div class="card nv"><h4>串行 RL 末尾的跨阶段 on-policy 蒸馏</h4><p>以老师 / 学生 log 比替换 GRPO 优势，group 1、batch 1024，一次性把 SFT、Reasoning RL、General RL 的能力拉回来<span class="src">§3.5 · 式 2</span>。</p><div class="why">证据：方法描述清楚，但没有「蒸馏前 / 后」的数字。</div></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这是纯文本 LLM 报告，没有图像 caption。但它的数据过滤、环境合成、幻灯片渲染奖励和 Agent-as-a-Judge，与编辑数据构建、验收和评测协议是同一类问题。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>从「中低质量」池子里专门捞长尾</h4><p class="paper">论文：World Knowledge 分类器用维基条目 + LLM 标注数据优化，从中低质量网页里提炼长尾知识，而不是整批丢掉<span class="src">§2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>美学分低被筛掉的图里常有稀有物体、少见场景、非英文文字。单独训一个「稀有概念」分类器（用百科实体图 + VLM 标注作正样本），从低分池召回这类图，进编辑源图池时打上标记，方便单独计量。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>明确排除合成 / AI 生成 / 模板化数据</h4><p class="paper">论文：数理语料的过滤管线「严格避免」合成、AI 生成或模板化数据<span class="src">§2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的源图和目标图都记录来源（实拍 / 生成模型 / 渲染）。评测集源图只用实拍；训练集里生成图的占比单独统计，按来源分桶看指标，避免模型学到生成器的纹理指纹。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>难度以「上一代模型」为锚，同时要求「更强者可解」</h4><p class="paper">论文：RL 数学科学题只留 GLM-4.7 很少做对或全错、但 GPT-5.2 xhigh / Gemini 3 Pro Preview 能解的；SFT 只留 GLM-4.7 觉得难的题<span class="src">§3.1 · §3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 指令池用当前线上模型采 N 张打分，删掉「全过」的；再用最强商用编辑器跑一遍，删掉「强者也做不到」的（多半是指令本身不可执行）。两边的删除比例都写进数据版本说明。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>把基础设施失败和模型失败分开记账</h4><p class="paper">论文：记录每个样本的失败原因，剔除因沙箱崩溃失败的样本；组内有效样本过半才补齐，否则整组丢<span class="src">§4.1.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>批量生成编辑对或跑 RL rollout 时，API 超时、安全拦截、解码失败要和「编辑做错了」分成两个字段。前者不进奖励、不进拒绝统计；按 GRPO 分组时沿用「过半补齐、否则整组丢」这类明确规则。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>全链路保存原始 token，不做文本往返</h4><p class="paper">论文：TITO 网关直接记录推理引擎的 token ID，避免重新分词带来的边界、空白、截断错位<span class="src">§4.1.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据管线同理：存生成时的原始像素（PNG / 原始 latent），不要中途转 JPEG 再读回；指令和 caption 存最终送进 text encoder 的那份字符串（含模板），避免训练时重拼模板造成的错位。</p></div>
+    </div>
+
+    <div class="impl-group">caption 与标注</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>错的片段 mask 掉，不整条丢</h4><p class="paper">论文：SFT 轨迹里的错误片段保留但不计 loss；幻灯片数据里只有少数页有缺陷的轨迹，mask 坏页、保留其余<span class="src">§3.1 · §4.2.5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多操作编辑 caption（例：换背景 + 改衣服颜色 + 去路人）若判官只判出其中一个 op 与图不符，把该 op 的文本 span 在 caption loss 或指令条件里屏蔽（或降为「未说明」），其余 op 继续用，比整条丢掉省标注成本。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>用人类写的样本当风格锚点</h4><p class="paper">论文：General RL 引入专家人工回复作风格锚点，因为纯模型优化会收敛到冗长、公式化的「模型腔」<span class="src">§3.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>VLM 写的编辑指令普遍过长、句式雷同，与真实用户指令分布不一样。保留一小批人工写的指令 / caption 作为参照集，定期比较 VLM 改写结果的长度分布和句式重复率，偏了就用人工样本做 few-shot 或 DPO 拉回。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>LLM 打分对长文档分块再聚合</h4><p class="paper">论文：数理文档用 LLM 打分，长文档用 chunk-and-aggregate 提高打分准确度<span class="src">§2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>高分辨率图或长 caption 一次性交给 VLM 打分容易漏局部问题。把图切块（或把 caption 按 op 拆句）分别判，再用「最差块」或加权聚合得到整体分，局部伪影和 op 级不符都能被抓到。</p></div>
+    </div>
+
+    <div class="impl-group">奖励与评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>奖励要读「渲染后的真实结果」，防几何作弊</h4><p class="paper">论文：幻灯片 RL 中模型用 <code>overflow: hidden</code> 截断内容、硬塞间距去满足 16:9 指标；作者改渲染器取运行时真实属性，并加感知级信号（异常留白）<span class="src">§4.2.5 · 图 9</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的「保持度」奖励最容易被钻空子：几乎原样输出就能拿高分。保持度必须和「指令完成度」相乘或设门槛；完成度由看最终像素的判官给，不读模型自报的 mask 或坐标。定期人工翻高分样本找新的作弊模式。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>每条任务一张 checklist，判官用两种一致性验收</h4><p class="paper">论文：前端每题配由规格直接派生的 checklist，Agent 判官逐项交互判；用 130 条逐项一致率 94% 和 8 模型排名 Spearman 85.7% 两个口径验证判官<span class="src">§6.2.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测按指令生成逐项检查（「杯子变红」「杯柄形状不变」「反光同步变化」），VLM 判官逐项判；上线前同时报逐项一致率和模型排名相关性——只报前者看不出排名会不会翻。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>同时报「逐项完成率」和「整任务通过率」</h4><p class="paper">论文：CSR 上 GLM-5 与 Opus 4.5 接近甚至更高，但 ISR 在三个技术栈都落后；链式任务把前序测试累计回放，抓后续步骤造成的回归<span class="src">表 8 · §6.2.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多轮编辑评测同时报 op 级完成率和「整条指令全部满足」率；第 k 轮之后重新检查前 k−1 轮的编辑是否还在（例：第 3 轮换背景后，第 1 轮改的衣服颜色是否被改回）。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>评测集从线上 badcase 来，且持续淘汰「太简单」的题</h4><p class="paper">论文：IF-Badcase（450 条）、ToolCall-Badcase（200 条）来自生产环境用户报告的失败；前端基准迭代删除已不再区分 SOTA 的简单题，最终 220 题<span class="src">§6.3 · 附录 B.4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测集按季度从用户差评 / 重试日志补题，并删掉所有候选模型都满分的题；每次改动冻结版本号，旧版本分数不和新版本混比。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>判官和协议改动要逐条公开</h4><p class="paper">论文：BrowseComp 发现分数对判官 prompt / 模型敏感，统一用官方 prompt + o3-mini；τ²-Bench 改用户模拟 prompt 并全文附出；MCP-Atlas 超时 4 → 10 分钟并重测所有模型<span class="src">§4.2.4 · 附录 B.2–B.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测报告里固定一节「口径」：判官模型与版本、判官 prompt 全文、输入分辨率、对竞品是否同流水线重跑。换判官时在两个判官下各跑一遍关键对比，报差值。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>配比与规模基本未披露。</b>预训练只给 18T / 9T 两段总量，Web / Code / Math 各自多少、SFT 条数、各 RL 阶段样本量与步数、OPD 各老师的 prompt 比例都没有<span class="src">§2–§3</span>。</li>
+    <li class="key"><b>关键方法缺消融。</b>串行 RL 顺序、跨阶段蒸馏、TITO、double-sided IS、异步 Agent RL 都没有「有 / 无」对照；确定性 top-k 只有定性描述。可核对的消融只有表 1、表 3–6 与图 8。</li>
+    <li class="key"><b>BrowseComp 的上下文管理口径前后不一。</b>§4.2.4 说 75.9 来自 keep-recent-5 + Discard-all 的分层策略（HCM）；§6.1.3 与附录 B.2 却说「w/ Context Manage」用的是与 DeepSeek-V3.2、Kimi K2.5 相同的 discard-all；附录 B.2 还写明「无上下文管理」一行其实保留最近 5 轮，即 62.0 已含 keep-recent。</li>
+    <li><b>图 1 与表 7 对不上。</b>图 1 BrowseComp 组里 DeepSeek-V3.2 为 51.4（对应表 7 不带上下文管理一行）、Claude Opus 4.5 为 67.8（表 7 中是 37.0 / 57.8）；另外图 1 题注列 DeepSeek-V3.2，正文引用时写的是 GLM-4.7<span class="src">图 1 · §1 · 表 7</span>。</li>
+    <li><b>结构数字自相矛盾。</b>§2.1 说层数减到 80，表 10 为 3 dense + 75 MoE = 78（另有 1 层 MTP）<span class="src calc">推算</span>；§2.1 与表 10 为 744B，§5 写「750B」；§2.1 说 MLA-256 把头维 192 → 256，表 10 的 QK Head Dim 仍是 192、V Head Dim 为 256，没说清改的是哪一维。</li>
+    <li><b>「DSA 按构造无损」说得过满。</b>表 3 HotpotQA-128k 从 66.3 降到 63.0；表 6 的 128K 仍差 0.35。DSA 的验证实验换了模型和预算（GLM-4.7-Flash、150B），与表 5 的 SWA / GDN（GLM-9B、190B）不是同条件对比。</li>
+    <li><b>主表可比性。</b>HLE (w/ Tools) 闭源三家是全集（*），GLM-5 是纯文本子集；Terminal-Bench verified（†）只报了 GLM-5；τ²-Bench 改了用户模拟 prompt，MCP-Atlas 延长超时并重测——这些都影响和官方数字的直接对比。</li>
+    <li><b>正文与表格表述不一。</b>§6.1.1 说 LongBench v2「取得最高分，仅次于 Gemini 3 Pro」，表 7 中 GLM-5 64.5 是第二；§6.2.1 说 BSR 98.0%，表 8 四项为 100 / 100 / 100 / 95.0（简单平均 98.75）<span class="src calc">推算</span>，聚合方式未说明；表 8 有 Svelte / Next.js 的 BSR，但表 13 的技术栈只列 HTML / React / Vue。</li>
+    <li><b>内部集不可复现。</b>CC-Bench-V2、ZMultiTransBench、ZMultiDialBench、IF-Badcase、ToolCall-Badcase 均为内部集；CC-Bench-V2 判官是 Claude Code + Sonnet 4.5，被比较的对象之一是同厂的 Opus 4.5，原文用 94% / 85.7% 一致性做了整体验证，但没有按模型报偏差。</li>
+    <li><b>新鲜题上优势消失。</b>SWE-rebench 上 GLM-5 42.1%，低于 Claude Opus 4.5 与 Gemini 3 Pro，Pass@5 50.0% 还低于 GLM-4.7 的 56.3%<span class="src">表 9</span>，与 SWE-bench Verified 上的叙事不同，原文没讨论。</li>
+    <li><b>基座数学退步未解释。</b>GLM-5-Base 的 GSM8K 68.8、MATH 56.4，低于 GLM-4.5-Base 的 79.4 / 61.0<span class="src">表 11</span>。</li>
+    <li><b>其他未量化的说法。</b>「平均比 GLM-4.7 提升约 20%」没给计算方式<span class="src">§1</span>；「新的异步 RL 基础设施」（摘要）与 §3.6「没有引入新的系统组件」措辞有张力；国产节点「可比双 GPU 国际集群」「长序列部署成本降 50%」没有实验设置<span class="src">§5</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>8 项基准对比柱状图（<code>figures/fig1.jpg</code> 只含下排 4 项，p.1）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>图 2</td><td>Artificial Analysis Intelligence Index v4.0（<code>figures/fig2.jpg</code>，p.2）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>图 3</td><td>LMArena Text / Code Arena 排名（<code>figures/fig4.jpg</code>；manifest 标为图 4，内容实为图 3）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>图 4</td><td>Vending-Bench 2 与 CC-Bench-V2 长程任务（未裁图，本页仅文字引用）</td><td>—</td></tr>
+        <tr><td>图 5</td><td>训练管线总览（<code>figures/fig5.jpg</code>，p.4）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 6–8</td><td>MLA / DSA SFT loss；三种思考模式；BrowseComp 上下文管理曲线（未裁图，文字引用）</td><td><a href="#arch">§03</a> · <a href="#data">§04.4</a> · <a href="#eval">§06.3</a></td></tr>
+        <tr><td>图 9</td><td>幻灯片 RL 奖励作弊（<code>figures/fig9.jpg</code> 只含上半「截断」一类，p.20）</td><td><a href="#data">§04.5</a></td></tr>
+        <tr><td>图 10–13</td><td>Agent-as-a-Judge 流程；五域通用能力；τ²-Bench 用户模拟 prompt（未裁图，文字引用）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 1–3</td><td>Muon Split / MLA-256；MTP 接受长度；MLA vs DSA 长文</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>表 4–6</td><td>SWA / GDN / DSA 高效注意力消融</td><td><a href="#arch">§03 折叠</a></td></tr>
+        <tr><td>表 7</td><td>主对比表（精选 + 全量）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>表 8–9</td><td>CC-Bench-V2；SWE-rebench</td><td><a href="#eval">§06.2–6.3</a></td></tr>
+        <tr><td>表 10–11</td><td>架构超参；基座模型对比</td><td><a href="#arch">§03 折叠</a> · <a href="#eval">§06.3 折叠</a></td></tr>
+        <tr><td>表 12–13</td><td>前端基准场景 / 技术栈分布（220 题）</td><td><a href="#impl">§08 E4</a></td></tr>
+        <tr><td>示意图</td><td>架构配置示意（本页据表 10 绘制）；三张柱状图（本页据表 7 绘制，横轴从 0 起）</td><td><a href="#arch">§03</a> · <a href="#eval">§06.1</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 GLM-5 Team（Zhipu AI &amp; Tsinghua University）《GLM-5: from Vibe Coding to Agentic Engineering》（<a href="https://arxiv.org/abs/2602.15763" target="_blank" rel="noopener">arXiv:2602.15763</a>）撰写。主发布日期取 arXiv v1：2026-02-17；本页核对所用 PDF 为 v2（2026-02-24）。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>
