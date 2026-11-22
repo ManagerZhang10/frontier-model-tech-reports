@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiMo-V2-Flash Technical Report · 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="MiMo-V2-Flash（Xiaomi, arXiv 2601.02780）中文深读：309B/15B MoE、128-token 滑窗 + attention sink 的 5:1 Hybrid Block、轻量 MTP、27T 预训练、多教师 on-policy 蒸馏 MOPD、agentic RL 环境构建、评测，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: 48-layer strip, MOPD delta chart, 3-stage flow, token ratio */
+.layers { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin: 10px 0 4px; }
+.hb { border: 1px dashed var(--line); border-radius: 8px; padding: 6px 5px 4px; text-align: center; }
+.hb .cells { display: flex; gap: 2px; justify-content: center; }
+.hb .cells i { display: block; flex: 1; height: 26px; border-radius: 3px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.hb .cells i.g { background: var(--warm); border-color: var(--warm); }
+.hb .cells i.gd { background: var(--warm); border: 2px solid var(--ink); }
+.hb small { display: block; font: 600 .68rem/1.4 var(--f-mono); color: var(--muted); margin-top: 3px; }
+.ly-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); margin-top: 6px; }
+.ly-legend span::before { content: ""; display: inline-block; width: 10px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -2px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.ly-legend .g::before { background: var(--warm); border-color: var(--warm); }
+.ly-legend .gd::before { background: var(--warm); border: 2px solid var(--ink); }
+.bar-neg { fill: var(--warn); }
+.zero { stroke: var(--ink-2); stroke-width: 1.2; }
+.grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
+.flow.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ratio .rbar .c { background: var(--good); }
+.arch-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.arch-grid figure.fig { margin: 0; }
+@media (max-width: 1100px) { .arch-grid { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .flow.three { grid-template-columns: 1fr; } .flow.three .stage::after { display: none; } .layers { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>MiMo-V2-Flash<span class="sub">MiMo-V2-Flash Technical Report</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Xiaomi · LLM-Core</b></span>
+      <span>发布 <b>2026-01-06</b>（arXiv v1）</span>
+      <span>arXiv <b>2601.02780</b></span>
+      <span>本页依据 <b>v2（2026-01-08）</b>全文</span>
+    </div>
+    <p class="lede">309B 总参 / 15B 激活的 MoE<span class="src">摘要</span>。两件事值得看：一是把滑窗压到 <b>128 token</b>、局部:全局做到 <b>5:1</b>，靠可学习 attention sink 保住长上下文，长上下文 KV cache 与注意力计算降近 6×<span class="src">§1</span>；二是后训练提出 <b>MOPD</b>（多教师 on-policy 蒸馏），学生在自己的 rollout 上同时吃各领域教师的 token 级反向 KL 奖励和结果奖励<span class="src">§4.1 · §4.4</span>。SWE-Bench Verified <b>73.4</b>、Multilingual <b>71.7</b><span class="src">表 9</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源权重（含 3 层 MTP 权重）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>MoE · 309B 总参 / 15B 激活</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>语言模型 · 推理 / Agent</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>Hybrid SWA · MTP · MOPD</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2601.02780" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2601.02780</a>
+      <a href="https://arxiv.org/pdf/2601.02780" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg>PDF</a>
+      <a href="https://github.com/XiaomiMiMo/MiMo-V2-Flash" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-4 1.5-4-2-6-2.5m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg>GitHub（权重）</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v2；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">发布日期</span><span class="stat-num sm">2026-01-06</span><span class="stat-sub">arXiv v1；本页依据 v2（PDF 戳记 2026-01-08）</span><span class="src">arXiv</span></div>
+    <div class="card stat"><span class="stat-k">参数</span><span class="stat-num">309B / 15B</span><span class="stat-sub">总参 / 激活；约为 DeepSeek-V3.2 的 1/2、Kimi-K2 的 1/3</span><span class="src">摘要 · 表 5</span></div>
+    <div class="card stat"><span class="stat-k">层数</span><span class="stat-num">48 = 39 + 9</span><span class="stat-sub">SWA 层 + GA 层；hidden 4096</span><span class="src">表 1 · §3.2</span></div>
+    <div class="card stat"><span class="stat-k">注意力</span><span class="stat-num sm">SWA W=128 · 5:1</span><span class="stat-sub">8 个 Hybrid Block，每块 5 SWA + 1 GA；可学习 sink</span><span class="src">§2.1 · §2.2</span></div>
+    <div class="card stat"><span class="stat-k">专家</span><span class="stat-num">256 选 8</span><span class="stat-sub">无共享专家；专家中间维 2048</span><span class="src">§2.1 · §3.2</span></div>
+    <div class="card stat"><span class="stat-k">预训练</span><span class="stat-num">27T tokens</span><span class="stat-sub">FP8 混合精度；三阶段 22T / 4T / 1T</span><span class="src">§1 · §3.1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">32K → 256K</span><span class="stat-sub">Stage 3 序列长 262,144</span><span class="src">§3.2</span></div>
+    <div class="card stat"><span class="stat-k">MTP</span><span class="stat-num">3 层 × 0.33B</span><span class="stat-sub">接受长度最高约 3.6，解码最高 2.6×</span><span class="src">摘要 · §2.1</span></div>
+    <div class="card stat"><span class="stat-k">SWE-Bench Verified</span><span class="stat-num">73.4</span><span class="stat-sub">Multilingual 71.7；均为表中开源模型最高</span><span class="src">表 9</span></div>
+    <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">原文只说开源模型权重与 3 层 MTP 权重</span><span class="src">摘要</span></div>
+    <div class="card stat"><span class="stat-k">数据配比</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">唯一比例：Stage 2 约 5% 合成推理数据</span><span class="src">§3.1</span></div>
+    <div class="card stat"><span class="stat-k">训练算力</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">GPU 型号、卡时均未给</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>15B 激活打到开源第一梯队</h3><p>SWE-Bench Verified <b>73.4</b>（DeepSeek-V3.2 73.1、Kimi-K2 71.3），Multilingual <b>71.7</b>（70.2 / 61.1）<span class="src">表 9</span>。但 HMMT（84.4 vs 92.5）、Terminal Bench 2.0（38.5 vs 46.4）明显落后 DeepSeek-V3.2<span class="src">表 9</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>128 滑窗 + sink 反超全局注意力</h3><p>32B 稠密对照中，Hybrid SWA(W=128, sink) 推理平均 <b>46.3 vs 42.4</b>（All GA）<span class="src">表 4</span>；不加 sink 则 MMLU 掉到 54.9（All GA 57.3）<span class="src">表 2</span>。W=512 长上下文反而崩：NoLiMa 38.5 vs 51.2<span class="src">表 3</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>MOPD：12 项里 8 项追平或超过最佳教师</h3><p>AIME 2025 <b>94.1</b>（最佳教师 93.9），Arena-Hard Hard Prompt +4.1；但 BrowseComp <b>−6.3</b>、Creative Writing −3.9<span class="src">表 7</span>。正文「保留所有领域最强教师的峰值」说得过满。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>MTP 主打 RL rollout 提速</h3><p>每个 MTP 块只有 0.33B（稠密 FFN + SWA）<span class="src">§2.1</span>；3 层 MTP 在 16K 入 / 1K 出下解码加速 1.82×–2.70×，随接受长度线性涨<span class="src">表 10</span>。接受长度与下一 token 熵拟合 R²=0.995<span class="src">图 7</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>数据：agentic 环境写得细，预训练是黑箱</h3><p>RL 侧给了任务数：Code 90K+30K、Search 150K、General 50K<span class="src">表 8</span>；预训练 27T 只列来源类别，配比、过滤阈值<span class="nd">原文未披露</span>，唯一比例是 Stage 2 约 5% 合成推理数据<span class="src">§3.1</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：Hybrid Block + 轻量 MTP</h2>
+  <p class="sec-intro">标准 Transformer + MoE + 混合注意力<span class="src">§2.1</span>。主干是 M=8 个 Hybrid Block，每块 N=5 个 SWA 块后接 1 个 GA 块；MTP 块挂在主干最后一层隐状态后面，用于投机解码。</p></div>
+
+  <div class="arch-grid wide">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="MiMo-V2-Flash 模型结构：左侧主干由 SWA block（Sliding Window Attention + Sparse MoE，N×）与 GA block（Global Attention + Sparse MoE，1×）组成 M× 个 Hybrid Block；右侧是 K× 个 MTP block（Sliding Window Attention + Dense FFN，LM Head 共享），输出 x_t+1 到 x_t+3" loading="lazy"></div>
+      <figcaption><b>模型结构</b>。左：主干 M 个 Hybrid Block，每块 N 个 SWA 块（橙框 Sliding Window Attention + Sparse MoE）接 1 个 GA 块；右：K 个 MTP 块，用 SWA + 稠密 FFN，LM Head 与主干绑定（tied），预测 x<sub>t+1</sub>…x<sub>t+3</sub>。题注：M=8、N=5；唯一例外是第一个块用 GA + 稠密 FFN。裁图底部截掉了 Embedding 层。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+    <div class="prose">
+      <h3 style="margin-top:0">关键配置</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>配置</th><th>主干</th><th>MTP 块</th></tr></thead>
+          <tbody>
+            <tr><td>层数（总 / SWA / GA）</td><td>48 / 39 / 9</td><td>–</td></tr>
+            <tr><td>SWA 头（Q / KV）</td><td>64 / 8</td><td>64 / 8</td></tr>
+            <tr><td>GA 头（Q / KV）</td><td>64 / 4</td><td>–</td></tr>
+            <tr><td>滑窗大小</td><td>128</td><td>128</td></tr>
+            <tr><td>头维（QK / V）</td><td>192 / 128</td><td>192 / 128</td></tr>
+            <tr><td>专家（总 / 激活）</td><td>256 / 8</td><td>稠密 FFN</td></tr>
+            <tr><td>参数</td><td>309B / 15B 激活</td><td>0.33B / 块</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 1、§2.1、§3.2。其余：GQA；RoPE 只作用于 QK 前 64 维；hidden 4096，专家中间维 2048，稠密 FFN 中间维 16384；初始化标准差 0.006<span class="src">§2.1 · §3.2</span>。</p>
+    </div>
+  </div>
+
+  <div class="card mod wide">
+    <h4>48 层排布 <span class="tag">示意 · 推算</span></h4>
+    <div class="layers" aria-label="8 个 Hybrid Block 的层排布示意">
+      <div class="hb"><div class="cells"><i class="gd"></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB1</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB2</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB3</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB4</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB5</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB6</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB7</small></div>
+      <div class="hb"><div class="cells"><i></i><i></i><i></i><i></i><i></i><i class="g"></i></div><small>HB8</small></div>
+    </div>
+    <div class="ly-legend"><span>SWA + MoE</span><span class="g">GA + MoE</span><span class="gd">GA + 稠密 FFN（第 1 层）</span></div>
+    <p>示意：8×(5+1)=48 层，若第 1 层由 SWA 改为 GA，正好得到表 1 的 39 SWA / 9 GA <span class="src calc">推算</span>。原文只写「第一个块是 GA + 稠密 FFN」，没有逐层画出。</p>
+  </div>
+
+  <div class="prose">
+    <h3>相对同类的改动</h3>
+    <ul>
+      <li><b>更激进的滑窗</b>：W=128、SWA:GA=5:1。作者引 Gemma 3 指出窗口过小或比例过高通常会掉点，尤其是长上下文<span class="src">§2.2</span>；这里靠 sink 把下限压低。</li>
+      <li><b>可学习 attention sink</b>：照搬 gpt-oss 做法，每个头一个标量 sink 加到 softmax 分母里（公式 2–3），允许某个 query「几乎不看」任何 token<span class="src">§2.2</span>。</li>
+      <li><b>GA 用更少 KV 头</b>：SWA 64/8，GA 64/4<span class="src">表 1</span>。</li>
+      <li><b>MoE 无共享专家</b>，256 选 8；第 1 层用稠密 FFN「稳定早期表示学习」<span class="src">§2.1</span>。</li>
+      <li><b>精度</b>：FP8 混合精度（类似 DeepSeek-V3），注意力输出投影、embedding、输出头保留 BF16，MoE router 用 FP32<span class="src">§2.1</span>。</li>
+      <li><b>MTP 轻量化</b>：预训练只挂 1 个 MTP 头；后训练复制成 K 个头联合训练多步预测，每个头输入主模型隐状态 + token embedding<span class="src">§2.3.2</span>。3 层 MTP 合计约 1B <span class="src calc">推算</span>。</li>
+    </ul>
+
+    <h3>架构对照实验（32B 稠密，非正式模型）</h3>
+    <p>四种变体同一流程：8,192 长度预训练 250B token → 32,768 长度扩展 40B token → 长上下文 SFT + 推理 SFT<span class="src">§2.2.1</span>。</p>
+  </div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>变体</th><th>MMLU</th><th>BBH</th><th>GSM8K</th><th>MATH</th><th>GSM-Inf.</th><th>NoLiMa</th><th>RULER-32k</th><th>MRCR</th><th>推理平均</th></tr></thead>
+      <tbody>
+        <tr><td>All GA</td><td>57.3</td><td>54.7</td><td>34.2</td><td>9.5</td><td>12.3</td><td>49.7</td><td class="best">89.4</td><td>32.5</td><td>42.4</td></tr>
+        <tr><td>SWA W=128，无 sink</td><td>54.9</td><td>52.4</td><td>36.9</td><td>8.9</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+        <tr class="hl"><td>SWA W=128，有 sink</td><td class="best">58.3</td><td class="best">56.1</td><td>36.9</td><td class="best">10.3</td><td class="best">17.3</td><td class="best">51.2</td><td class="best">89.4</td><td class="best">34.4</td><td class="best">46.3</td></tr>
+        <tr><td>SWA W=512，有 sink</td><td class="best">58.3</td><td>54.9</td><td class="best">37.9</td><td>10.0</td><td>17.2</td><td>38.5</td><td>84.7</td><td>19.6</td><td>–</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：表 2（通用，base 未扩长）、表 3（长上下文）、表 4（AIME24/25、LiveCodeBench、GPQA-Diamond 的平均）。「–」= 原表未报告。GSM-Infinite 与 NoLiMa 为作者自建的内部 few-shot 版本<span class="src">§2.2.1</span>。完整列（TriviaQA / CMMLU / MBPP、推理三项）见下。</p>
+  <details class="more wide"><summary>表 2 / 表 4 其余列<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>变体</th><th>TriviaQA</th><th>CMMLU</th><th>MBPP</th><th>AIME24/25</th><th>LiveCodeBench</th><th>GPQA-D</th></tr></thead>
+      <tbody>
+        <tr><td>All GA</td><td>53.2</td><td>50.3</td><td>54.7</td><td>45.5</td><td>40.0</td><td>41.7</td></tr>
+        <tr><td>SWA W=128，无 sink</td><td>52.8</td><td>–</td><td>–</td><td>–</td><td>–</td><td>–</td></tr>
+        <tr><td>SWA W=128，有 sink</td><td>53.7</td><td>53.3</td><td>56.3</td><td>47.1</td><td>43.9</td><td>48.1</td></tr>
+        <tr><td>SWA W=512，有 sink</td><td>54.9</td><td>52.3</td><td>53.2</td><td>–</td><td>–</td><td>–</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">作者的解释是假设而非证明：小窗口迫使 SWA 只管局部、长依赖交给 GA，分工更清晰，并起到正则作用；W=512 会让 SWA 部分承担长依赖，模糊分工<span class="src">§2.2.2</span>。作者也强调结论依赖其模型规模、数据和流程。</p>
+  </div></details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：预训练写类别，RL 环境写到流水线</h2>
+  <p class="sec-intro">预训练数据处理「大体沿用 MiMo-7B」，本篇只写了相对它的偏移<span class="src">§3</span>。后训练里 agentic 环境的构建写得最细，这也是本篇对数据工程最有参考价值的部分。</p></div>
+
+  <div class="legend-dots wide"><span>来源</span><span class="m">构建 / 过滤</span><span class="o">产出 / 进入训练的形式</span></div>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>来源</span><span>构建 / 过滤</span><span>产出</span></div>
+    <div class="pipe-row">
+      <div class="lbl">预训练</div>
+      <div class="chip">公开网页、书籍、学术论文、代码、数学、STEM 材料 <span class="src">§3</span></div>
+      <div class="chip m">流程沿用 MiMo-7B；刻意偏向<b>长程依赖</b>数据：长网页文档、仓库级代码、PR、issue、commit 历史 <span class="src">§3</span></div>
+      <div class="chip o">27T tokens，分三阶段 <span class="src">§3.1</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Mid-training</div>
+      <div class="chip">Stage 1 的混合数据</div>
+      <div class="chip m">上采样代码类数据；加入<b>约 5%</b> 合成推理数据 <span class="src">§3.1</span></div>
+      <div class="chip o">22T–26T 段训练；Stage 3 沿用此分布并上采样长依赖数据 <span class="src">§3.1</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">SFT</div>
+      <div class="chip">通用对话、推理、代码、agent 任务的 prompt <span class="src">§4.2</span></div>
+      <div class="chip m">回复由<b>内部领域专用 checkpoint</b> 生成；覆盖 thinking / non-thinking 两种模式 <span class="src">§4.2</span></div>
+      <div class="chip o">「数百万」条样本（精确数<span class="nd">原文未披露</span>）<span class="src">§4.2</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">非 agentic RL</div>
+      <div class="chip">整理好的「题目–答案」对；开放式对话 <span class="src">§4.3.1</span></div>
+      <div class="chip m">可验证域：程序化工具 + LLM judge 混合验证；主观域：LLM judge 按细化 rubric + 参考答案打分 <span class="src">§4.3.1</span></div>
+      <div class="chip o">数学 / 代码 / 逻辑正确性奖励 + helpfulness / safety 奖励</div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Code Agent</div>
+      <div class="chip">真实 GitHub issue；仓库快照 <span class="src">§4.3.2</span></div>
+      <div class="chip m">自动环境搭建流水线，打包成容器镜像，<b>8 种语言成功率 70%</b>；K8s 上 1 万+ 并发 pod <span class="src">§4.3.2</span></div>
+      <div class="chip o">10 万+ 代码任务，单元测试给奖励；工具只有 bash / str_replace / finish <span class="src">§4.3.2</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Terminal Agent</div>
+      <div class="chip">Stack Overflow / Stack Exchange 中需要较深专业知识的帖子 <span class="src">§4.3.2</span></div>
+      <div class="chip m">转写为 query + Dockerfile + 测试用例；验证环境可安装，按难度与可靠性过滤，再按 pass rate 去掉判对不可靠或太简单的任务 <span class="src">§4.3.2</span></div>
+      <div class="chip o">约 30,000 条带已验证执行环境的 query <span class="src">§4.3.2</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Web Dev Agent</div>
+      <div class="chip">高质量的用户手写网页 <span class="src">§4.3.2</span></div>
+      <div class="chip m">Playwright 执行代码并<b>录成视频</b>，多模态视觉判别器只留高质量样本；从页面<b>反推用户 query</b> 作种子 <span class="src">§4.3.2</span></div>
+      <div class="chip o">覆盖 8 类网页的大规模 RL 数据；视觉 verifier 按录屏打分 <span class="src">§4.3.2</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Search Agent</div>
+      <div class="chip">种子实体 <span class="src">§4.3.2</span></div>
+      <div class="chip m">递归扩展事实图；用关系链深度和细节模糊化控制难度 <span class="src">§4.3.2</span></div>
+      <div class="chip o">答案可验证的难搜索题；工具 search / open / find <span class="src">§4.3.2</span></div>
+    </div>
+    <div class="pipe-row">
+      <div class="lbl">Function Call</div>
+      <div class="chip">合成的应用环境与自定义工具集 <span class="src">§4.3.2</span></div>
+      <div class="chip m">按显式数据依赖（输入输出）和隐式逻辑依赖（隐藏系统状态）生成工具调用图 <span class="src">§4.3.2</span></div>
+      <div class="chip o">需要数据传递 + 状态推断的多步任务</div>
+    </div>
+  </div>
+
+  <h3 class="prose">预训练三阶段的 token 划分</h3>
+  <div class="ratio wide">
+    <div class="rlab"><span>Stage 1 · 0–22T · 32K</span><span>Stage 2 · 22–26T</span><span>Stage 3 · 26–27T · 256K</span></div>
+    <div class="rbar"><span class="a" style="width:81.5%">22T · 81.5%</span><span class="b" style="width:14.8%">4T</span><span class="c" style="width:3.7%"></span></div>
+  </div>
+  <p class="tbl-note">阶段边界来自 <span class="src">§3.1</span>；百分比按 22/27、4/27、1/27 自算 <span class="src calc">推算</span>。这是<b>阶段长度</b>，不是数据来源配比；来源配比<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>项目</th><th>原文给出的内容</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>预训练总量</td><td>27T tokens</td><td><span class="src">§3</span></td></tr>
+        <tr><td>预训练来源配比</td><td><span class="nd">原文未披露</span>（只列了来源类别，故不画配比条）</td><td>–</td></tr>
+        <tr><td>合成数据比例</td><td>Stage 2 加入约 5% 合成推理数据；其他阶段<span class="nd">原文未披露</span></td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>清洗 / 去重 / 质量过滤</td><td>「大体沿用 MiMo-7B」，本篇无细节<span class="nd">原文未披露</span></td><td><span class="src">§3</span></td></tr>
+        <tr><td>SFT 样本</td><td>「数百万」条，覆盖 thinking / non-thinking</td><td><span class="src">§4.2</span></td></tr>
+        <tr><td>Code Agent</td><td>90K（真实环境 + 真实 prompt）+ 30K（真实环境 + 合成 prompt）</td><td><span class="src">表 8</span></td></tr>
+        <tr><td>Search Agent</td><td>150K（真实环境 + 合成 prompt）</td><td><span class="src">表 8</span></td></tr>
+        <tr><td>General Agent</td><td>50K（合成环境 + 合成 prompt）</td><td><span class="src">表 8</span></td></tr>
+        <tr><td>Terminal Agent</td><td>约 30,000 条已验证 query（与表 8 中哪一行对应，原文未说明）</td><td><span class="src">§4.3.2</span></td></tr>
+        <tr><td>Web Dev 数据量</td><td>只说「大规模」，8 类网页；条数<span class="nd">原文未披露</span></td><td><span class="src">§4.3.2</span></td></tr>
+        <tr><td>Code Agent RL 实际消耗</td><td>约 120K 个环境的 on-policy rollout</td><td><span class="src">§4.3.2 · 图 4</span></td></tr>
+        <tr><td>MOPD prompt 分布、教师数量</td><td><span class="nd">原文未披露</span>（图 3 列出 Search Agent / Code Agent / Math / Reasoning / Safety / …）</td><td><span class="src">图 3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <h3>Caption / 标注怎么做的</h3>
+    <p>这是一篇纯文本 LLM，不涉及图像 caption。和「标注」最接近的有三处：</p>
+    <ul>
+      <li><b>SFT 回复是模型标注</b>：由内部领域专用 checkpoint 生成，不是人写<span class="src">§4.2</span>。</li>
+      <li><b>主观任务的奖励靠 rubric</b>：高级 LLM judge 对照细化 rubric 和参考答案给细粒度奖励<span class="src">§4.3.1</span>。</li>
+      <li><b>Web Dev 的「标注者」是视觉模型</b>：判别器看渲染视频筛数据，verifier 看 rollout 录屏同时评视觉质量、功能正确性和可执行性；作者称视频评估比静态截图更少视觉幻觉<span class="src">§4.3.2</span>（无量化数字）。</li>
+    </ul>
+    <div class="card mod">
+      <h4>防奖励作弊：清理环境里的「答案」 <span class="tag">附录 B</span></h4>
+      <p>官方 SWE-Bench 镜像里的 ground-truth commit 没删干净，RL 中模型会去偷看未来 commit。作者统计 rollout 里 <code>git log --all</code> 等关键词次数来量化「git hack」，评测换用最新镜像，自建训练镜像按官方方案修复<span class="src">附录 B</span>。注意：演示曲线（图 8）是在 <b>Qwen3-32B</b> 上跑的，不是 MiMo-V2-Flash。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">预训练超参给得很全；后训练只给了 SFT 超参，RL / MOPD 的学习率、batch、步数、α<span class="nd">原文未披露</span>。</p></div>
+
+  <div class="flow three wide">
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>预训练 · 0–22T</h4>
+      <dl><dt>长度</dt><dd>32,768</dd><dt>LR</dt><dd>50B warm-up → 3.2e-4 恒定 12T → cos 至 1.0e-4（10T）</dd><dt>RoPE</dt><dd>GA 640K · SWA 10K</dd><dt>MTP 权重</dt><dd>0.3</dd></dl>
+      <div class="tokbar"><i style="width:81.5%"></i></div>
+    </div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>Mid-training · 22–26T</h4>
+      <dl><dt>数据</dt><dd>上采样代码 + 约 5% 合成推理</dd><dt>LR</dt><dd>1.0e-4 → cos 3.0e-5（4T）</dd><dt>MTP 权重</dt><dd>0.1</dd></dl>
+      <div class="tokbar"><i style="width:14.8%"></i></div>
+    </div>
+    <div class="card stage"><span class="sid">STAGE 3</span><h4>长上下文扩展 · 26–27T</h4>
+      <dl><dt>长度</dt><dd>262,144</dd><dt>LR</dt><dd>3.0e-5 → cos 1.0e-5</dd><dt>RoPE</dt><dd>GA 调到 5,000,000</dd><dt>batch</dt><dd>256</dd><dt>专家 bias</dt><dd>更新因子 1.0e-5</dd></dl>
+      <div class="tokbar seqbar"><i style="width:3.7%"></i></div>
+    </div>
+  </div>
+  <p class="tbl-note">来源：§3.1、§3.2。共享设置：AdamW β₁=0.9、β₂=0.95、wd 0.1、梯度裁剪 1.0；batch 在前 500B token 线性升到 2,048 后保持（Stage 1–2）；MoE 序列辅助损失 1.0e-5；专家 bias 更新因子 Stage 1–2 为 0.001。进度条为该阶段 token 占 27T 的比例 <span class="src calc">推算</span>。</p>
+
+  <h3 class="prose">后训练：三段式 MOPD</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="后训练三阶段：Stage 1 用 SFT 数据训练 SFT 模型；Stage 2 分领域（Search Agent、Code Agent、Math、Reasoning、Safety 等）训练领域教师；Stage 3 MOPD，学生 rollout 每个 token 从领域教师获得反向 KL 的 token 级奖励，最终输出由 ORM 给序列级奖励" loading="lazy"></div>
+    <figcaption><b>后训练流程</b>。Stage 1 SFT → Stage 2 分领域训练教师（Search / Code Agent、Math、Reasoning、Safety…）→ Stage 3 MOPD：学生 rollout 由领域教师 prefill 打分，逐 token 反向 KL 作为 token 级奖励，ORM 对最终输出给序列级奖励；箭头「Replace」表示蒸馏后的学生可替换回去进入下一轮。裁图顶部带入了表 6 的题注文字。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">S1</span><h4>通用 SFT</h4>
+      <ul>
+        <li>数百万条，thinking + non-thinking<span class="src">§4.2</span></li>
+        <li>LR cos 5.0e-5 → 5.0e-6，batch 128<span class="src">§4.2</span></li>
+        <li>AdamW ε=1.0e-8；专家 bias 更新 1.0e-4；辅助损失 1.0e-6<span class="src">§4.2</span></li>
+        <li>监控 <b>num-zeros</b>（零梯度参数数）：上升=专家负载变差，下降=过拟合<span class="src">§4.2</span></li>
+      </ul>
+    </div>
+    <div class="card stage"><span class="sid">S2</span><h4>领域教师</h4>
+      <ul>
+        <li>各领域独立 RL（或 SFT）训练教师：search、coding、通用工具、数学、通用推理、安全<span class="src">§4.1</span></li>
+        <li>教师可以是 RL 模型、另一 SFT 模型，甚至学生自己<span class="src">§4.1</span></li>
+        <li>Code Agent RL 跑了约 120K 环境，并泛化到数学 / 代码 / 通用推理<span class="src">图 4 · 图 5</span></li>
+      </ul>
+    </div>
+    <div class="card stage"><span class="sid">S3</span><h4>MOPD</h4>
+      <ul>
+        <li>学生在推理引擎上自采样，按 prompt 所属领域选教师<span class="src">§4.4</span></li>
+        <li>token 级优势 = sg[log π<sub>teacher</sub>/π<sub>θ</sub>]（反向 KL）<span class="src">式 8</span></li>
+        <li>训推重要性采样，偏差过大的 token 权重置 0（ε<sub>low</sub>/ε<sub>high</sub>）<span class="src">式 7–8</span></li>
+        <li>最终优势再加 α·Â<sub>ORM</sub>（如 GRPO）<span class="src">式 9</span>；α、ε 取值<span class="nd">原文未披露</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>RL 基础设施 <span class="tag">§4.6</span></h4>
+      <ul>
+        <li>SGLang 推理 + Megatron-LM 训练，训推都用 FP8。</li>
+        <li><b>R3（Rollout Routing Replay）</b>：训练时复用 rollout 选中的专家，解决 MoE 训推路由不一致；作者前作。</li>
+        <li><b>请求级 prefix cache</b>：多轮 agent 中缓存前几轮 KV 和路由结果，不跨请求共享，保证路由一致。</li>
+        <li><b>Data Scheduler</b>：以序列而非 micro-batch 调度；按历史 pass rate 动态采样；partial rollout + staleness-aware 截断重要性采样。</li>
+        <li><b>Toolbox / Tool Manager</b>：基于 Ray 的工具资源池，配额 + QPS 限制，环境预热、序列级异步奖励。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>MOPD vs 只用 ORM <span class="tag">图 6</span></h4>
+      <p>在 AIME 2025 和 LiveCodeBench 上比较三条训练曲线：RL+ORM、MOPD 去掉 ORM、MOPD。作者称 MOPD 保留并合并多个教师能力，多数领域追平或超过最强教师<span class="src">§4.4</span>。</p>
+      <p>只覆盖 2 个基准、约 50 步；图 6 本页未收录原图，具体数值请看原文。</p>
+      <h4 style="margin-top:12px">推理时上下文管理 <span class="tag">附录 C</span></h4>
+      <p>上下文占用超过阈值（低至 30%）就让模型自我总结、把完整历史存成可检索文件；Deep Research 类任务提升 5–10%，BrowseComp 由 45.4 升到 <b>58.3</b><span class="src">附录 C · 表 9</span>。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">后训练模型对比 Kimi-K2 Thinking、DeepSeek-V3.2 Thinking（开源）和 Gemini-3.0 Pro、Claude Sonnet 4.5、GPT-5 High（闭源）<span class="src">表 9</span>。原文没说明基线分数是自测还是引用。τ²-Bench 用 DeepSeek-V3.2 做 user agent<span class="src">§4.5.2</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="MiMo-V2-Flash 与 DeepSeek-V3.2、K2-Thinking、Claude Sonnet 4.5、GPT-5 High、Gemini 3.0 Pro 在 SWE-Bench Verified、SWE-Bench Multilingual、Tau2-Bench、AIME25、GPQA-Diamond、HLE、Arena-Hard Creative Writing 上的柱状图" loading="lazy"></div>
+    <figcaption><b>七项基准总览</b>（纵轴从 0 起）。裁图丢了图例和横轴标签，左侧还带进了 arXiv 页边戳记。按原图从左到右依次为 SWE-Bench Verified、SWE-Bench Multilingual、Tau2-Bench、AIME25、GPQA-Diamond、HLE（无工具）、Arena-Hard（Creative Writing）；每组内依次为 MiMo-V2-Flash（橙色斜纹）、DeepSeek-V3.2、K2-Thinking、Claude Sonnet 4.5、GPT-5 (High)、Gemini 3.0 Pro。数值与表 9 一致。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 320 180" role="img" aria-label="SWE-Bench Verified 得分">
+        <text x="0" y="14" class="ch-t">SWE-Bench Verified</text><text x="320" y="14" text-anchor="end" class="ch-src">表 9</text>
+        <g class="ch-lbl"><text x="70" y="40" text-anchor="end">MiMo-V2-Flash</text><text x="70" y="62" text-anchor="end">Kimi-K2 T.</text><text x="70" y="84" text-anchor="end">DS-V3.2 T.</text><text x="70" y="106" text-anchor="end">Gemini-3.0 Pro</text><text x="70" y="128" text-anchor="end">Sonnet 4.5</text><text x="70" y="150" text-anchor="end">GPT-5 High</text></g>
+        <rect x="78" y="29" width="161.5" height="15" rx="3" class="bar-q"/><rect x="78" y="51" width="156.9" height="15" rx="3" class="bar-o"/><rect x="78" y="73" width="160.8" height="15" rx="3" class="bar-o"/><rect x="78" y="95" width="167.6" height="15" rx="3" class="bar-o2"/><rect x="78" y="117" width="169.8" height="15" rx="3" class="bar-o2"/><rect x="78" y="139" width="164.8" height="15" rx="3" class="bar-o2"/>
+        <g class="ch-val"><text x="244" y="41">73.4</text><text x="239" y="63">71.3</text><text x="243" y="85">73.1</text><text x="250" y="107">76.2</text><text x="252" y="129">77.2</text><text x="247" y="151">74.9</text></g>
+        <line x1="78" y1="160" x2="298" y2="160" class="axis"/><g class="ch-ax"><text x="78" y="172" text-anchor="middle">0</text><text x="188" y="172" text-anchor="middle">50</text><text x="298" y="172" text-anchor="middle">100</text></g>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 320 180" role="img" aria-label="SWE-Bench Multilingual 得分">
+        <text x="0" y="14" class="ch-t">SWE-Bench Multilingual</text><text x="320" y="14" text-anchor="end" class="ch-src">表 9</text>
+        <g class="ch-lbl"><text x="70" y="40" text-anchor="end">MiMo-V2-Flash</text><text x="70" y="62" text-anchor="end">Kimi-K2 T.</text><text x="70" y="84" text-anchor="end">DS-V3.2 T.</text><text x="70" y="106" text-anchor="end">Gemini-3.0 Pro</text><text x="70" y="128" text-anchor="end">Sonnet 4.5</text><text x="70" y="150" text-anchor="end">GPT-5 High</text></g>
+        <rect x="78" y="29" width="157.7" height="15" rx="3" class="bar-q"/><rect x="78" y="51" width="134.4" height="15" rx="3" class="bar-o"/><rect x="78" y="73" width="154.4" height="15" rx="3" class="bar-o"/><rect x="78" y="117" width="149.6" height="15" rx="3" class="bar-o2"/><rect x="78" y="139" width="121.7" height="15" rx="3" class="bar-o2"/>
+        <g class="ch-val"><text x="240" y="41">71.7</text><text x="216" y="63">61.1</text><text x="236" y="85">70.2</text><text x="82" y="107">– 未报告</text><text x="231" y="129">68.0</text><text x="203" y="151">55.3</text></g>
+        <line x1="78" y1="160" x2="298" y2="160" class="axis"/><g class="ch-ax"><text x="78" y="172" text-anchor="middle">0</text><text x="188" y="172" text-anchor="middle">50</text><text x="298" y="172" text-anchor="middle">100</text></g>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 320 180" role="img" aria-label="LongBench V2 得分">
+        <text x="0" y="14" class="ch-t">LongBench V2</text><text x="320" y="14" text-anchor="end" class="ch-src">表 9</text>
+        <g class="ch-lbl"><text x="70" y="40" text-anchor="end">MiMo-V2-Flash</text><text x="70" y="62" text-anchor="end">Kimi-K2 T.</text><text x="70" y="84" text-anchor="end">DS-V3.2 T.</text><text x="70" y="106" text-anchor="end">Gemini-3.0 Pro</text><text x="70" y="128" text-anchor="end">Sonnet 4.5</text><text x="70" y="150" text-anchor="end">GPT-5 High</text></g>
+        <rect x="78" y="29" width="133.3" height="15" rx="3" class="bar-q"/><rect x="78" y="51" width="105.8" height="15" rx="3" class="bar-o"/><rect x="78" y="73" width="128.5" height="15" rx="3" class="bar-o"/><rect x="78" y="95" width="144.3" height="15" rx="3" class="bar-o2"/><rect x="78" y="117" width="136" height="15" rx="3" class="bar-o2"/>
+        <g class="ch-val"><text x="216" y="41">60.6</text><text x="188" y="63">48.1</text><text x="211" y="85">58.4</text><text x="227" y="107">65.6</text><text x="219" y="129">61.8</text><text x="82" y="151">– 未报告</text></g>
+        <line x1="78" y1="160" x2="298" y2="160" class="axis"/><g class="ch-ax"><text x="78" y="172" text-anchor="middle">0</text><text x="188" y="172" text-anchor="middle">50</text><text x="298" y="172" text-anchor="middle">100</text></g>
+      </svg>
+    </div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">MiMo-V2-Flash</span><span class="l3">开源对照（Thinking）</span><span class="l4">闭源对照</span><span>横轴均从 0 起，满分 100</span></div>
+
+  <h3 class="prose">后训练模型（表 9 全表）</h3>
+  <div class="tbl-wrap wide tall">
+    <table>
+      <thead><tr><th>基准</th><th class="q">MiMo-V2<br>Flash</th><th>Kimi-K2<br>Thinking</th><th>DeepSeek-V3.2<br>Thinking</th><th>Gemini-3.0<br>Pro</th><th>Claude<br>Sonnet 4.5</th><th>GPT-5<br>High</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">Reasoning</td></tr>
+        <tr><td>MMLU-Pro</td><td class="q">84.9</td><td>84.6</td><td>85.0</td><td class="best">90.1</td><td>88.2</td><td>87.5</td></tr>
+        <tr><td>GPQA-Diamond</td><td class="q">84.3</td><td>84.5</td><td>82.4</td><td class="best">91.9</td><td>83.4</td><td>85.7</td></tr>
+        <tr><td>HLE (no tools)</td><td class="q">22.1</td><td>23.9</td><td>25.1</td><td class="best">37.5</td><td>13.7</td><td>26.3</td></tr>
+        <tr><td>AIME 2025</td><td class="q">94.1</td><td>94.5</td><td>93.1</td><td class="best">95.0</td><td>87.0</td><td>94.6</td></tr>
+        <tr><td>HMMT Feb. 2025</td><td class="q">84.4</td><td>89.4</td><td>92.5</td><td class="best">97.5</td><td>79.2</td><td>88.3</td></tr>
+        <tr><td>LiveCodeBench-v6</td><td class="q">85.1</td><td>83.1</td><td>83.3</td><td class="best">90.7</td><td>64.0</td><td>84.5</td></tr>
+        <tr class="grp"><td colspan="7">General Writing</td></tr>
+        <tr><td>Arena-Hard (Hard Prompt)</td><td class="q">54.1</td><td>71.9</td><td>53.4</td><td class="best">72.6</td><td>63.3</td><td>71.9</td></tr>
+        <tr><td>Arena-Hard (Creative Writing)</td><td class="q">86.2</td><td>80.1</td><td>88.8</td><td class="best">93.6</td><td>76.7</td><td>92.2</td></tr>
+        <tr class="grp"><td colspan="7">Long Context</td></tr>
+        <tr><td>LongBench V2</td><td class="q">60.6</td><td>48.1</td><td>58.4</td><td class="best">65.6</td><td>61.8</td><td>–</td></tr>
+        <tr><td>MRCR</td><td class="q">45.7</td><td>44.2</td><td>55.5</td><td class="best">89.7</td><td>55.4</td><td>–</td></tr>
+        <tr class="grp"><td colspan="7">Code Agent</td></tr>
+        <tr><td>SWE-Bench Verified</td><td class="q">73.4</td><td>71.3</td><td>73.1</td><td>76.2</td><td class="best">77.2</td><td>74.9</td></tr>
+        <tr><td>SWE-Bench Multilingual</td><td class="q best">71.7</td><td>61.1</td><td>70.2</td><td>–</td><td>68.0</td><td>55.3</td></tr>
+        <tr><td>Terminal-Bench Hard</td><td class="q">30.5</td><td>30.6</td><td>35.4</td><td class="best">39.0</td><td>33.3</td><td>30.5</td></tr>
+        <tr><td>Terminal Bench 2.0</td><td class="q">38.5</td><td>35.7</td><td>46.4</td><td class="best">54.2</td><td>42.8</td><td>35.2</td></tr>
+        <tr class="grp"><td colspan="7">General Agent</td></tr>
+        <tr><td>BrowseComp</td><td class="q">45.4</td><td>–</td><td>51.4</td><td>–</td><td>24.1</td><td class="best">54.9</td></tr>
+        <tr><td>BrowseComp (w/ Context Manage)</td><td class="q">58.3</td><td>60.2</td><td class="best">67.6</td><td>59.2</td><td>–</td><td>–</td></tr>
+        <tr><td>τ²-Bench</td><td class="q">80.3</td><td>74.3</td><td>80.3</td><td class="best">85.4</td><td>84.7</td><td>80.2</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">该行最高</span><span class="k-q">MiMo-V2-Flash 列</span><span>「–」= 原表未报告</span><span>τ²-Bench 分项：Telecom 95.3 / Retail 79.5 / Airline 66.0<span class="src">§4.5.2</span></span></div>
+  <p class="tbl-note">「BrowseComp (w/ Context Manage)」各家用的上下文管理方法不一定相同，MiMo 的 58.3 来自附录 C 的方法（复刻 DeepSeek 的激进重置）<span class="src">附录 C</span>，不宜横比。MRCR 为 {2,4,8}-needle、最长 128K<span class="src">§4.5.1</span>。</p>
+
+  <h3 class="prose">MOPD：学生 vs 最佳教师（表 7）</h3>
+  <div class="chart-cell wide">
+    <svg class="chart" viewBox="0 0 640 358" role="img" aria-label="MOPD 后学生相对最佳教师的分差">
+      <text x="0" y="16" class="ch-t">Δ（MOPD 后学生 − 最佳教师），单位：分</text><text x="640" y="16" text-anchor="end" class="ch-src">表 7</text>
+      <line x1="240" y1="34" x2="240" y2="330" class="grid-l"/><line x1="320" y1="34" x2="320" y2="330" class="grid-l"/><line x1="480" y1="34" x2="480" y2="330" class="grid-l"/><line x1="560" y1="34" x2="560" y2="330" class="grid-l"/>
+      <line x1="400" y1="34" x2="400" y2="330" class="zero"/>
+      <g class="ch-lbl">
+        <text x="220" y="51" text-anchor="end">AIME 2025 · RL</text>
+        <text x="220" y="75" text-anchor="end">HMMT Feb. 2025 · RL</text>
+        <text x="220" y="99" text-anchor="end">LiveCodeBench · RL</text>
+        <text x="220" y="123" text-anchor="end">MMLU-Pro · Self</text>
+        <text x="220" y="147" text-anchor="end">GPQA-Diamond · Self</text>
+        <text x="220" y="171" text-anchor="end">HLE (w/o Tool) · Self</text>
+        <text x="220" y="195" text-anchor="end">Arena-Hard Hard Prompt · Self</text>
+        <text x="220" y="219" text-anchor="end">Arena-Hard Creative · Self</text>
+        <text x="220" y="243" text-anchor="end">SWE-Bench Verified · RL</text>
+        <text x="220" y="267" text-anchor="end">Tau2-Bench · RL</text>
+        <text x="220" y="291" text-anchor="end">Tau2-Bench Telecom · RL</text>
+        <text x="220" y="315" text-anchor="end">BrowseComp · SFT</text>
+      </g>
+      <rect x="400" y="40" width="4" height="14" rx="2" class="bar-q"/>
+      <rect x="400" y="64" width="36" height="14" rx="2" class="bar-q"/>
+      <rect x="400" y="88" width="12" height="14" rx="2" class="bar-q"/>
+      <rect x="400" y="112" width="4" height="14" rx="2" class="bar-q"/>
+      <rect x="388" y="136" width="12" height="14" rx="2" class="bar-neg"/>
+      <rect x="400" y="160" width="18" height="14" rx="2" class="bar-q"/>
+      <rect x="400" y="184" width="82" height="14" rx="2" class="bar-q"/>
+      <rect x="322" y="208" width="78" height="14" rx="2" class="bar-neg"/>
+      <rect x="384" y="232" width="16" height="14" rx="2" class="bar-neg"/>
+      <rect x="400" y="256" width="14" height="14" rx="2" class="bar-q"/>
+      <rect x="400" y="280" width="6" height="14" rx="2" class="bar-q"/>
+      <rect x="274" y="304" width="126" height="14" rx="2" class="bar-neg"/>
+      <g class="ch-val">
+        <text x="409" y="51">+0.2 · 94.1</text>
+        <text x="441" y="75">+1.8 · 84.4</text>
+        <text x="417" y="99">+0.6 · 83.2</text>
+        <text x="409" y="123">+0.2 · 84.9</text>
+        <text x="405" y="147">−0.6 · 84.3</text>
+        <text x="423" y="171">+0.9 · 22.1</text>
+        <text x="487" y="195">+4.1 · 54.1</text>
+        <text x="405" y="219">−3.9 · 86.2</text>
+        <text x="405" y="243">−0.8 · 73.4</text>
+        <text x="419" y="267">+0.7 · 80.3</text>
+        <text x="411" y="291">+0.3 · 95.3</text>
+        <text x="405" y="315">−6.3 · 45.4</text>
+      </g>
+      <g class="ch-ax"><text x="240" y="346" text-anchor="middle">−8</text><text x="320" y="346" text-anchor="middle">−4</text><text x="400" y="346" text-anchor="middle">0</text><text x="480" y="346" text-anchor="middle">+4</text><text x="560" y="346" text-anchor="middle">+8</text></g>
+    </svg>
+  </div>
+  <p class="tbl-note">标签后缀为最佳教师类型（RL / SFT / Self = 学生自己），数值为「Δ · MOPD 后学生分」。紫色为追平或超过，橙色为低于最佳教师。</p>
+  <details class="more wide"><summary>表 7 原始数值<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>基准</th><th>MOPD 前学生</th><th>最佳教师</th><th class="q">MOPD 后学生</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr><td>AIME 2025</td><td>89.3</td><td>93.9 (RL)</td><td class="q">94.1</td><td>+0.2</td></tr>
+        <tr><td>HMMT Feb. 2025</td><td>76.9</td><td>82.6 (RL)</td><td class="q">84.4</td><td>+1.8</td></tr>
+        <tr><td>LiveCodeBench</td><td>77.5</td><td>82.6 (RL)</td><td class="q">83.2</td><td>+0.6</td></tr>
+        <tr><td>MMLU-Pro</td><td>84.7</td><td>84.7 (Self)</td><td class="q">84.9</td><td>+0.2</td></tr>
+        <tr><td>GPQA-Diamond</td><td>84.9</td><td>84.9 (Self)</td><td class="q">84.3</td><td>−0.6</td></tr>
+        <tr><td>HLE (w/o Tool)</td><td>21.2</td><td>21.2 (Self)</td><td class="q">22.1</td><td>+0.9</td></tr>
+        <tr><td>Arena-Hard (Hard Prompt)</td><td>50.0</td><td>50.0 (Self)</td><td class="q">54.1</td><td>+4.1</td></tr>
+        <tr><td>Arena-Hard (Creative Writing)</td><td>90.1</td><td>90.1 (Self)</td><td class="q">86.2</td><td>−3.9</td></tr>
+        <tr><td>SWE-Bench Verified</td><td>67.8</td><td>74.2 (RL)</td><td class="q">73.4</td><td>−0.8</td></tr>
+        <tr><td>Tau2-Bench</td><td>75.9</td><td>79.6 (RL)</td><td class="q">80.3</td><td>+0.7</td></tr>
+        <tr><td>Tau2-Bench (Telecom)</td><td>92.7</td><td>95.0 (RL)</td><td class="q">95.3</td><td>+0.3</td></tr>
+        <tr><td>BrowseComp</td><td>42.5</td><td>51.7 (SFT)</td><td class="q">45.4</td><td>−6.3</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">来源：表 7。注意表 7 的「LiveCodeBench」为 83.2，表 9 的「LiveCodeBench-v6」为 85.1，原文没有解释两者差别。</p>
+  </div></details>
+
+  <h3 class="prose">Base 模型与长上下文</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th class="q">MiMo-V2-Flash<br>Base</th><th>Kimi-K2<br>Base</th><th>DeepSeek-V3.1<br>Base</th><th>DeepSeek-V3.2<br>Exp Base</th></tr></thead>
+      <tbody>
+        <tr><td>激活 / 总参</td><td class="q">15B / 309B</td><td>32B / 1043B</td><td>37B / 671B</td><td>37B / 671B</td></tr>
+        <tr><td>MMLU-Pro（5-shot）</td><td class="q best">73.2</td><td>69.2</td><td>58.8</td><td>62.1</td></tr>
+        <tr><td>GPQA-Diamond（5-shot）</td><td class="q best">55.1</td><td>48.1</td><td>51.0</td><td>52.0</td></tr>
+        <tr><td>AIME 24&amp;25（2-shot）</td><td class="q best">35.3</td><td>31.6</td><td>21.6</td><td>24.8</td></tr>
+        <tr><td>SWE-Bench AgentLess（3-shot）</td><td class="q best">30.8</td><td>28.2</td><td>24.8</td><td>9.4<sup>*</sup></td></tr>
+        <tr><td>SimpleQA（5-shot）</td><td class="q">20.6</td><td class="best">35.3</td><td>26.3</td><td>27.0</td></tr>
+        <tr><td>C-SimpleQA（5-shot）</td><td class="q">61.5</td><td class="best">77.6</td><td>70.9</td><td>68.0</td></tr>
+        <tr class="grp"><td colspan="5">长上下文（表 6）</td></tr>
+        <tr><td>NIAH-Multi 32K / 128K</td><td class="q">99.3 / 98.6</td><td>99.8 / 99.5</td><td>99.7 / 97.2</td><td>85.6<sup>*</sup> / 94.3<sup>*</sup></td></tr>
+        <tr><td>NIAH-Multi 256K</td><td class="q best">96.7</td><td>–</td><td>–</td><td>–</td></tr>
+        <tr><td>GSM-Infinite Hard 16K</td><td class="q">37.7</td><td>34.6</td><td>41.5</td><td class="best">50.4</td></tr>
+        <tr><td>GSM-Infinite Hard 128K</td><td class="q best">29.0</td><td>8.8</td><td>28.7</td><td>25.7</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：表 5、表 6。<b>*</b> 表 5：模型没有遵循 few-shot 示例格式；表 6：模型可能没遵循 prompt——所以 DeepSeek-V3.2-Exp Base 的 SWE-Bench 9.4 不代表能力。表 6 的「–」：基线最大长度都不足 256K。GSM-Infinite 从 16K 到 128K，MiMo 掉 8.7 分，DeepSeek-V3.2-Exp 掉 24.7 分 <span class="src calc">推算</span>。</p>
+  <details class="more wide"><summary>表 5 全部基准<span class="hint">展开</span></summary><div class="body">
+    <div class="tbl-wrap tall"><table>
+      <thead><tr><th>基准</th><th>Shots</th><th class="q">MiMo-V2-Flash</th><th>Kimi-K2</th><th>DS-V3.1</th><th>DS-V3.2-Exp</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="6">General</td></tr>
+        <tr><td>BBH</td><td>3</td><td class="q">88.5</td><td>88.7</td><td>88.2</td><td>88.7</td></tr>
+        <tr><td>MMLU</td><td>5</td><td class="q">86.7</td><td>87.8</td><td>87.4</td><td>87.8</td></tr>
+        <tr><td>MMLU-Redux</td><td>5</td><td class="q">90.6</td><td>90.2</td><td>90.0</td><td>90.4</td></tr>
+        <tr><td>MMLU-Pro</td><td>5</td><td class="q">73.2</td><td>69.2</td><td>58.8</td><td>62.1</td></tr>
+        <tr><td>DROP</td><td>3</td><td class="q">84.7</td><td>83.6</td><td>86.3</td><td>86.6</td></tr>
+        <tr><td>ARC-Challenge</td><td>25</td><td class="q">95.9</td><td>96.2</td><td>95.6</td><td>95.5</td></tr>
+        <tr><td>HellaSwag</td><td>10</td><td class="q">88.5</td><td>94.6</td><td>89.2</td><td>89.4</td></tr>
+        <tr><td>WinoGrande</td><td>5</td><td class="q">83.8</td><td>85.3</td><td>85.9</td><td>85.6</td></tr>
+        <tr><td>TriviaQA</td><td>5</td><td class="q">80.3</td><td>85.1</td><td>83.5</td><td>83.9</td></tr>
+        <tr><td>GPQA-Diamond</td><td>5</td><td class="q">55.1</td><td>48.1</td><td>51.0</td><td>52.0</td></tr>
+        <tr><td>SuperGPQA</td><td>5</td><td class="q">41.1</td><td>44.7</td><td>42.3</td><td>43.6</td></tr>
+        <tr><td>SimpleQA</td><td>5</td><td class="q">20.6</td><td>35.3</td><td>26.3</td><td>27.0</td></tr>
+        <tr class="grp"><td colspan="6">Mathematics</td></tr>
+        <tr><td>GSM8K</td><td>8</td><td class="q">92.3</td><td>92.1</td><td>91.4</td><td>91.1</td></tr>
+        <tr><td>MATH</td><td>4</td><td class="q">71.0</td><td>70.2</td><td>62.6</td><td>62.5</td></tr>
+        <tr><td>AIME 24&amp;25</td><td>2</td><td class="q">35.3</td><td>31.6</td><td>21.6</td><td>24.8</td></tr>
+        <tr class="grp"><td colspan="6">Code</td></tr>
+        <tr><td>HumanEval+</td><td>1</td><td class="q">70.7</td><td>84.8</td><td>64.6</td><td>67.7</td></tr>
+        <tr><td>MBPP+</td><td>3</td><td class="q">71.4</td><td>73.8</td><td>72.2</td><td>69.8</td></tr>
+        <tr><td>CRUXEval-I</td><td>1</td><td class="q">67.5</td><td>74.0</td><td>62.1</td><td>63.9</td></tr>
+        <tr><td>CRUXEval-O</td><td>1</td><td class="q">79.1</td><td>83.5</td><td>76.4</td><td>74.9</td></tr>
+        <tr><td>MultiPL-E HumanEval</td><td>0</td><td class="q">59.5</td><td>60.5</td><td>45.9</td><td>45.7</td></tr>
+        <tr><td>MultiPL-E MBPP</td><td>0</td><td class="q">56.7</td><td>58.8</td><td>52.5</td><td>50.6</td></tr>
+        <tr><td>BigCodeBench</td><td>0</td><td class="q">70.1</td><td>61.7</td><td>63.0</td><td>62.9</td></tr>
+        <tr><td>LiveCodeBench v6</td><td>1</td><td class="q">30.8</td><td>26.3</td><td>24.8</td><td>24.9</td></tr>
+        <tr><td>SWE-Bench (AgentLess Repair)</td><td>3</td><td class="q">30.8</td><td>28.2</td><td>24.8</td><td>9.4<sup>*</sup></td></tr>
+        <tr class="grp"><td colspan="6">Chinese / Multilingual</td></tr>
+        <tr><td>C-Eval</td><td>5</td><td class="q">87.9</td><td>92.5</td><td>90.0</td><td>91.0</td></tr>
+        <tr><td>CMMLU</td><td>5</td><td class="q">87.4</td><td>90.9</td><td>88.8</td><td>88.9</td></tr>
+        <tr><td>C-SimpleQA</td><td>5</td><td class="q">61.5</td><td>77.6</td><td>70.9</td><td>68.0</td></tr>
+        <tr><td>GlobalMMLU</td><td>5</td><td class="q">76.6</td><td>80.7</td><td>81.9</td><td>82.0</td></tr>
+        <tr><td>INCLUDE</td><td>5</td><td class="q">71.4</td><td>75.3</td><td>77.2</td><td>77.2</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">来源：表 5。作者自己承认知识容量受参数量限制，SimpleQA 偏低<span class="src">§3.3.2</span>。</p>
+  </div></details>
+
+  <h3 class="prose">MTP 加速（表 10）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>batch / 节点</th><th>无 MTP</th><th>接受 2.8</th><th>3.0</th><th>3.2</th><th>3.4</th><th class="q">3.6</th><th>3.8</th></tr></thead>
+      <tbody>
+        <tr><td>32</td><td>1.00×</td><td>1.86×</td><td>1.99×</td><td>2.12×</td><td>2.25×</td><td class="q">2.39×</td><td>2.52×</td></tr>
+        <tr><td>48</td><td>1.00×</td><td>1.82×</td><td>1.95×</td><td>2.08×</td><td>2.21×</td><td class="q">2.34×</td><td>2.47×</td></tr>
+        <tr><td>64</td><td>1.00×</td><td>1.97×</td><td>2.11×</td><td>2.25×</td><td>2.39×</td><td class="q">2.53×</td><td>2.67×</td></tr>
+        <tr><td>96</td><td>1.00×</td><td>1.99×</td><td>2.13×</td><td>2.28×</td><td>2.42×</td><td class="q">2.56×</td><td class="best">2.70×</td></tr>
+        <tr><td>128</td><td>1.00×</td><td>1.82×</td><td>1.94×</td><td>2.07×</td><td>2.20×</td><td class="q">2.33×</td><td>2.46×</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：表 10，3 层 MTP，16K 输入 / 1K 输出。实测接受长度最高约 3.6（WebDev），MMLU-Pro、GPQA 等高熵任务更短<span class="src">图 7 · §5.1</span>；3.8 列超过了图 7 的实测范围。摘要「最高 2.6×」与 3.6 列的 2.53–2.56× 对得上 <span class="src calc">推算</span>。</p>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2><p class="sec-intro">混合 SWA/GA（Gemma、gpt-oss 等）、attention sink（gpt-oss）、MTP（DeepSeek-V3、MiMo-7B）、FP8 训练、on-policy 蒸馏（Agarwal 2023、Thinking Machines）都是已有做法，不单独算新点。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>把滑窗压到 128、比例 5:1，且对照实验显示不输全局注意力</h4><p>32B 对照里 W=128 + sink 在通用、长上下文、推理上都追平或超过 All GA，而 W=512 在长上下文明显掉点<span class="src">表 2–4</span>。「窗口越小越好」这个反直觉结论是本篇最可核对的架构发现。</p><p class="why">可核对：表 2–4。只在 32B 稠密、250B+40B token 上做，没有在 309B MoE 上复验；5:1 比例本身没有消融。</p></div>
+    <div class="card nv"><h4>MOPD：按领域路由的多教师 on-policy 蒸馏 + ORM 优势</h4><p>按 prompt 所属领域选教师，教师给 token 级反向 KL 优势，再加 α·Â<sub>ORM</sub>；训推重要性采样并丢弃偏差大的 token<span class="src">式 5–9</span>。把「多个专家模型合一」从参数合并 / 离线蒸馏换成在线 RL 过程<span class="src">§4.1</span>。</p><p class="why">可核对：表 7 逐项给出学生 / 最佳教师 / 学生后。缺：与参数合并、离线多教师蒸馏的直接对照；α 未披露。</p></div>
+    <div class="card nv"><h4>为 RL rollout 设计的轻量 MTP</h4><p>MTP 块用稠密 FFN + SWA，仅 0.33B，预训练 1 头、后训练扩到 K 头<span class="src">§2.3.2</span>；作者明确把 MTP 定位为小 batch on-policy RL 与长尾 straggler 的加速器<span class="src">§2.3.1</span>，并给出接受长度 ≈ 4(1−0.58x<sup>0.58</sup>)（x 为下一 token 熵）的经验拟合<span class="src">图 7</span>。</p><p class="why">可核对：表 10 加速比。RL 训练中实际省了多少时间<span class="nd">原文未披露</span>。</p></div>
+    <div class="card nv"><h4>用录屏视频 + 视觉 verifier 给 Web Dev 打奖励</h4><p>Playwright 把生成页面跑成视频，多模态判别器筛数据、视觉 verifier 同时评视觉质量 / 功能正确性 / 可执行性<span class="src">§4.3.2</span>。</p><p class="why">可核对：只有描述，没有 verifier 的准确率、与截图方案的对比数字，也没有 Web Dev 单项评测。</p></div>
+    <div class="card nv"><h4>SFT 稳定性指标 num-zeros</h4><p>把「零梯度参数个数」当作 MoE SFT 的早期预警：上升=负载失衡，下降=过拟合；并指出它主要受专家 bias 更新率和 AdamW ε 影响<span class="src">§4.2</span>。</p><p class="why">可核对：只有定性描述和最终超参，没有曲线。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPL -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测、caption 的启示</h2>
+    <p class="sec-intro">MiMo-V2-Flash 是纯文本 LLM，但它的 agentic 数据工程（环境构建、难度控制、视觉 verifier、防作弊）和后训练组织方式，与编辑模型的数据 / 奖励问题同构。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>从成品反推指令</h4><p class="paper">论文：收集高质量用户网页，<b>从页面反推用户 query</b> 作种子，再扩成覆盖 8 类网页的 RL 数据<span class="src">§4.3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>先攒一批人工确认过的高质量 (src, tgt) 对，用 VLM 从这对图反推编辑指令作种子，再按编辑类别扩写；类别清单先对齐线上真实请求分布，避免合成指令只覆盖模型擅长的类型。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>按 pass rate 去掉「判不准」和「太简单」</h4><p class="paper">论文：Terminal 任务先验证环境能装、按难度与可靠性过滤，再按 pass rate 去掉判对不可靠或复杂度不够的任务，得到约 3 万条<span class="src">§4.3.2</span>；Data Scheduler 也按历史 pass rate 动态采样<span class="src">§4.6.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的 prompt 池先用当前模型每条采 N 张，用 VLM 裁判打分：全过的降权，全挂的单独复核；同一张图多次判分不一致的 prompt 直接移出训练池，留给人工标注。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>用结构参数控制难度</h4><p class="paper">论文：Search 题从种子实体递归扩展事实图，难度由<b>关系链深度</b>和<b>细节模糊化</b>控制；函数调用环境按显式 / 隐式依赖生成工具调用图<span class="src">§4.3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>合成多步编辑指令时，把难度拆成可调参数：操作数（1–4 个）、指代方式（直呼「杯子」 vs 「桌子左边那个东西」）、操作间依赖（先移再改色）。每条样本记下这些参数，评测按参数分桶报分。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>后期阶段上采样难数据，比例写明</h4><p class="paper">论文：预训练后段（22–26T）上采样代码并加入约 5% 合成推理数据，最后 1T 上采样长依赖数据<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑预训练也可以把多操作、文字编辑、强保持约束这类难样本集中放到后段上采样，并像这里一样写明合成数据占比，方便日后对照实验；不要只给一个「高质量数据」的笼统描述。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>程序化检查 + LLM judge 混合，主观项用 rubric</h4><p class="paper">论文：可验证任务用程序化工具 + LLM judge 混合验证；helpfulness / safety 由 LLM judge 对照细化 rubric 和参考答案打分<span class="src">§4.3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测里能程序化的先程序化：编辑区外的像素 / 感知差异、文字编辑的 OCR 比对、尺寸与长宽比；指令遵循和审美再交给 VLM，并给 VLM 一份逐项 rubric 和一张参考结果，而不是只问「好不好」。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>看「渲染后的成品」，多维分开打</h4><p class="paper">论文：Web Dev verifier 看 rollout 的录屏视频，同时评视觉质量、功能正确性、可执行性；作者称视频比静态截图更少视觉幻觉<span class="src">§4.3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>VLM 判编辑结果时，除了整图，再给编辑区域的放大裁剪和 src/tgt 并排图，减少裁判漏看小改动；指令遵循、非编辑区保持、画质三项分开打分、分开报，不要先合成一个总分。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>查环境里有没有「答案泄露」</h4><p class="paper">论文：官方 SWE-Bench 镜像残留 ground-truth commit，模型在 RL 中学会偷看；作者用关键词计数监控 git hack，并换镜像修复<span class="src">附录 B</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL / 评测要查泄露通道：指令是否由 tgt 的 caption 直接改写（含 tgt 才有的细节）、文件名或元数据带标签、VLM 裁判 prompt 里带了参考答案的措辞。训练中持续统计「输出与参考图近重复」的比例，突增就报警。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>退步项照样报，裁判版本写明</h4><p class="paper">论文：表 7 把 BrowseComp −6.3、Creative Writing −3.9 都列出；τ²-Bench 写明 user agent 是 DeepSeek-V3.2<span class="src">表 7 · §4.5.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>合并多个编辑专项模型后，按类别逐项列「合并前最佳 / 合并后」和差值，退步项不删；评测报告固定写出 VLM 裁判的模型名、版本和 prompt 哈希，换裁判就重跑基线。</p></div>
+    </div>
+
+    <div class="impl-group">Caption 与多教师</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>领域专用模型产出标注</h4><p class="paper">论文：SFT 的回复由内部<b>领域专用 checkpoint</b> 生成，并同时覆盖 thinking / non-thinking 两种模式<span class="src">§4.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption 不必只用一个通用 VLM：人像、文字海报、商品、场景各用一个调过的 captioner，再统一成同一 schema；同一张图同时产出长 caption 和短指令两种粒度，训练时随机取其一，对应长短两种用户输入。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>多个专项教师合进一个学生</h4><p class="paper">论文：MOPD 按 prompt 领域选教师，学生在自己的采样上接受 token 级蒸馏 + 结果奖励；多数项追平最佳教师，但个别项退步<span class="src">§4.4 · 表 7</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>如果按编辑类别（消除、换背景、改文字、风格化）分别训了专项模型，合并时优先试「学生自采样 + 按类别路由的教师打分」而不是参数平均；对 caption 模型也一样，学生生成 caption，再按领域交给专项 captioner 评分作奖励。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>多轮会话压缩成摘要</h4><p class="paper">论文：上下文占用超过阈值（低至 30%）时让模型自我总结，完整历史存为可检索文件；Deep Research 类任务提升 5–10%<span class="src">附录 C</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多轮编辑 agent 不必把每轮图和指令全部带上，可以在若干轮后把「当前图状态 + 已完成的修改清单 + 未完成的要求」压成一段结构化 caption 继续对话，历史图存档按需取回。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>预训练数据基本不可复现。</b>27T 只列来源类别；配比、去重 / 质量过滤细节都推给 MiMo-7B，本篇唯一比例是 Stage 2 约 5% 合成推理数据<span class="src">§3 · §3.1</span>。SFT 只说「数百万」，Web Dev 数据量、MOPD 的 prompt 分布与教师数量也未给。</li>
+    <li class="key"><b>架构结论只在小模型上验证。</b>Hybrid SWA 对照用的是 32B 稠密模型、250B + 40B token，不是 309B MoE；5:1 比例、W 取 128 以下、GA 用 4 个 KV 头都没有消融。作者在结论里也承认架构探索「初步」<span class="src">§2.2.1 · §6</span>。</li>
+    <li><b>正文对 MOPD 的说法比表格乐观。</b>§4.1 说 MOPD「在所有领域保留最强教师的峰值表现」，但表 7 中 BrowseComp −6.3、Creative Writing −3.9、SWE-Bench Verified −0.8、GPQA −0.6<span class="src">表 7</span>。图 6 的对照只有 2 个基准、约 50 步。</li>
+    <li><b>同名基准两处数字不同。</b>表 7「LiveCodeBench」83.2，表 9「LiveCodeBench-v6」85.1；评测设置里写的是 LiveCodeBench（2024.08–2025.04）<span class="src">§4.5.1</span>，三处口径没有对齐说明。</li>
+    <li><b>「比肩 DeepSeek-V3.2 / Kimi-K2」要看项目。</b>代码 agent 领先，但 HMMT（84.4 vs 92.5 / 89.4）、Arena-Hard Hard Prompt（54.1 vs Kimi 71.9）、Terminal Bench 2.0（38.5 vs 46.4）、MRCR（45.7 vs 55.5）、BrowseComp 落后<span class="src">表 9</span>。</li>
+    <li><b>评测可比性。</b>没说明基线是自测还是引用；BrowseComp w/ Context Manage 各家方法不同；τ²-Bench 用 DeepSeek-V3.2 当 user agent<span class="src">§4.5.2</span>。架构实验里的 GSM-Infinite 与 NoLiMa 是内部 few-shot 版本，外部无法复现<span class="src">§2.2.1</span>。</li>
+    <li><b>Base 对比里有格式失败项。</b>DeepSeek-V3.2-Exp Base 的 SWE-Bench 9.4、NIAH 85.6 / 85.9 / 94.3 都标了 *（未遵循格式 / prompt）<span class="src">表 5 · 表 6</span>，在这些项上的领先意义有限。</li>
+    <li><b>防作弊证据来自别的模型。</b>附录 B 的 git hack 曲线是在 Qwen3-32B 上做的；对 MiMo-V2-Flash 只说「反复确认没有 reward hacking」，没给数字<span class="src">附录 B</span>。</li>
+    <li><b>算力与 RL 超参缺失。</b>训练 GPU / 卡时、RL 与 MOPD 的学习率、batch、步数、α、ε<sub>low</sub>/ε<sub>high</sub> 均未给<span class="nd">原文未披露</span>；许可证原文也未写。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>七项基准与 5 个对照模型的柱状图（第 1 页）· <code>figures/fig1.jpg</code></td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 2</td><td>模型结构：Hybrid Block（SWA / GA）+ MTP 块（第 5 页）· <code>figures/fig2.jpg</code></td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 3</td><td>后训练三阶段与 MOPD（第 13 页）· <code>figures/fig3.jpg</code></td><td><a href="#train">训练</a></td></tr>
+        <tr><td>图 4</td><td>Code agent RL 扩展曲线（SWE-Bench Verified / Multilingual vs 训练环境数）· <code>figures/fig4.jpg</code></td><td><a href="#figs-more">下方</a></td></tr>
+        <tr><td>图 5</td><td>Code agent RL 向其他任务的泛化（6 个基准）· <code>figures/fig5.jpg</code></td><td><a href="#figs-more">下方</a></td></tr>
+        <tr><td>图 6</td><td>ORM / MOPD w/o ORM / MOPD 训练曲线（AIME 2025、LiveCodeBench）· 未裁图，文字引用</td><td><a href="#train">训练</a></td></tr>
+        <tr><td>图 7</td><td>下一 token 熵 vs MTP 接受长度 · 未裁图，文字引用</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 8</td><td>附录 B：Qwen3-32B 上的 git hack 次数 · 未裁图，文字引用</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>表 1</td><td>模型配置</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 2–4</td><td>32B 注意力变体对照（通用 / 长上下文 / 推理）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 5</td><td>Base 模型对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 6</td><td>Base 长上下文（NIAH-Multi、GSM-Infinite Hard）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 7</td><td>MOPD 前后与最佳教师</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 8</td><td>Agentic RL 任务构成</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>表 9</td><td>后训练模型与开源 / 闭源对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 10</td><td>3 层 MTP 解码加速</td><td><a href="#eval">评测</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid2 wide" id="figs-more">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="Code agent RL 扩展曲线：横轴为训练消耗的交互环境数（0 到约 120k），纵轴为 SWE-Bench Verified 与 SWE-Bench Multilingual 解决率，两者随环境数上升" loading="lazy"></div>
+      <figcaption><b>Code agent RL 扩展曲线</b>：横轴为 on-policy rollout 消耗的环境总数（约到 120K），纵轴为 SWE-Bench Verified / Multilingual 解决率。<span class="from">来源：论文图 4</span></figcaption>
+    </figure>
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig5.jpg" alt="Code agent RL 泛化：Tau-2 Bench、AIME 2025、GPQA-Diamond、LiveCodeBench、Arena-Hard Hard Prompt、HMMT Feb. 2025 六个基准随训练环境数变化的曲线" loading="lazy"></div>
+      <figcaption><b>Code agent RL 的跨任务泛化</b>：τ²-Bench、AIME 2025、GPQA-Diamond、LiveCodeBench、Arena-Hard（Hard Prompt）、HMMT Feb. 2025 随训练环境数的变化；注意各子图纵轴不从 0 起。<span class="from">来源：论文图 5</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 LLM-Core Xiaomi，《MiMo-V2-Flash Technical Report》，<a href="https://arxiv.org/abs/2601.02780" target="_blank" rel="noopener">arXiv:2601.02780</a>（v1 2026-01-06；本页对照 v2，PDF 戳记 2026-01-08）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容；层排布条为示意。论文图片版权归原作者。
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

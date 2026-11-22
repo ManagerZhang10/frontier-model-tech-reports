@@ -25,4 +25,6 @@
   - [Nemotron 3](./reports/llm/nemotron-3/)（LLM）
   - [Ministral 3](./reports/llm/ministral-3/)（LLM）
   - [Gemma 4](./reports/llm/gemma-4/)（LLM）
+  - [DeepSeek-V3.2](./reports/llm/deepseek-v3.2/)（LLM）
+  - [MiMo-V2-Flash](./reports/llm/mimo-v2-flash/)（LLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

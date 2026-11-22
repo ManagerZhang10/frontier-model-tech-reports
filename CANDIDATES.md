@@ -7,7 +7,7 @@
 
 | 类别 | 日期 | 厂商 | 报告 | 链接 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| LLM | 2025-12 | DeepSeek | DeepSeek-V3.2 | [arXiv:2512.02556](https://arxiv.org/abs/2512.02556) | 旧稿待重做 |
+| LLM | 2025-12 | DeepSeek | DeepSeek-V3.2 | [arXiv:2512.02556](https://arxiv.org/abs/2512.02556) | 已发布 |
 | LLM | 2026-04 | DeepSeek | DeepSeek-V4 | [arXiv:2606.19348](https://arxiv.org/abs/2606.19348) | 旧稿待重做 |
 | LLM | 2026-09 | DeepSeek | DeepSeek-V4.1-Flash | [arXiv:2609.19969](https://arxiv.org/abs/2609.19969) | 旧稿待重做 |
 | LLM | 2026-07 | Moonshot | Kimi K3 | [arXiv:2607.24653](https://arxiv.org/abs/2607.24653) | 旧稿待重做 |
@@ -17,7 +17,7 @@
 | LLM | 2026-07 | Google DeepMind | Gemma 4 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) | 已发布 |
 | LLM | 2025-12 | NVIDIA | Nemotron 3 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) | 已发布 |
 | LLM | 2026-10 | NVIDIA | Nemotron 3.5 Super & Lightning | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) | 旧稿待重做 |
-| LLM | 2026-01 | Xiaomi | MiMo-V2-Flash | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) | 旧稿待重做 |
+| LLM | 2026-01 | Xiaomi | MiMo-V2-Flash | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) | 已发布 |
 | LLM | 2026-01 | Mistral | Ministral 3 | [arXiv:2601.08584](https://arxiv.org/abs/2601.08584) | 已发布 |
 | LLM | 2026-02 | Baidu | ERNIE 5.0 | [arXiv:2602.04705](https://arxiv.org/abs/2602.04705) | 旧稿待重做 |
 | LLM | 2026-06 | ByteDance Seed | Seed2.0 Model Card | [arXiv:2607.00248](https://arxiv.org/abs/2607.00248) | 待写 |

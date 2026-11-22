@@ -23,6 +23,8 @@
 | LLM | [Nemotron 3](./reports/llm/nemotron-3/) | NVIDIA | 2025-12-24 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) |
 | LLM | [Ministral 3](./reports/llm/ministral-3/) | Mistral | 2026-01-13 | [arXiv:2601.08584](https://arxiv.org/abs/2601.08584) |
 | LLM | [Gemma 4](./reports/llm/gemma-4/) | Google DeepMind | 2026-07-02 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) |
+| LLM | [DeepSeek-V3.2](./reports/llm/deepseek-v3.2/) | DeepSeek | 2025-12-02 | [arXiv:2512.02556](https://arxiv.org/abs/2512.02556) |
+| LLM | [MiMo-V2-Flash](./reports/llm/mimo-v2-flash/) | Xiaomi | 2026-01-06 | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
 | VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |

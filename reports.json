@@ -336,6 +336,38 @@
       "one_liner": "开源原生多模态家族，2.3B–31B（含 26B-A4B / 3.8B 激活），带 thinking、MTP drafter 与 QAT。12B 为无编码器架构。31B 在 Arena Text Elo 1451（截至 2026-06-19 快照）。",
       "path": "reports/llm/gemma-4/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "deepseek-v3.2",
+      "title": "DeepSeek-V3.2",
+      "subtitle": "DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models",
+      "vendor": "DeepSeek",
+      "vendor_key": "deepseek",
+      "category": "llm",
+      "date": "2025-12-02",
+      "paper": "https://arxiv.org/abs/2512.02556",
+      "arxiv": "2512.02556",
+      "open_weights": false,
+      "params": null,
+      "one_liner": "相对 V3.1-Terminus 只改 DSA（lightning indexer 每 query 选 2048 KV）。后训练 RL 算力超过预训练成本 10%，外加 1,827 个合成环境、约 85,000 条 Agent prompt。V3.2-Speciale 在 IMO / IOI / ICPC / CMO 2025 达金牌水平。参数量与许可证原文未披露。",
+      "path": "reports/llm/deepseek-v3.2/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "mimo-v2-flash",
+      "title": "MiMo-V2-Flash",
+      "subtitle": "MiMo-V2-Flash Technical Report",
+      "vendor": "Xiaomi",
+      "vendor_key": "xiaomi",
+      "category": "llm",
+      "date": "2026-01-06",
+      "paper": "https://arxiv.org/abs/2601.02780",
+      "arxiv": "2601.02780",
+      "open_weights": true,
+      "params": "309B / 15B 激活",
+      "one_liner": "309B 总参 / 15B 激活 MoE：滑窗 128、局部:全局 5:1，长上下文 KV 与注意力约降 6×；后训练提出多教师 on-policy 蒸馏（MOPD）。SWE-Bench Verified 73.4、Multilingual 71.7。",
+      "path": "reports/llm/mimo-v2-flash/",
+      "added": "2026-11-22"
     }
   ]
 }
