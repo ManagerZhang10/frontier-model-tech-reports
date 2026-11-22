@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nemotron 3.5 Super and Lightning · 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="NVIDIA Nemotron 3.5 Super（120B-A12B，多模态）与 Lightning（30B-A3B，纯文本）技术报告中文深读：MTP 改造、1T 蒸馏、Indic 合成语料、SWE 中期训练、两阶段 MOPD、NVFP4 与推理优化。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+/* --- page-specific: architecture schematic --- */
+.ar-in { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+.ar-bb { fill: color-mix(in srgb, var(--accent-soft) 60%, var(--card)); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.3; }
+.ar-row { fill: var(--card); stroke: var(--line); stroke-width: 1; }
+.ar-moe { fill: color-mix(in srgb, var(--accent) 22%, var(--card)); stroke: var(--accent); stroke-width: 1.1; }
+.ar-mtp { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 50%, var(--line)); stroke-width: 1.2; }
+.ar-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arh); }
+.ar-dash { stroke: var(--good); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; marker-end: url(#arh2); }
+.ar-ah { fill: var(--muted); }
+.ar-ah2 { fill: var(--good); }
+.ar-note { fill: var(--warm); font: 600 11px var(--f-mono); }
+/* --- ratio bars with many segments --- */
+.ratio .rbar .c { background: var(--good); }
+.ratio .rbar .d { background: var(--bar-other2); }
+.ratio .rbar .e { background: var(--bar-other); }
+.ratio .rbar .f { background: color-mix(in srgb, var(--accent) 55%, var(--card)); }
+.ratio .rbar .g { background: color-mix(in srgb, var(--warm) 55%, var(--card)); }
+.seg-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .82rem; color: var(--muted); margin: 6px 0 2px; }
+.seg-key i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+/* --- stage flows --- */
+.flow.f7 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.flow.f7 .stage { border-top: 3px solid var(--accent); }
+.flow.f7 .stage.lt { border-top-color: var(--warm); }
+.flow.f7 .stage.gd { border-top-color: var(--good); }
+.flow.f7 .stage p { font-size: .84rem; margin: 6px 0 0; color: var(--ink-2); line-height: 1.5; }
+.flow.f7 .stage .src { margin-left: 0; margin-top: 6px; }
+.lane { font: 600 .74rem/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 0 0; }
+.hero-fact { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: .95rem; margin: 10px 0 18px; }
+.hero-fact b { color: var(--ink); font-weight: 600; }
+td.l { text-align: left; white-space: normal; }
+td.dash { color: var(--muted); }
+.vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型（Super 为多模态）</div>
+    <h1>Nemotron 3.5 Super and Lightning<span class="sub">Open, Efficient Mixture-of-Experts Hybrid Mamba-Transformer Models for Agentic AI</span></h1>
+    <div class="hero-fact">
+      <span>厂商 <b>NVIDIA</b></span>
+      <span>发布 <b>2026-10-28</b>（arXiv v1）</span>
+      <span>arXiv <b>2610.38095</b></span>
+      <span>正文 + 附录约 <b>79 页</b></span>
+    </div>
+    <p class="lede">一句话：NVIDIA 用「下一档大模型当老师蒸馏 1T token + 专项继续训练（Indic、SWE 中期训练）+ 多教师 on-policy 蒸馏」把 Nemotron 3 Super 升级成能看图、看视频、跑工具的 <b>Super（120B-A12B）</b>，并把 Nano 3 升级成纯文本的 <b>Lightning（30B-A3B）</b>。全篇一半篇幅在讲效率：可递归共用的 MTP 头、NVFP4 量化、混合 Mamba 的缓存与内核优化。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 11V7a5 5 0 0 1 9.9-1"/><rect x="3" y="11" width="18" height="11" rx="2"/></svg>开放权重：Base / BF16 / NVFP4 + 草稿模型</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>Super 120B 总参 / 12B 激活 · 多模态</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>Lightning 30B 总参 / 3B 激活 · 纯文本</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>语言模型 · Hybrid Mamba-Transformer MoE</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3v18"/></svg>1M 上下文</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2610.38095" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>arXiv 摘要页</a>
+      <a href="https://arxiv.org/pdf/2610.38095v1" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>PDF（v1）</a>
+      <a href="https://github.com/NVIDIA-NeMo/Gym/blob/main/nemotron_recipes/super-3.5/reproducibility.md" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>NeMo Gym 评测复现</a>
+      <a href="https://docs.nvidia.com/nemo/datadesigner/recipes/chart-qa/chart-question-answering" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>图表 QA 数据配方</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对图像编辑的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+  </nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">Super 规模</div><div class="stat-num">120B / 12B</div><div class="stat-sub">总参 / 激活，多模态（文本、图像、视频）；由 Nemotron 3 Super 初始化</div><span class="src">§1</span></div>
+    <div class="card stat"><div class="stat-k">Lightning 规模</div><div class="stat-num">30B / 3B</div><div class="stat-sub">总参 / 激活，纯文本；由 Nano 3 Base 初始化</div><span class="src">§1</span></div>
+    <div class="card stat"><div class="stat-k">蒸馏预训练</div><div class="stat-num">1T tokens</div><div class="stat-sub">老师用下一档：Super ← Ultra 3 Base；Lightning ← Super 3 Base</div><span class="src">§2.2</span></div>
+    <div class="card stat"><div class="stat-k">Indic 合成语料</div><div class="stat-num">≈2.83T</div><div class="stat-sub">22 种印度语言、34 种语言-文字组合；Super 的 CPT 只给 Indic（合成 + 自然）分配了 10B</div><span class="src">§2.3 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">SWE 中期训练</div><div class="stat-num">65.4B @256K</div><div class="stat-sub">仅 Super；之后用 9B token 把 RULER-1M 从 33.5 拉回 81.0</div><span class="src">§2.4–2.5</span></div>
+    <div class="card stat"><div class="stat-k">SWE-bench Pro</div><div class="stat-num">51.78%</div><div class="stat-sub">后训练 Super；N3-Ultra 为 49.66（OpenCode harness）</div><span class="src">表 10</span></div>
+    <div class="card stat"><div class="stat-k">NVFP4 精度恢复</div><div class="stat-num">99.62%</div><div class="stat-sub">36 个基准的中位数；整模型 4.82 BPE</div><span class="src">§4.1 · 表 23</span></div>
+    <div class="card stat"><div class="stat-k">单卡吞吐</div><div class="stat-num">4,856</div><div class="stat-sub">output tok/s/GPU，GB200，20 轮 agent 代理负载，≥50 tok/s/user</div><span class="src">表 24</span></div>
+    <div class="card stat"><div class="stat-k">开放内容</div><div class="stat-num sm">Base · BF16 · NVFP4 权重</div><div class="stat-sub">另有草稿模型 LiLiCorr（Super）、DFlash / DSpark（Lightning），以及预训练 / 后训练数据集、cookbook、配方</div><span class="src">§1</span></div>
+    <div class="card stat"><div class="stat-k">许可证</div><div class="stat-num sm"><span class="nd">原文未披露</span></div><div class="stat-sub">正文与附录均未写权重许可证</div><span class="src">全文检索</span></div>
+    <div class="card stat"><div class="stat-k">版本</div><div class="stat-num sm">arXiv v1</div><div class="stat-sub">本页依据 v1 PDF；PDF 页眉印的是 2026-10-30，主日期按 arXiv v1 记为 2026-10-28</div><span class="src">PDF 首页</span></div>
+  </div>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>小模型靠蒸馏 + 专项阶段追上 Ultra</h3><p>Super 激活参数约为 N3-Ultra 的 1/4.6，SWE-bench Pro 51.78 对 49.66 <span class="src">表 10</span>，Terminal-Bench 2.1 60.67 对 54.78 <span class="src">表 10</span>。但对比 Qwen3.8 Flash-Next、GLM-5.3 Flash，agent 类基准整体仍落后。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>SWE 中期训练主要换来「换 harness 不掉分」</h3><p>在同一份实验 SFT 下，OpenHands 下几乎不变（71.3→71.9），换到其他 5 个 harness 平均 +8.6（SWE-bench Verified），Codex 下 48.4→61.8 <span class="src">表 5</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>两阶段 MOPD 把 6 个专家教师合成一个学生</h3><p>阶段 1 先蒸「涨得快、后期会掉」的 agent / 推理，阶段 2 换成对话和视觉，并让老师和学生按 α=0.2 混合来平滑蒸馏目标 <span class="src">§3.6</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>MTP 后训练加强：采样解码下接受长度 +21.8%</h3><p>平均接受长度贪心解码 4.287→4.718，概率采样 3.787→4.612 <span class="src">表 8</span>；做法是冻结主干、用主干分布做 KD，并混入 MTP 自己生成的 hidden state <span class="src">§3.7</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>读数时注意口径</h3><p>测试时扩展后的 TB2.1 71.9% 是另一套口径（候选 pass@1 均值为 62.7），和表 10 的 60.67 不是一回事 <span class="src">§3.11</span>；结论节写的 NVFP4 恢复率 99.52% 也与摘要的 99.62% 不一致（见局限）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：沿用 Nemotron 3 主干，改造 MTP，Super 加上视觉</h2>
+  <p class="sec-intro">本篇没有给整体架构图，层数和层的排列也没有重新交代（指向 Nemotron 3 系列报告）。下面只整理原文明确写出的部件。</p></div>
+
+  <figure class="card diagram wide">
+    <svg viewBox="0 0 960 330" role="img" aria-label="Nemotron 3.5 Super 部件示意">
+      <defs>
+        <marker id="arh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar-ah"/></marker>
+        <marker id="arh2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar-ah2"/></marker>
+      </defs>
+      <!-- inputs -->
+      <rect x="10" y="40" width="130" height="50" rx="10" class="ar-in"/>
+      <text x="75" y="62" text-anchor="middle" class="dg-t">图像 / 视频帧</text>
+      <text x="75" y="79" text-anchor="middle" class="dg-s">仅 Super</text>
+      <rect x="10" y="200" width="130" height="50" rx="10" class="ar-in"/>
+      <text x="75" y="230" text-anchor="middle" class="dg-t">文本 token</text>
+      <!-- vision path -->
+      <rect x="170" y="40" width="140" height="50" rx="10" class="dg-vit"/>
+      <text x="240" y="62" text-anchor="middle" class="dg-t">C-RADIO 视觉编码器</text>
+      <text x="240" y="79" text-anchor="middle" class="dg-s">§4.2 · 表 12</text>
+      <rect x="170" y="110" width="140" height="44" rx="10" class="dg-merger"/>
+      <text x="240" y="137" text-anchor="middle" class="dg-t">VL connector</text>
+      <path d="M140 65 H168" class="ar-arrow"/>
+      <path d="M240 90 V108" class="ar-arrow"/>
+      <path d="M310 132 H360" class="ar-arrow"/>
+      <path d="M140 225 H360" class="ar-arrow"/>
+      <!-- backbone -->
+      <rect x="362" y="24" width="330" height="282" rx="14" class="ar-bb"/>
+      <text x="527" y="48" text-anchor="middle" class="dg-t">Hybrid Mamba-Transformer MoE 主干</text>
+      <rect x="380" y="62" width="294" height="50" rx="9" class="ar-row"/>
+      <text x="527" y="84" text-anchor="middle" class="dg-t">Mamba-2 层：状态不随上下文增长</text>
+      <text x="527" y="101" text-anchor="middle" class="dg-s">承担大部分序列混合 · §5.2</text>
+      <rect x="380" y="122" width="294" height="50" rx="9" class="ar-row"/>
+      <text x="527" y="144" text-anchor="middle" class="dg-t">少量全局 Attention 层，KV 头较窄</text>
+      <text x="527" y="161" text-anchor="middle" class="dg-s">「比 Qwen 少」· §5.2</text>
+      <rect x="380" y="182" width="294" height="62" rx="9" class="ar-moe"/>
+      <text x="527" y="204" text-anchor="middle" class="dg-t">LatentMoE：每层 512 路由专家 + 共享专家</text>
+      <text x="527" y="221" text-anchor="middle" class="dg-s">专家在潜空间交换，EP 通信更小 · §4.2 §5.2</text>
+      <text x="527" y="236" text-anchor="middle" class="dg-s">隐藏维 4096 · MoE 中间维 2688（按 §2.1 推得）</text>
+      <text x="527" y="270" text-anchor="middle" class="ar-note">层数 / 排列顺序：本篇未给</text>
+      <text x="527" y="289" text-anchor="middle" class="dg-s">总参 120B（含视觉、MTP 计 124.453B）· 激活 12B</text>
+      <!-- head -->
+      <rect x="730" y="110" width="210" height="50" rx="10" class="ar-in"/>
+      <text x="835" y="132" text-anchor="middle" class="dg-t">lm_head（唯一一份）</text>
+      <text x="835" y="149" text-anchor="middle" class="dg-s">主模型校验 + MTP 起草共用 · §4.7</text>
+      <path d="M692 135 H728" class="ar-arrow"/>
+      <!-- MTP -->
+      <rect x="730" y="210" width="210" height="76" rx="10" class="ar-mtp"/>
+      <text x="835" y="232" text-anchor="middle" class="dg-t">MTP 头 ×1（递归共享）</text>
+      <text x="835" y="250" text-anchor="middle" class="dg-s">1 个 Attention 层 + 1 个 MoE 层</text>
+      <text x="835" y="267" text-anchor="middle" class="dg-s">读主干 hidden state，逐步起草</text>
+      <path d="M692 248 H728" class="ar-dash"/>
+      <path d="M835 210 V162" class="ar-dash"/>
+    </svg>
+    <div class="cap">示意，非论文原图。只画出原文写到的部件和数据流向；Mamba / Attention / MoE 的层数、交错方式、视觉 token 如何插入序列，原文本篇均未给。</div>
+  </figure>
+
+  <div class="prose">
+    <h3>相对前代改了什么</h3>
+    <ul>
+      <li><b>MTP 从两个头合并成一个可递归共用的头。</b>Nemotron 3 Super Base 原本有两个不共享的 MTP 头；3.5 只保留第一个头的参数初始化，丢掉第二个 <span class="src">§2.1</span>。Lightning 的 MTP 头从 Super 3 Base 迁来：先把 latent MoE 投影融合进专家的 up/down 矩阵，再把隐藏维 4096→2688、MoE 中间维 2688→1856、路由专家 512→128 剪到 Lightning 的尺寸 <span class="src">§2.1</span>。</li>
+      <li><b>Super 加上视觉。</b>主干预训练只用了文本；SFT 阶段先预热视觉投影层，然后接入 C-RADIO 编码器和 VL connector，和语言部分一起微调 <span class="src">§3.1 · 表 12</span>。</li>
+      <li><b>为什么推理更省。</b>原文解释：Attention 层更少、KV 头更窄，每个请求的显存随会话变长增长得更慢；MTP 接受长度更高；LatentMoE 在专家之间传递的是潜向量，比 Qwen 的 hidden state 小 <span class="src">§5.2</span>。这是 NVIDIA 用内部性能模型给出的解释，不是消融实验。</li>
+    </ul>
+  </div>
+
+  <div class="vs wide">
+    <div class="card mod"><h4>Nemotron 3.5 Super <span class="tag">多模态</span></h4>
+      <dl class="kv"><dt>参数</dt><dd>120B 总参 / 12B 激活 <span class="src">§1</span></dd><dt>初始化</dt><dd>Nemotron 3 Super <span class="src">§2.2</span></dd><dt>专家</dt><dd>每个 MoE 层 512 路由专家 <span class="src">§4.2</span></dd><dt>模态</dt><dd>文本、图像、视频、工具环境 <span class="src">摘要</span></dd><dt>草稿模型</dt><dd>原生 MTP + LiLiCorr（1.13B，其中 head 37M） <span class="src">§5.7.1</span></dd><dt>部署精度</dt><dd>Blackwell 上 W4A4，其他平台 W4A16 <span class="src">§4</span></dd></dl></div>
+    <div class="card mod"><h4>Nemotron 3.5 Lightning <span class="tag nd-tag">纯文本</span></h4>
+      <dl class="kv"><dt>参数</dt><dd>30B 总参 / 3B 激活 <span class="src">§1</span></dd><dt>初始化</dt><dd>Nano 3 Base <span class="src">§2.2</span></dd><dt>尺寸</dt><dd>隐藏维 2688 · MoE 中间维 1856 · 128 路由专家（按 MTP 剪枝目标推得）<span class="src">§2.1</span></dd><dt>模态</dt><dd>仅文本 <span class="src">§3.1</span></dd><dt>草稿模型</dt><dd>原生 MTP + DFlash + DSpark <span class="src">§5.7</span></dd><dt>部署精度</dt><dd>任何 GPU 都用 W4A16 <span class="src">§4</span></dd></dl></div>
+  </div>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：哪些给了比例、哪些只给了规模</h2>
+  <p class="sec-intro">原文明确给出比例的只有：Indic CPT（10/90）、中期训练配比（表 4）、推理教师课程（90/5/5）、MOPD 各阶段 prompt 份额、QAD（75/25 实验）。下面只对这些画条形图，其余一律列「已披露规模」。</p></div>
+
+  <h3 class="prose">4.1 预训练侧</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>阶段 / 数据</th><th>Super</th><th>Lightning</th><th class="l" style="text-align:left">说明</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>MTP 预热</td><td>100B</td><td>100B</td><td class="l">冻结主干，只训练 MTP 头</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>蒸馏</td><td>1T</td><td>1T</td><td class="l">Lightning 用 Ultra 3 Phase 2 数据；Super「沿用同一配方」，换老师</td><td><span class="src">§2.2</span></td></tr>
+        <tr><td>Indic CPT</td><td>100B</td><td>—</td><td class="l">10B Indic（合成 + 自然）+ 90B 沿用前一阶段配比</td><td><span class="src">§2.3</span></td></tr>
+        <tr><td>长上下文（1M）</td><td>35B</td><td>21B</td><td class="l">数据配比与 Nemotron 3 Ultra 相同</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>SWE 中期训练（256K）</td><td>65.4B</td><td>—</td><td class="l">配比见表 4</td><td><span class="src">§2.5</span></td></tr>
+        <tr><td>长上下文恢复</td><td>≈9B</td><td>—</td><td class="l">配方同长上下文阶段</td><td><span class="src">§2.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">各数据源在蒸馏 1T 中的配比、去重与质量过滤细节：<span class="nd">原文未披露</span>（指向 Ultra 3 报告）。</p>
+
+  <h3 class="prose">4.2 Indic 合成语料：翻译 → 打分 → 定向改写 → 再打分</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="论文图 2：Indic 四阶段合成数据管线" loading="lazy"></div>
+    <figcaption><b>Indic 四阶段合成数据管线（12 种重点语言）。</b>英文源文档主要取自 Nemotron-CC，只选少于 4,096 个 Gemma-4 token 的文档，整篇翻译、不切分；由 Gemma-4-31B-it 翻译，再由同一个模型打 0–100 分，≥75 分保留；不合格的带着错误清单定向改写，复查通过才保留。罗马化版本从母语文字版本出发，把阶段 2–4 再跑一遍。人工只做抽样审查，用来改进 prompt 和质检。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>规模 <span class="tag">表 1</span></h4>
+      <ul>
+        <li>总输出 2,825.6B token（≈2.83T），22 种语言、34 种语言-文字组合，按 Gemma-4 tokenizer 计 <span class="src">表 1</span></li>
+        <li>12 种重点语言 ≈2.50T，其中罗马化 224.6B；另外 10 种低资源语言 ≈327B，只有母语文字版本 <span class="src">§2.3</span></li>
+        <li>生成量远超 Super CPT 所用（CPT 只给合成 + 自然 Indic 分配 10B），完整语料<b>计划公开</b> <span class="src">§2.3</span></li>
+      </ul></div>
+    <div class="card mod"><h4>过滤与工程 <span class="tag">§2.3</span></h4>
+      <ul>
+        <li>质检阈值 q ≥ 75；保留源文档 ID 和质量元数据，可追溯</li>
+        <li>10 种低资源语言改用 Bodhan-MT 翻译，Gemma-4-31B-it 质检，阈值按语言分别设置；Santali 长文档用重叠窗口；Manipuri 从孟加拉文字转写成 Meitei Mayek</li>
+        <li>翻译成本：每百万英文输入 token 从 0.835 降到 0.335 GPU 小时（约 −60%，相当于 2.49×），靠投机解码、FP8 权重和 FlashAttention</li>
+        <li>原文自己承认：翻译和打分用同一个模型，<b>可能偏向自己的译文</b></li>
+      </ul></div>
+  </div>
+  <div class="ratio wide">
+    <div class="rlab"><span><b>Super Indic CPT 配比</b>（100B 名义预算）</span><span class="src">§2.3</span></div>
+    <div class="rbar"><span class="b" style="width:10%">10%</span><span class="e" style="width:90%">90% 沿用前一阶段配比</span></div>
+    <div class="seg-key"><span><i style="background:var(--warm)"></i>精选合成 + 自然 Indic 文本（10B）</span><span><i style="background:var(--bar-other)"></i>前一阶段数据按原相对比例（90B）</span></div>
+  </div>
+  <p class="tbl-note">合成数据与自然数据在这 10B 里各占多少：<span class="nd">原文未披露</span>。原文还说明这些是「配置的采样份额」，不是实测的分源 token 数 <span class="src">§2.3</span>。</p>
+  <details class="more"><summary>表 1：各语言输入 / 输出 token（B）<span class="hint">12 + 10 种语言</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>重点语言</th><th>母语 输入</th><th>母语 输出</th><th>罗马化 输入</th><th>罗马化 输出</th><th>补充语言</th><th>输入</th><th>输出</th></tr></thead>
+      <tbody>
+        <tr><td>Bengali</td><td>114.0</td><td>138.9</td><td>12.2</td><td>19.0</td><td>Assamese</td><td>16.3</td><td>31.1</td></tr>
+        <tr><td>Gujarati</td><td>115.5</td><td>196.4</td><td>12.0</td><td>17.2</td><td>Bodo</td><td>8.6</td><td>18.7</td></tr>
+        <tr><td>Hindi</td><td>118.1</td><td>149.3</td><td>12.8</td><td>18.4</td><td>Dogri</td><td>23.4</td><td>39.9</td></tr>
+        <tr><td>Kannada</td><td>103.5</td><td>180.5</td><td>11.3</td><td>19.1</td><td>Kashmiri</td><td>11.4</td><td>33.1</td></tr>
+        <tr><td>Malayalam</td><td>108.9</td><td>183.5</td><td>11.4</td><td>19.3</td><td>Konkani</td><td>16.7</td><td>28.9</td></tr>
+        <tr><td>Marathi</td><td>114.4</td><td>152.8</td><td>11.6</td><td>17.6</td><td>Maithili</td><td>20.0</td><td>31.3</td></tr>
+        <tr><td>Nepali</td><td>118.0</td><td>171.3</td><td>12.4</td><td>19.7</td><td>Manipuri</td><td>6.6</td><td>50.1</td></tr>
+        <tr><td>Odia</td><td>109.3</td><td>320.1</td><td>12.2</td><td>19.0</td><td>Sanskrit</td><td>12.6</td><td>22.8</td></tr>
+        <tr><td>Punjabi</td><td>112.3</td><td>262.6</td><td>12.0</td><td>17.6</td><td>Santali</td><td>8.3</td><td>40.8</td></tr>
+        <tr><td>Tamil</td><td>110.5</td><td>157.5</td><td>10.9</td><td>20.0</td><td>Sindhi</td><td>14.6</td><td>30.5</td></tr>
+        <tr><td>Telugu</td><td>115.3</td><td>192.4</td><td>12.2</td><td>18.8</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr><td>Urdu</td><td>117.8</td><td>168.5</td><td>12.8</td><td>18.9</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr class="hl"><td>小计</td><td>1,357.6</td><td>2,273.8</td><td>143.8</td><td>224.6</td><td>小计</td><td>138.5</td><td>327.2</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">原表注：输入数在不同组合间可能重叠，不代表去重后的源数据量；小计是对四舍五入后的数值求和。</p>
+  </div></details>
+
+  <h3 class="prose">4.3 SWE 中期训练配比（原文给出比例）</h3>
+  <div class="ratio wide">
+    <div class="rlab"><span><b>Super 中期训练</b>：65.4B token，序列长度 256K</span><span class="src">表 4</span></div>
+    <div class="rbar">
+      <span class="a" style="width:41%">Issue–PR 41%</span><span class="f" style="width:20%">仓库 20%</span><span class="b" style="width:10%">轨迹 10%</span><span class="g" style="width:3%"></span><span class="d" style="width:1%"></span><span class="e" style="width:20%">预训练回放 20%</span><span class="c" style="width:5%"></span>
+    </div>
+    <div class="seg-key">
+      <span><i style="background:var(--accent)"></i>Issue–PR 41%：带仓库上下文的 GitHub issue + 合并后的 patch</span>
+      <span><i style="background:color-mix(in srgb,var(--accent) 55%,var(--card))"></i>整仓 20%：互相 import 的文件放在一起</span>
+      <span><i style="background:var(--warm)"></i>Agent 轨迹 10%：来自多种 scaffold，工具返回不计 loss</span>
+      <span><i style="background:color-mix(in srgb,var(--warm) 55%,var(--card))"></i>Commit diff 3%</span>
+      <span><i style="background:var(--bar-other2)"></i>构建 / CI 日志 1%</span>
+      <span><i style="background:var(--bar-other)"></i>预训练回放 20%（Phase-2 配比）</span>
+      <span><i style="background:var(--good)"></i>长上下文阶段数据 5%</span>
+    </div>
+  </div>
+  <ul class="prose">
+    <li>自然数据保留原始格式，不套 chat 模板；只有 agent 轨迹是 SFT 风格的数据，所以只占小份额，而且只训练模型自己说的那些轮次 <span class="src">§2.5</span>。</li>
+    <li>每个数据源都针对 SWE-bench 和 Terminal-Bench 去过污染，并清除了密钥等敏感信息 <span class="src">§2.5</span>。各数据源如何构建、过滤以及相关消融，见 Singhal et al. 2026。</li>
+  </ul>
+
+  <h3 class="prose">4.4 SFT 数据（Super 从这一步开始变成 VLM）</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>视觉数据 <span class="tag">§3.1 · 图 5</span></h4>
+      <ul>
+        <li>底子用 Nemotron 3 Nano Omni 的训练语料：图表、表格、OCR、多页文档、grounding、GUI、视频、数学 / 科学 / 时空推理</li>
+        <li>再用 Qwen3.5 等开源模型新造数据，补强图表理解、grounded 感知、多跳推理、GUI/网页导航、多模态编程</li>
+        <li><b>推理链格式</b>：拆成简短的显式步骤（解析与规划 → 对应视觉证据 → 求解 → 验证结论），每一步都落在可见的视觉证据上</li>
+        <li><b>自动过滤</b>：问题含糊或图里不支持、推理不完整、幻觉标签或数值、视觉 / 数值读错、过度重复、无效的自我纠正</li>
+        <li>长文档视觉数据：最长几百页，要求跨页把文本、表格、图表、示意图的证据组合起来</li>
+      </ul></div>
+    <div class="card mod"><h4>Agent 视觉数据 <span class="tag">§3.1 · 表 7</span></h4>
+      <ul>
+        <li>图像工具：用 Kimi K2.6 / K3 生成高分辨率图像上的 crop、rotate、zoom、flip 等操作轨迹</li>
+        <li>视频：用 Kimi K2.6 把已有视频 QA 改写成可执行的 SpatialClaw 演示；每个动作包含 Purpose / Reasoning / Next Goal / Python Code，可以查看帧、调 VQA、跑 SAM3 分割、重建场景几何</li>
+        <li>保留条件：正常结束 + 答案匹配 + 所需工具执行成功；结构化答案按规范形式匹配，自由文本答案由同一个老师做纯文本等价判断，置信度需 ≥0.90</li>
+        <li>最终 <b>14,169 条轨迹 / 81,366 个 assistant 动作</b>；在 SpatialClaw harness 下 21 项平均分 50.5→54.8</li>
+      </ul></div>
+    <div class="card mod"><h4>推理数据 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>题目集沿用 Nemotron Ultra；数学 / STEM 换成 Kimi K3 当老师，重新生成 CoT 和 TIR 轨迹；证明题用 DeepSeek V4 Pro，竞赛编程用 GLM-5.2</li>
+        <li>过滤：<b>删除短于 5,000 token 的推理回答</b></li>
+        <li>观察：Ultra 用 DeepSeek V4 Pro 数据时，过一遍就到顶；换成 K3 后多过几遍还在涨（作者推测是 K3 的推理更紧凑、信息密度更高）</li>
+      </ul></div>
+    <div class="card mod"><h4>对话 / 安全 / 长上下文 <span class="tag">§3.1 · 表 29–30</span></h4>
+      <ul>
+        <li>对话：沿用 Ultra 配方，换上较新的 Qwen、Kimi、Gemma 回答；安全数据额外补充 CBRNE 双重风险和人口统计偏见</li>
+        <li>长上下文：Ultra 的 512K 数据 + 合成图结构数据（训练沿节点和边推理）+ 长程搜索 / 编程轨迹</li>
+        <li>长文翻译：PG19 和 FinePDFs-Edu 整篇分块翻译（DeepSeek V4 Flash）；PG19 4,335 条，目标侧 299.3M token；FinePDFs-Edu 1,438 条，源侧 620.5M、目标侧 701.3M token，另加合成 transduction 任务</li>
+      </ul></div>
+  </div>
+  <p class="tbl-note">SFT 总量、各类数据在两阶段 SFT 中的配比、第二阶段具体加强了哪些能力：<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.5 RL / 教师 / 蒸馏阶段的数据（已披露的规模与比例）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>用途</th><th class="l" style="text-align:left">规模 / 组成</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>竞赛编程 RL 环境</td><td class="l">2,847 道训练题 + 372 道验证题（往届奥赛级），C++ 编译后执行，全对得 1 分，否则 0 分</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>金融 agent 环境</td><td class="l">两条合成数据线：从标普 500 公司的 10-K/10-Q/8-K 文件取窗口生成分析师式问题（多种子投票 + GenSelect 验证）；按 Vals.ai 类目做覆盖审计后补缺；按难度分进 SFT 池或 RL 池</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>推理教师课程</td><td class="l">25,600 例；每个 256-prompt batch 中 <b>90% 科学 / 5% 数学 / 5% 竞赛编程</b></td><td><span class="src">§3.3.2</span></td></tr>
+        <tr><td>视频教师</td><td class="l">Nano Omni 视频子集中的多选 QA（64 帧）+ SA-V 跟踪（框 / 点 / 指代）</td><td><span class="src">§3.4.1</span></td></tr>
+        <tr><td>视觉工具教师</td><td class="l">内部合成的多选题和数值题；只保留不用工具几乎做不对的样本</td><td><span class="src">§3.4.2</span></td></tr>
+        <tr><td>视觉推理 RLVR</td><td class="l">阶段 1：16,090 例；阶段 2：13,848 例 = 8,366 图表 + 5,482 文档 / 表格 / OCR；去掉完全重复的问答对</td><td><span class="src">§3.4.3</span></td></tr>
+        <tr><td>MTP 加强</td><td class="l">用对应 checkpoint 自己生成的 on-policy rollout，temp=1，截断到 8K，只对 assistant token 算 loss</td><td><span class="src">§3.7</span></td></tr>
+        <tr><td>LiLiCorr 草稿模型</td><td class="l">来自 12 个 Nemotron 后训练数据集的 6,324,762 个 prompt；阶段 2 从 18.2M 条生成样本中保留 11.01M 条，共 35.6B token</td><td><span class="src">表 26</span></td></tr>
+        <tr><td>量化校准</td><td class="l">PTQ：1,024 条 SFT 图文样本；QAD 的 PTQ 初始化：512 条打包后的多模态样本</td><td><span class="src">§4.2 · §4.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">表 26 的 † 号：Post-Training-Dataset-v2 只取了部分——200K chat、175K code（全部）、200K math、100K STEM，另有德 / 西 / 法 / 意 / 日各 25K。主 RL 阶段的环境配比：<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.6 去污染：两种廉价信号召回 + LLM 裁判复核</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>流程 <span class="tag">§3.12 · 表 40</span></h4>
+      <ol>
+        <li><b>归一化</b>：只保留题干（SFT 取 user 轮，RL 取 prompt），去掉数据集内反复出现的模板</li>
+        <li><b>召回</b>：词级 8-gram / 13-gram 重叠，加 Qwen3-Embedding-0.6B 相似度（512 字节窗口、256 字节步长，取最大余弦）；每道题取综合分 top 20，再加每种信号各自的 top 2</li>
+        <li><b>门限</b>：语义重叠 ≥0.75 或 n-gram 重叠 ≥0.5 才交给裁判</li>
+        <li><b>裁判</b>：Claude Opus 4.6，temperature 0；标签分 direct_copy / paraphrase / answer_leakage / method_leakage / style_overlap / no_contamination，另给 severity 0–4</li>
+        <li><b>删除</b>：命中污染类标签且 severity ≥3 就删</li>
+      </ol></div>
+    <div class="card mod"><h4>结果 <span class="tag">§3.12 · 表 42</span></h4>
+      <ul>
+        <li>对照 30 个基准，共删 <b>20,671 条</b>（约 0.09%；SFT 14,793 条 + RL 5,878 条），涉及 22 个基准的 1,808 道题（6.0%）</li>
+        <li>MATH-500 有约四分之一被匹配到；MMLU-Pro 匹配题数绝对值最多（1,254） <span class="src">C.2</span></li>
+        <li>用合成污染测试管线本身：13 种增强 × 4 档强度；召回率 TB2.1 87.5%、GPQA-D 79.1%，12,763 个负例里只误报 1 个</li>
+        <li>单用一种信号：n-gram 召回约 26%，embedding 召回 47–61% <span class="src">表 42</span></li>
+      </ul></div>
+  </div>
+</section>
+
+<!-- ============ 5 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2></div>
+
+  <div class="lane">Super · 预训练与中期训练</div>
+  <div class="flow f7 wide">
+    <div class="card stage"><div class="sid">P0</div><h4>MTP 预热</h4><p>100B，冻结主干；混入 MTP 自己生成的 hidden state</p><span class="src">§2.1</span></div>
+    <div class="card stage"><div class="sid">P1</div><h4>蒸馏 1T</h4><p>老师 Ultra 3 Base；Skew Reverse KL，α=0.1；LR 4.5e-6→4.5e-5→4.5e-6</p><span class="src">§2.2</span></div>
+    <div class="card stage"><div class="sid">P2</div><h4>Indic CPT</h4><p>100B（10% Indic）</p><span class="src">§2.3</span></div>
+    <div class="card stage"><div class="sid">P3</div><h4>1M 长上下文</h4><p>35B，恒定 LR 4.5e-6；CP16 · TP8 · EP64，GB300</p><span class="src">§2.4</span></div>
+    <div class="card stage lt"><div class="sid">P4</div><h4>SWE 中期训练</h4><p>65.4B @256K；LR 线性预热到 1e-5 后保持恒定</p><span class="src">§2.5</span></div>
+    <div class="card stage gd"><div class="sid">P5</div><h4>长上下文恢复</h4><p>≈9B；RULER-1M 79.9→33.5→81.0</p><span class="src">§2.4</span></div>
+  </div>
+  <div class="lane">Lightning · 预训练</div>
+  <div class="flow f7 wide">
+    <div class="card stage"><div class="sid">P0</div><h4>MTP 预热</h4><p>100B，标准的 2 步递归 MTP 训练</p><span class="src">§2.1</span></div>
+    <div class="card stage"><div class="sid">P1</div><h4>蒸馏 1T</h4><p>老师 Super 3 Base 的 top-128 logits + sink token；0.9 前向 KL + 0.1 CE；LR 1e-5 用 200B 升到 1e-4，再用 800B 线性降回 1e-5；MTP loss 系数 0.1</p><span class="src">§2.2</span></div>
+    <div class="card stage gd"><div class="sid">P2</div><h4>1M 长上下文</h4><p>21B，恒定 LR 1e-5；CP8 · TP8 · EP8 · PP2，GB200</p><span class="src">§2.4</span></div>
+  </div>
+  <p class="tbl-note">Super 蒸馏的 MoE 序列负载均衡系数取 1e-5（Lightning 是 1e-4）<span class="src">§2.2</span>。蒸馏阶段的 batch size、序列长度：原文写「其余设置与 Nano 3 / Super 3 Base 相同」，本篇没有列出。</p>
+
+  <h3 class="prose">后训练（Super）</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="论文图 4：Super-V3.5-VL 后训练管线" loading="lazy"></div>
+    <figcaption><b>Super-V3.5-VL 后训练管线。</b>多模态 + 文本 SFT 之后得到共享主干，跑 RL（RLVR + RLHF，GenRM 提供奖励）；在 step 120 分出对话对齐、视觉、推理 + agent 等教师，最后用两阶段 MOPD（带 self-anchor）合并成最终权重。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+  <div class="post-flow wide">
+    <div class="card stage"><div class="sid">S1 · SFT</div><h4>两阶段 SFT</h4><ul>
+      <li>先预热视觉投影层；阶段 1 用混合数据，阶段 2 调整配比，补第一阶段没学好的能力</li>
+      <li>打包序列 524,288 token，GBS 32，LR 预热约 9,100 条记录到 1e-5 后保持恒定</li>
+      <li>Adam β=(0.9, 0.95)，weight decay 0.1，梯度裁剪 1.0；2 层共享权重的 MTP，辅助 loss 系数 0.3 <span class="src">§3.1</span></li></ul></div>
+    <div class="card stage"><div class="sid">S2 · RL</div><h4>RLVR + RLHF 联合训练</h4><ul>
+      <li>按环境把样本分给对应的验证器或奖励模型；训练前先做奖励 profiling</li>
+      <li>router replay + LM head 用 FP32：训练端与推理端的 KL 误差降一个数量级以上</li>
+      <li>GBS 8,192，每个样本 16 条 rollout；最大生成长度先 80K，后来提到 128K <span class="src">§3.2</span></li></ul></div>
+    <div class="card stage"><div class="sid">S3 · 教师 + MOPD</div><h4>6 个专家 → 1 个学生</h4><ul>
+      <li>agent / 推理 / 视频 / 视觉工具 / 视觉推理 / 对齐，各自单独训练成教师</li>
+      <li>MOPD：学生在自己生成的回答上逐 token 最小化 reverse KL，老师只做一次前向，不需要验证器</li>
+      <li>异步训练，重要性权重超出 [0.2, 5] 的 token 被 mask 掉 <span class="src">§3.6</span></li></ul></div>
+  </div>
+
+  <details class="more" open><summary>各教师的配方（原文给出的超参）<span class="hint">§3.3–3.5</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>教师</th><th>初始化</th><th>batch</th><th class="l" style="text-align:left">关键设置</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Agent</td><td>text-RLVR step 120</td><td>64×16=1,024</td><td class="l">端到端 GRPO，只用可执行的 Terminal / SWE / Search 沙箱任务；trajectory 最大 age 1；每条 rollout 最长 2 小时</td><td><span class="src">§3.3.1</span></td></tr>
+        <tr><td>推理</td><td>text-RLVR step 120</td><td>256×16=4,096</td><td class="l">最大生成 131,072；age 2；LR 4e-6；数学 / STEM 用 DeepSeek-V4-Flash 当裁判，编程跑测试；取第 80 次更新</td><td><span class="src">§3.3.2</span></td></tr>
+        <tr><td>视频推理 + 跟踪</td><td>text-RLVR step 120</td><td>128×16=2,048</td><td class="l">可验证奖励（选择题对错 / 跟踪定位质量）；<code>&lt;think&gt;</code> 格式错误时奖励置 0、advantage 强制设为 −5；推理在 1,024–4,096 token 之间时奖励系数从 1.0 线性降到 0.95；router 和视觉模块冻结；LR 3e-6；128 张 GB200；取 step 60</td><td><span class="src">§3.4.1</span></td></tr>
+        <tr><td>视觉工具</td><td>text-RLVR</td><td><span class="nd">未披露</span></td><td class="l">工具调用用 XML 表示；以结果对错为主奖励，重复或格式错误的调用另扣分；按 V*、HRBench8K、BabyVision 选 checkpoint</td><td><span class="src">§3.4.2</span></td></tr>
+        <tr><td>视觉推理</td><td>已有的多模态 RLVR ckpt</td><td>256×16</td><td class="l">两阶段：从阶段 1 的 step 114 起换新 optimizer，再训 20 次更新；128 张 GPU</td><td><span class="src">§3.4.3</span></td></tr>
+        <tr><td>对齐</td><td><span class="nd">未披露</span></td><td><span class="nd">未披露</span></td><td class="l">新版 GenRM 加了推理长度惩罚；每个回答都和固定参考答案（Gemma 4 31B-it 的回答）比较；按 rubric 分项打分取均值，不用总分；混入 abstention 训练</td><td><span class="src">§3.5</span></td></tr>
+      </tbody>
+    </table></div>
+  </div></details>
+
+  <h3 class="prose">MOPD 两阶段份额（原文给出比例）</h3>
+  <div class="ratio wide">
+    <div class="rlab"><span><b>阶段 1</b>：512 prompt × 1 rollout，生成上限 48K（128K 上下文），LR 2e-6，训 30 步，α=1</span><span class="src">§3.6</span></div>
+    <div class="rbar"><span class="a" style="width:35%">Agent 35%</span><span class="f" style="width:25%">推理 25%</span><span class="b" style="width:20%">对齐 20%</span><span class="c" style="width:15%">视觉工具 15%</span><span class="e" style="width:5%"></span></div>
+  </div>
+  <div class="ratio wide">
+    <div class="rlab"><span><b>阶段 2</b>：1,024 prompt，可用满 128K，LR 3e-6，训 40 步（正好一遍），α=0.2</span><span class="src">§3.6</span></div>
+    <div class="rbar"><span class="b" style="width:30%">对齐 30%</span><span class="c" style="width:20%">视觉工具 20%</span><span class="g" style="width:20%">视觉推理 20%</span><span class="d" style="width:20%">视频 20%</span><span class="e" style="width:10%">锚 10%</span></div>
+    <div class="seg-key"><span><i style="background:var(--bar-other)"></i>self-anchor：学生起点 checkpoint 的冻结副本，接收没有专属教师的环境（阶段 1 占 5%，阶段 2 占 10%）</span></div>
+  </div>
+  <ul class="prose">
+    <li><b>为什么拆两阶段</b>：蒸馏时不同基准涨速不同，有些几步就到峰值、继续训反而掉。所以阶段 1 侧重涨得快、后期易回退的领域；阶段 2 让 agent 和推理老师退场，它们的环境交给 self-anchor，只防止能力倒退 <span class="src">§3.6</span>。</li>
+    <li><b>近端教师</b>：阶段 2 的蒸馏目标换成 0.2·π<sub>T</sub> + 0.8·π̄<sub>S</sub>，advantage 下界因此是 log(1−α) ≈ −0.22，老师认为极不可能的 token 只会得到有界的负信号 <span class="src">§3.6</span>。</li>
+    <li><b>MTP 加强</b>：从 SFT checkpoint 先训 4k 步，迁到最终主干后再训 25k 步（Lightning 直接训 48k 步）；用 LK loss，以冻结主干为老师 <span class="src">§3.7</span>。</li>
+    <li><b>推理档位</b>：关闭推理 / 常规 / 中等三档。中等档的 SFT 数据由 Kimi K3 低档模式生成，约 4% 的 RL prompt 在这一档，奖励按长度调整；中等档比常规档少用约 2.2× token，准确率约降 9% <span class="src">§3.9</span>。</li>
+    <li><b>Lightning 后训练</b>：单阶段纯文本 SFT + RLVR + MTP 加强，没有 MOPD <span class="src">§3 · §3.6</span>。</li>
+  </ul>
+
+  <details class="more"><summary>量化配方：NVFP4 PTQ + QAD<span class="hint">§4</span></summary><div class="body">
+    <ul>
+      <li>发布的是 Aggressive 配方：MoE 与共享专家的 GEMM 用 NVFP4；Attention 的 QKV/out 投影、Mamba 线性层和 lm_head 用 FP8；视觉编码器和 connector 保持 BF16；Mamba SSM 缓存用 FP16 + 随机舍入；整模型 4.82 BPE（S=74.987 GB，N=124.453B） <span class="src">§4.1 · 表 12</span></li>
+      <li>表 12 的上标：a 表示探索时考虑过共享专家用 FP8；b 表示 FP32 指的是 router 的计算精度，存储仍是 BF16；c 表示该列 BPE 是按策略估算的，只有 Aggressive 列是实测值</li>
+      <li>权重 scale 用 MSE 校准（按表 13，比 Max 和 MSE 4-over-6 好）；QAD 只训练开了量化器的 LM GEMM，目标为 KL，LR 5e-6，在 512 张 GB200 上跑 200 次迭代 <span class="src">§4.2 · §4.4</span></li>
+      <li>验收标准：中位精度恢复 ≥99%，输出长度增幅 ≤5%；实际为 99.62% / +0.44% <span class="src">§4 · 表 23</span></li>
+      <li>MTP 的专家也量化成 NVFP4：按表 20，NVFP4 主干下接受长度 4.592→4.518（DL=7）；lm_head 统一用 FP8，主模型校验和起草共用 <span class="src">§4.7 · 表 20</span></li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">对比对象：N3-Ultra 550B-A55B、Qwen3.5 122B-A10B、Qwen3.8 Flash-Next、DS-V4 Flash-0731、Inkling Small、GLM-5.3 Flash。所有模型都在 NeMo Gym 里用相同的评测设置；采样参数按各自 model card 的推荐值 <span class="src">§3.8.1</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1：Nemotron 3.5 Super 与六个开源模型的基准对比" loading="lazy"></div>
+    <figcaption><b>Super（120B-A12B）与六个开源模型在 agent、代码、数理、多模态、长上下文、对话偏好上的对比</b>（右侧为 GB200 上的最大吞吐）。完整数字见表 10。本页裁图缺少图例，颜色对应关系请以原文为准。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="chart-legend wide"><span class="l1">N3.5-Super</span><span class="l2">N3-Ultra</span><span class="l3">其余五个模型（顺序同表 10）</span></div>
+  <div class="chart-grid wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="SWE-bench Pro"><text x="0" y="14" class="ch-t">SWE-bench Pro</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="87.0" height="13" rx="3" class="bar-q"/><text x="187.0" y="45" class="ch-val">51.78</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="56" width="83.4" height="13" rx="3" class="bar-qi"/><text x="183.4" y="66" class="ch-val">49.66</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="76.6" height="13" rx="3" class="bar-o"/><text x="176.6" y="87" class="ch-val">45.60</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="101.4" height="13" rx="3" class="bar-o2"/><text x="201.4" y="108" class="ch-val">60.37</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="119" width="95.6" height="13" rx="3" class="bar-o"/><text x="195.6" y="129" class="ch-val">56.91</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="95.0" height="13" rx="3" class="bar-o2"/><text x="195.0" y="150" class="ch-val">56.54</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="100.3" height="13" rx="3" class="bar-o"/><text x="200.3" y="171" class="ch-val">59.70</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="Terminal-Bench 2.1"><text x="0" y="14" class="ch-t">Terminal-Bench 2.1</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="101.9" height="13" rx="3" class="bar-q"/><text x="201.9" y="45" class="ch-val">60.67</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="56" width="92.0" height="13" rx="3" class="bar-qi"/><text x="192.0" y="66" class="ch-val">54.78</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="81.8" height="13" rx="3" class="bar-o"/><text x="181.8" y="87" class="ch-val">48.70</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="144.1" height="13" rx="3" class="bar-o2"/><text x="244.1" y="108" class="ch-val">85.80</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="119" width="129.0" height="13" rx="3" class="bar-o"/><text x="229.0" y="129" class="ch-val">76.80</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="89.7" height="13" rx="3" class="bar-o2"/><text x="189.7" y="150" class="ch-val">53.40</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="138.9" height="13" rx="3" class="bar-o"/><text x="238.9" y="171" class="ch-val">82.70</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="BrowseComp"><text x="0" y="14" class="ch-t">BrowseComp</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="132.6" height="13" rx="3" class="bar-q"/><text x="232.6" y="45" class="ch-val">78.91</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="56" width="114.0" height="13" rx="3" class="bar-qi"/><text x="214.0" y="66" class="ch-val">67.85</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="97.6" height="13" rx="3" class="bar-o"/><text x="197.6" y="87" class="ch-val">58.10</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="149.6" height="13" rx="3" class="bar-o2"/><text x="249.6" y="108" class="ch-val">89.02</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="119" width="141.5" height="13" rx="3" class="bar-o"/><text x="241.5" y="129" class="ch-val">84.20</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="124.5" height="13" rx="3" class="bar-o2"/><text x="224.5" y="150" class="ch-val">74.10</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="145.4" height="13" rx="3" class="bar-o"/><text x="245.4" y="171" class="ch-val">86.57</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="HLE (no tools, text)"><text x="0" y="14" class="ch-t">HLE (no tools, text)</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="53.4" height="13" rx="3" class="bar-q"/><text x="153.4" y="45" class="ch-val">31.79</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="56" width="49.1" height="13" rx="3" class="bar-qi"/><text x="149.1" y="66" class="ch-val">29.24</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="40.7" height="13" rx="3" class="bar-o"/><text x="140.7" y="87" class="ch-val">24.24</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="66.5" height="13" rx="3" class="bar-o2"/><text x="166.5" y="108" class="ch-val">39.57</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="119" width="60.2" height="13" rx="3" class="bar-o"/><text x="160.2" y="129" class="ch-val">35.82</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="55.9" height="13" rx="3" class="bar-o2"/><text x="155.9" y="150" class="ch-val">33.27</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="61.3" height="13" rx="3" class="bar-o"/><text x="161.3" y="171" class="ch-val">36.47</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="OCR-Reasoning"><text x="0" y="14" class="ch-t">OCR-Reasoning</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="109.3" height="13" rx="3" class="bar-q"/><text x="209.3" y="45" class="ch-val">65.08</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><text x="100" y="66" class="ch-ax">—</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="108.0" height="13" rx="3" class="bar-o"/><text x="208.0" y="87" class="ch-val">64.27</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="112.7" height="13" rx="3" class="bar-o2"/><text x="212.7" y="108" class="ch-val">67.10</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><text x="100" y="129" class="ch-ax">—</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="91.9" height="13" rx="3" class="bar-o2"/><text x="191.9" y="150" class="ch-val">54.69</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="108.5" height="13" rx="3" class="bar-o"/><text x="208.5" y="171" class="ch-val">64.61</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 300 197" role="img" aria-label="GraphWalks (≤1M)"><text x="0" y="14" class="ch-t">GraphWalks (≤1M)</text><text x="300" y="14" text-anchor="end" class="ch-src">表 10</text><text x="90" y="45" text-anchor="end" class="ch-lbl">N3.5-Super</text><rect x="96" y="35" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="35" width="150.7" height="13" rx="3" class="bar-q"/><text x="250.7" y="45" class="ch-val">89.71</text><text x="90" y="66" text-anchor="end" class="ch-lbl">N3-Ultra</text><rect x="96" y="56" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="56" width="106.3" height="13" rx="3" class="bar-qi"/><text x="206.3" y="66" class="ch-val">63.28</text><text x="90" y="87" text-anchor="end" class="ch-lbl">Qwen3.5 122B</text><rect x="96" y="77" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="77" width="144.7" height="13" rx="3" class="bar-o"/><text x="244.7" y="87" class="ch-val">86.12</text><text x="90" y="108" text-anchor="end" class="ch-lbl">Qwen3.8 F-Next</text><rect x="96" y="98" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="98" width="127.9" height="13" rx="3" class="bar-o2"/><text x="227.9" y="108" class="ch-val">76.15</text><text x="90" y="129" text-anchor="end" class="ch-lbl">DS-V4 Flash</text><rect x="96" y="119" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="119" width="109.8" height="13" rx="3" class="bar-o"/><text x="209.8" y="129" class="ch-val">65.38</text><text x="90" y="150" text-anchor="end" class="ch-lbl">Inkling Small</text><rect x="96" y="140" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="140" width="93.6" height="13" rx="3" class="bar-o2"/><text x="193.6" y="150" class="ch-val">55.74</text><text x="90" y="171" text-anchor="end" class="ch-lbl">GLM-5.3 Flash</text><rect x="96" y="161" width="168" height="13" rx="3" class="bar-bg"/><rect x="96" y="161" width="148.5" height="13" rx="3" class="bar-o"/><text x="248.5" y="171" class="ch-val">88.41</text><line x1="96" y1="183" x2="264" y2="183" class="axis"/><text x="96.0" y="194" text-anchor="middle" class="ch-ax">0</text><text x="180.0" y="194" text-anchor="middle" class="ch-ax">50</text><text x="264.0" y="194" text-anchor="middle" class="ch-ax">100</text></svg></div></div>
+  <p class="tbl-note">横轴统一从 0 到 100；「—」表示原文没有该项。</p>
+
+  <h3 class="prose">表 10 精选</h3>
+  <div class="tbl-wrap"><table><thead><tr><th>基准</th><th class="q">N3.5-Super<br><small>120B-A12B</small></th><th>N3-Ultra<br><small>550B-A55B</small></th><th>Qwen3.5<br><small>122B-A10B</small></th><th>Qwen3.8<br><small>Flash-Next</small></th><th>DS-V4<br><small>Flash-0731</small></th><th>Inkling<br><small>Small</small></th><th>GLM-5.3<br><small>Flash</small></th></tr></thead><tbody><tr><td>SWE-bench Verified</td><td class="q">71.10</td><td>73.93</td><td>71.87</td><td>72.60</td><td>77.80</td><td>75.27</td><td class="best">79.10</td></tr><tr><td>SWE-bench Pro</td><td class="q">51.78</td><td>49.66</td><td>45.60</td><td class="best">60.37</td><td>56.91</td><td>56.54</td><td>59.70</td></tr><tr><td>Tau3 Banking</td><td class="q">18.88</td><td>18.35</td><td>14.23</td><td class="best">44.54</td><td>38.56</td><td class="dash">—</td><td>34.85</td></tr><tr><td>Terminal-Bench 2.1</td><td class="q">60.67</td><td>54.78</td><td>48.70</td><td class="best">85.80</td><td>76.80</td><td>53.40</td><td>82.70</td></tr><tr><td>BrowseComp</td><td class="q">78.91</td><td>67.85</td><td>58.10</td><td class="best">89.02</td><td>84.20</td><td>74.10</td><td>86.57</td></tr><tr><td>GPQAD</td><td class="q">89.52</td><td>86.99</td><td>86.74</td><td class="best">92.68</td><td>89.65</td><td>88.57</td><td>91.22</td></tr><tr><td>HLE (no tools, text)</td><td class="q">31.79</td><td>29.24</td><td>24.24</td><td class="best">39.57</td><td>35.82</td><td>33.27</td><td>36.47</td></tr><tr><td>HLE (with tools, text)</td><td class="q">46.01</td><td>37.40</td><td>47.50</td><td class="dash">—</td><td>45.10</td><td>47.80</td><td class="best">55.30</td></tr><tr><td>CharXiv-RQ</td><td class="q">80.82</td><td class="dash">—</td><td>83.47</td><td class="best">85.77</td><td class="dash">—</td><td>77.77</td><td>81.93</td></tr><tr><td>OCR-Reasoning</td><td class="q">65.08</td><td class="dash">—</td><td>64.27</td><td class="best">67.10</td><td class="dash">—</td><td>54.69</td><td>64.61</td></tr><tr><td>Video-MME-v2</td><td class="q">32.85</td><td class="dash">—</td><td>31.20</td><td class="best">45.05</td><td class="dash">—</td><td class="dash">—</td><td>14.79</td></tr><tr><td>V*</td><td class="q">85.60</td><td class="dash">—</td><td>91.10</td><td class="best">93.02</td><td class="dash">—</td><td>70.51</td><td>88.13</td></tr><tr><td>OSWorld</td><td class="q">52.14</td><td class="dash">—</td><td>51.47</td><td>55.76</td><td class="dash">—</td><td class="dash">—</td><td class="best">68.86</td></tr><tr><td>GraphWalks (≤1M)</td><td class="q best">89.71</td><td>63.28</td><td>86.12</td><td>76.15</td><td>65.38</td><td>55.74</td><td>88.41</td></tr><tr><td>NV Chat Benchmark</td><td class="q">52.67</td><td>34.27</td><td>46.98</td><td>35.16</td><td>49.78</td><td>53.60</td><td class="best">61.00</td></tr><tr><td>MMLU-ProX</td><td class="q">76.91</td><td>83.10</td><td>83.19</td><td>82.98</td><td class="best">85.53</td><td>83.97</td><td>82.99</td></tr></tbody></table></div><p class="tbl-note">来源：表 10。所有数值原样照录；圆点 = 该行最高。</p>
+  <div class="keybox"><span class="k-best">该行最高</span><span class="k-q">Nemotron 3.5 Super</span></div>
+  <ul class="tbl-note">
+    <li>「—」：原文表中没有这一项。N3-Ultra 和 DS-V4 Flash 不支持视觉，所以多模态行为空。</li>
+    <li><b>V*</b> 是基准名本身带的星号，不是脚注；本篇按静态多选题评测，不给视觉搜索工具 <span class="src">§3.8.1</span>。</li>
+    <li>SWE 系列：OpenCode harness，关闭 web 搜索，3 次平均；TB2.1：Terminus 2 harness，单题 3 小时超时，8 次平均；HLE（with tools）出自<b>另一套内部 harness</b> <span class="src">表 10 · §3.8.1</span>。</li>
+    <li>BrowseComp 没有标准 harness，本篇用 NeMo Gym 开源 harness（Exa 搜索，上下文超阈值时整段丢弃）；另报了一个基于 OpenCode 的 harness 结果作为参照。</li>
+  </ul>
+
+  <details class="more"><summary>表 10 全表（35 行）<span class="hint">表 10</span></summary><div class="body"><div class="tbl-wrap"><table><thead><tr><th>基准</th><th class="q">N3.5-Super<br><small>120B-A12B</small></th><th>N3-Ultra<br><small>550B-A55B</small></th><th>Qwen3.5<br><small>122B-A10B</small></th><th>Qwen3.8<br><small>Flash-Next</small></th><th>DS-V4<br><small>Flash-0731</small></th><th>Inkling<br><small>Small</small></th><th>GLM-5.3<br><small>Flash</small></th></tr></thead><tbody><tr class="grp"><td colspan="8">Agentic</td></tr><tr><td>SWE-bench Verified</td><td class="q">71.10</td><td>73.93</td><td>71.87</td><td>72.60</td><td>77.80</td><td>75.27</td><td class="best">79.10</td></tr><tr><td>SWE-bench Multilingual</td><td class="q">67.72</td><td>68.78</td><td>62.00</td><td class="best">79.00</td><td>72.00</td><td>71.44</td><td>78.30</td></tr><tr><td>SWE-bench Pro</td><td class="q">51.78</td><td>49.66</td><td>45.60</td><td class="best">60.37</td><td>56.91</td><td>56.54</td><td>59.70</td></tr><tr><td>Tau2 Retail</td><td class="q">69.24</td><td>73.68</td><td>55.37</td><td>71.60</td><td>73.79</td><td>71.82</td><td class="best">78.18</td></tr><tr><td>Tau2 Airline</td><td class="q">76.50</td><td>79.75</td><td>63.50</td><td>80.75</td><td class="best">83.50</td><td>62.75</td><td>81.75</td></tr><tr><td>Tau2 Telecom</td><td class="q">73.19</td><td>83.00</td><td>87.17</td><td>90.35</td><td>98.25</td><td>90.12</td><td class="best">98.46</td></tr><tr><td>Tau3 Banking</td><td class="q">18.88</td><td>18.35</td><td>14.23</td><td class="best">44.54</td><td>38.56</td><td class="dash">—</td><td>34.85</td></tr><tr><td>Terminal-Bench 2.1</td><td class="q">60.67</td><td>54.78</td><td>48.70</td><td class="best">85.80</td><td>76.80</td><td>53.40</td><td>82.70</td></tr><tr><td>GDPVal-AA-v2 ELO</td><td class="q">1,211.20</td><td>1,148.30</td><td>860.73</td><td>1,561.69</td><td>1,382.30</td><td>1,313.27</td><td class="best">1,563.39</td></tr><tr><td>GDPVal-AA-v2 norm ELO</td><td class="q">0.356</td><td>0.324</td><td>0.180</td><td>0.531</td><td>0.441</td><td>0.407</td><td class="best">0.532</td></tr><tr><td>BrowseComp</td><td class="q">78.91</td><td>67.85</td><td>58.10</td><td class="best">89.02</td><td>84.20</td><td>74.10</td><td>86.57</td></tr><tr><td>BrowseComp (OpenCode)</td><td class="q">72.35</td><td>61.06</td><td>45.42</td><td>76.07</td><td>64.77</td><td>55.37</td><td class="best">81.91</td></tr><tr class="grp"><td colspan="8">Code Generation</td></tr><tr><td>SciCode (subtask)</td><td class="q">47.13</td><td>41.96</td><td>39.83</td><td>46.62</td><td>49.30</td><td>48.28</td><td class="best">49.96</td></tr><tr><td>SciCode (problem)</td><td class="q">15.10</td><td>13.46</td><td>10.77</td><td>14.42</td><td>18.27</td><td class="best">18.65</td><td>17.50</td></tr><tr><td>LiveCodeBench v6</td><td class="q">88.22</td><td>89.21</td><td>76.65</td><td>94.13</td><td class="best">94.64</td><td>88.25</td><td>80.62</td></tr><tr class="grp"><td colspan="8">Math and Science</td></tr><tr><td>GPQAD</td><td class="q">89.52</td><td>86.99</td><td>86.74</td><td class="best">92.68</td><td>89.65</td><td>88.57</td><td>91.22</td></tr><tr><td>CritPt</td><td class="q">10.86</td><td>3.14</td><td>1.14</td><td class="best">15.70</td><td>12.57</td><td>9.14</td><td>9.70</td></tr><tr><td>HLE (no tools, text)</td><td class="q">31.79</td><td>29.24</td><td>24.24</td><td class="best">39.57</td><td>35.82</td><td>33.27</td><td>36.47</td></tr><tr><td>HLE (with tools, text)</td><td class="q">46.01</td><td>37.40</td><td>47.50</td><td class="dash">—</td><td>45.10</td><td>47.80</td><td class="best">55.30</td></tr><tr><td>Apex-Shortlist</td><td class="q">88.36</td><td>75.00</td><td>54.65</td><td class="best">91.76</td><td>88.70</td><td>71.54</td><td>77.13</td></tr><tr><td>AA-Omniscience Accuracy</td><td class="q">26.20</td><td>25.30</td><td>26.25</td><td>27.87</td><td class="best">44.95</td><td>35.38</td><td>34.22</td></tr><tr><td>AA-Omniscience Non-Hallucination</td><td class="q">69.96</td><td class="best">77.91</td><td>15.5</td><td>58.69</td><td>4.09</td><td>40.39</td><td>69.75</td></tr><tr class="grp"><td colspan="8">Multimodal</td></tr><tr><td>BabyVision</td><td class="q">29.60</td><td class="dash">—</td><td>35.65</td><td class="best">46.82</td><td class="dash">—</td><td>24.74</td><td>39.09</td></tr><tr><td>CharXiv-RQ</td><td class="q">80.82</td><td class="dash">—</td><td>83.47</td><td class="best">85.77</td><td class="dash">—</td><td>77.77</td><td>81.93</td></tr><tr><td>MathVision</td><td class="q">78.16</td><td class="dash">—</td><td>83.29</td><td class="best">87.54</td><td class="dash">—</td><td>78.77</td><td>82.52</td></tr><tr><td>OCR-Reasoning</td><td class="q">65.08</td><td class="dash">—</td><td>64.27</td><td class="best">67.10</td><td class="dash">—</td><td>54.69</td><td>64.61</td></tr><tr><td>OCRBench-v2 (EN)</td><td class="q">68.12</td><td class="dash">—</td><td class="best">68.27</td><td>67.91</td><td class="dash">—</td><td>54.21</td><td>61.81</td></tr><tr><td>OCRBench-v2 (ZH)</td><td class="q">59.15</td><td class="dash">—</td><td>67.26</td><td class="best">68.28</td><td class="dash">—</td><td>52.38</td><td>56.81</td></tr><tr><td>Video-MME-v2</td><td class="q">32.85</td><td class="dash">—</td><td>31.20</td><td class="best">45.05</td><td class="dash">—</td><td class="dash">—</td><td>14.79</td></tr><tr><td>V*</td><td class="q">85.60</td><td class="dash">—</td><td>91.10</td><td class="best">93.02</td><td class="dash">—</td><td>70.51</td><td>88.13</td></tr><tr><td>HLE (full)</td><td class="q">29.20</td><td class="dash">—</td><td>24.44</td><td class="best">38.76</td><td class="dash">—</td><td>31.60</td><td>35.08</td></tr><tr><td>MMLongBench-Doc</td><td class="q">62.82</td><td class="dash">—</td><td>63.74</td><td class="best">67.93</td><td class="dash">—</td><td>49.06</td><td>65.83</td></tr><tr><td>OSWorld</td><td class="q">52.14</td><td class="dash">—</td><td>51.47</td><td>55.76</td><td class="dash">—</td><td class="dash">—</td><td class="best">68.86</td></tr><tr class="grp"><td colspan="8">Long Context</td></tr><tr><td>AA-LCR</td><td class="q">68.63</td><td>75.19</td><td>75.13</td><td>78.38</td><td class="best">79.69</td><td>77.31</td><td>79.50</td></tr><tr><td>GraphWalks (≤1M)</td><td class="q best">89.71</td><td>63.28</td><td>86.12</td><td>76.15</td><td>65.38</td><td>55.74</td><td>88.41</td></tr><tr class="grp"><td colspan="8">Instruction Following and Chat Preference</td></tr><tr><td>IFBench</td><td class="q">70.86</td><td class="best">82.94</td><td>67.56</td><td>75.63</td><td>76.19</td><td>79.31</td><td>57.67</td></tr><tr><td>NV Chat Benchmark</td><td class="q">52.67</td><td>34.27</td><td>46.98</td><td>35.16</td><td>49.78</td><td>53.60</td><td class="best">61.00</td></tr><tr class="grp"><td colspan="8">Multilingual</td></tr><tr><td>MMLU-ProX</td><td class="q">76.91</td><td>83.10</td><td>83.19</td><td>82.98</td><td class="best">85.53</td><td>83.97</td><td>82.99</td></tr><tr><td>WMT24pp COMET</td><td class="q">84.80</td><td>82.06</td><td class="best">86.34</td><td>86.20</td><td>85.50</td><td>84.60</td><td>86.13</td></tr></tbody></table></div><p class="tbl-note">来源：表 10。所有数值原样照录；圆点 = 该行最高。</p></div></details>
+
+  <h3 class="prose">只看 Super 自己：消融与诊断</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>中期训练前后（同一份实验 SFT） <span class="tag">表 5</span></h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>pass@1 %</th><th>Base</th><th>Mid-trained</th><th>Δ</th></tr></thead>
+        <tbody>
+          <tr><td>SWE-bench Pro（OpenHands）</td><td>52.1</td><td>51.7</td><td class="down">−0.4</td></tr>
+          <tr><td>DeepSWE（4 次平均）</td><td>6.4</td><td>10.4</td><td class="up">+4.0</td></tr>
+          <tr class="grp"><td colspan="4">SWE-bench Verified，按 harness</td></tr>
+          <tr><td>OpenHands</td><td>71.3</td><td>71.9</td><td>+0.6</td></tr>
+          <tr><td>Pi</td><td>57.4</td><td>67.8</td><td class="up">+10.4</td></tr>
+          <tr><td>OpenCode</td><td>54.4</td><td>65.8</td><td class="up">+11.4</td></tr>
+          <tr><td>Codex</td><td>48.4</td><td>61.8</td><td class="up">+13.4</td></tr>
+          <tr><td>Claude Code</td><td>53.8</td><td>58.0</td><td class="up">+4.2</td></tr>
+          <tr class="grp"><td colspan="4">Terminal-Bench 2.1，按 harness</td></tr>
+          <tr><td>Hermes</td><td>44.2</td><td>53.9</td><td class="up">+9.7</td></tr>
+          <tr><td>Codex</td><td>27.0</td><td>39.7</td><td class="up">+12.7</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">Δ 由本页按表中数值相减 <span class="src calc">推算</span>。原文说 run-to-run 方差约 1 个点；OpenHands 的结果和其他 harness 不是同一次评测。</p></div>
+    <div class="card mod"><h4>测试时扩展：并行 agent + 自验证 <span class="tag">§3.11 · 图 9</span></h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>基准（候选数）</th><th>pass@1</th><th>选择后</th><th>Δ pp</th></tr></thead>
+        <tbody>
+          <tr><td>Terminal-Bench 2.1（5）</td><td>62.7</td><td>71.9</td><td class="up">+9.2</td></tr>
+          <tr><td>DeepSWE（5）</td><td>24.6</td><td>34.5</td><td class="up">+9.9</td></tr>
+          <tr><td>BrowseComp 400 题子集（3）</td><td>71.5</td><td>79.8</td><td class="up">+8.3</td></tr>
+          <tr><td>SWE-bench Verified / Pro / Multi（3）</td><td colspan="2">—</td><td>+1.1 / +2.4 / +1.9</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">验证器就是同一个 checkpoint（LLM-as-a-Verifier）：A–T 共 20 档单 token 评分，3 条标准 × 两种呈现顺序，Bradley–Terry 转成偏好概率，再用 pivot 锦标赛选出胜者。在 BrowseComp 子集上，补回了 pass@1 与 oracle best-of-3 之间约 70% 的差距。</p></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>换 harness 的差异 <span class="tag">§3.10 · 图 8</span></h4>
+      <p>6 个 harness 都用原样的系统 prompt：SWE-bench Pro 上 Claude Code 最高（49.45%），TB2.1 上 Codex 最高（61.80%）。两个基准上 harness 的排名并不一致，作者因此主张报分时必须写明 harness 和配置。</p></div>
+    <div class="card mod"><h4>Indic CPT 前后 <span class="tag">表 2</span></h4>
+      <p>MILU 72.48→77.90；Indic MMLU-Pro 51.83→56.81；ARC-C 84.17→92.83；ARC-E 90.73→96.77；GSM8K 72.67→82.49（+9.82）。英译印 chrF++ 35.43→47.47 <span class="src">§2.3</span>。原文说明：合成文本和自然文本各自的贡献没有拆开。</p></div>
+    <div class="card mod"><h4>Lightning（后训练）<span class="tag">表 22</span></h4>
+      <p>本篇只报了 BF16 和 W4A16 的对比，<b>没有和外部模型比</b>。BF16 下：SWE-bench Verified 52.20、TB2.1 24.44、GPQA-D 76.45、BrowseComp 39.50、RULER-v1（1M）91.52；量化后中位恢复 99.24%。</p></div>
+    <div class="card mod"><h4>效率 <span class="tag">图 10–11 · 表 24–25</span></h4>
+      <p>GB200 上 NVFP4 对 BF16 为 4,324 对 1,778 tok/s/GPU（2.43×）；H100 上为 970 对 522（1.86×）。GB200 上对比 Qwen3.5 / Qwen3.8 Flash-Next 为 2.34× / 1.23×（相对 Qwen3.8 约 1.90× <span class="src calc">推算</span>）。在 VR200 上做 prefill/decode 分离部署（11 卡），每卡吞吐 +10.3%。</p></div>
+  </div>
+
+  <details class="more"><summary>Base 模型评测（表 6 节选）<span class="hint">表 6</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>基准</th><th>设置</th><th>Super Base</th><th>Lightning Base</th></tr></thead>
+      <tbody>
+        <tr><td>MMLU</td><td>exact match</td><td>84.14</td><td>78.63</td></tr>
+        <tr><td>MMLU-Pro</td><td>EM，TigerLab 抽取</td><td>76.25</td><td>67.50</td></tr>
+        <tr><td>GPQA Diamond</td><td>5-shot CoT EM</td><td>66.16</td><td>33.33</td></tr>
+        <tr><td>GSM8K</td><td>8-shot CoT EM</td><td>91.74</td><td>91.74</td></tr>
+        <tr><td>MATH-500</td><td>4-shot，pass@1，n=32</td><td>81.56</td><td>79.53</td></tr>
+        <tr><td>HumanEval</td><td>pass@1，n=32，EvalPlus</td><td>81.31</td><td>76.91</td></tr>
+        <tr><td>LiveCodeBench CodeGen</td><td>pass@1</td><td>47.61</td><td>29.77</td></tr>
+        <tr><td>BigCodeBench Instruct</td><td>greedy</td><td>49.39</td><td>51.75</td></tr>
+        <tr><td>Global MMLU</td><td>8 种语言平均</td><td>86.56</td><td>75.09</td></tr>
+        <tr><td>MGSM</td><td>8-shot，6 种语言</td><td>87.53</td><td>82.27</td></tr>
+      </tbody>
+    </table></div>
+  </div></details>
+  <details class="more"><summary>Text Arena Elo（初步，NVFP4）<span class="hint">表 11</span></summary><div class="body">
+    <p>Overall 加风格控制：N3.5-Super 1420 ± 12（2,328 票），N3-Ultra 1426 ± 7，Qwen3.5 122B 1416 ± 4，GLM-5.3 Flash 1474 ± 5。Super 只有 2,328 票，明显少于其他模型，置信区间也更宽；Arena 没有公开 Qwen3.8 Flash-Next 的分数。</p>
+  </div></details>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">MOPD、多环境 RL、NVFP4 在 Nemotron 3 Ultra 上已经有过。下面只列本篇新增、且能在原文核对的改动。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>按「涨速」把 MOPD 拆成两阶段，并加入近端教师</h4><p>阶段 1 蒸馏收敛快、后期易回退的 agent / 推理，阶段 2 让这两个老师退场、交给 self-anchor 守住，换成对话和视觉老师；同时把蒸馏目标替换为 α=0.2 的老师-学生混合分布，让负信号有界。</p><p class="why">§3.6 · 原文没有给出「单阶段对两阶段」的对照实验。</p></div>
+    <div class="card nv"><h4>单头递归 MTP + hidden state 混合 + 用 KD 做 MTP 加强</h4><p>两个 MTP 头合并成一个；第 k 步训练时从前面 1…k−1 步产生的状态中采样作为输入，缓解训练和推理时条件不一致的问题；后训练结束后冻结主干，以主干分布为老师继续训练 MTP，在 SFT checkpoint 上训好的头可以迁移到最终主干。</p><p class="why">表 8：采样解码下 3.787→4.612；图 6：越靠后的起草位置提升越大。</p></div>
+    <div class="card nv"><h4>以自然 SWE 数据为主的中期训练，并按 harness 衡量效果</h4><p>256K 上下文，大部分是保留原格式的整仓、Issue–PR、日志等自然数据，agent 轨迹只占 10%；收益主要体现在多 harness 鲁棒性上，而不是标准 harness 下的分数。</p><p class="why">表 4 · 表 5。</p></div>
+    <div class="card nv"><h4>先用合成污染测召回，再拿去做去污染的 LLM 裁判管线</h4><p>区分 answer_leakage / method_leakage 这类字符串匹配找不到的污染；先用 13 种增强构造正例，测出管线自身的召回率，再用于真实数据。</p><p class="why">§3.12 · 附录 C；计划并入 NeMo Curator 开源。</p></div>
+    <div class="card nv"><h4>让混合 Mamba 模型的前缀缓存和投机解码能同时用</h4><p>在投机解码需要回放的边界附近多存一页 Mamba 检查点；checkpointing replay（ReplaySSM）把每步状态写入量从 T+1 降到约 1+1/L。在 GB200 上，输出吞吐提升 4.7–6.4%。</p><p class="why">§5.3–5.4 · 表 24；ReplaySSM 与 Dao lab 独立同时提出，之后合作。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测和 caption 的启示</h2>
+    <p class="sec-intro">这篇不是图像编辑模型，但视觉 SFT 数据、翻译质检、去污染、奖励设计里都有可以直接搬过来的工程做法。每条的「迁移建议」<b>是本页的建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">Caption / 标注</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">01</span>推理链拆成简短步骤，每步对应可见证据</h4>
+        <p class="paper">论文：视觉推理轨迹按「解析与规划 → 对应视觉证据 → 求解 → 验证」组织；然后过滤掉图里不支持的问题、幻觉标签或数值、过度重复和无效的自我纠正 <span class="src">§3.1 · 图 5</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>编辑 caption 也按「定位区域 → 描述变化 → 列出保留项」三段结构化，每段都要能在 src/tgt 图上指出证据；用 VLM 逐段核对，任一段找不到证据就整条丢弃，而不是只给整条 caption 打一个总分。</p></div>
+      <div class="impl"><h4><span class="ix">02</span>「打分 → 带错误清单改写 → 再打分」，并保留元数据</h4>
+        <p class="paper">论文：Indic 翻译打 0–100 分，≥75 分保留；不合格的带着具体错误重写，复查通过才收；每条都保留源文档 ID 和质量分。原文也承认同一模型自评可能偏袒自己 <span class="src">§2.3 · 图 2</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>caption 重写管线保留「分数 + 错误清单 + 改写次数」字段，方便事后按分数段抽样复查；生成模型和打分模型尽量用不同家族，至少在抽样集上做一次交叉打分，量化自评偏差有多大。</p></div>
+      <div class="impl"><h4><span class="ix">03</span>结构化 agent 动作 + 同老师的等价判断</h4>
+        <p class="paper">论文：视频工具轨迹的每个动作都有 Purpose / Reasoning / Next Goal / Code；自由文本答案由同一个老师做纯文本等价判断，置信度 ≥0.90 才保留 <span class="src">§3.1</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>做「多步编辑」数据时，每一步记录意图、操作、预期变化，便于把失败归因到具体某一步；判断两条编辑指令是否等价时，要求裁判同时输出置信度，按阈值过滤，不要只用二元的是 / 否。</p></div>
+    </div>
+
+    <div class="impl-group">数据过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">04</span>只保留不用工具几乎做不对的样本</h4>
+        <p class="paper">论文：视觉工具教师的训练集按难度过滤，只保留不 crop/zoom 等就几乎答不对的题 <span class="src">§3.4.2</span>；SFT 推理数据删除短于 5,000 token 的回答 <span class="src">§3.1</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>构建「细粒度编辑」训练或评测子集时，先用下采样到低分辨率的全图让 VLM 判断一遍，能判对的样本移出该子集，只留下必须看局部才能判断的编辑。</p></div>
+      <div class="impl"><h4><span class="ix">05</span>两种廉价信号召回，LLM 裁判分类型定级</h4>
+        <p class="paper">论文：n-gram 加 embedding 召回候选，Claude Opus 4.6 按 copy / paraphrase / answer_leakage / method_leakage 分类，severity ≥3 删除；删了 0.09% 的数据，却涉及 6.0% 的基准题 <span class="src">§3.12 · 表 40</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>编辑评测集去污染时，用感知哈希加 CLIP/DINO embedding 召回近重复的源图，再让 VLM 判断「是否同一张图、是否同一类编辑意图」；对应「方法泄漏」的情况是：同一张源图换个说法的指令也要算污染。</p></div>
+      <div class="impl"><h4><span class="ix">06</span>先用合成污染测一遍去污染管线的召回率</h4>
+        <p class="paper">论文：对基准题做 13 种增强 × 4 档强度，作为正例，再混入同领域负例，测各信号的召回和误报；结果是裁判召回 79–88%，单用 n-gram 只有约 26% <span class="src">表 42–43</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>对评测图做裁剪、调色、翻转、重压缩、局部重绘等增强，测图像去重管线的召回率，再决定阈值；不要直接沿用默认的 pHash 距离。</p></div>
+    </div>
+
+    <div class="impl-group">评测协议 / 奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">07</span>报分时同时写明 harness 和裁判</h4>
+        <p class="paper">论文：同一个模型换 harness，SWE-bench Verified 可以差到 48.4 对 71.3（中期训练前，表 5）；多模态基准分别用 GPT-4o-mini、Claude Opus 4.7、GPT-4o 等不同裁判，并都写明 <span class="src">§3.8.1 · §3.10</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>编辑评测的每个分数都附上「裁判模型 + prompt 版本 + 输入分辨率 + 重复次数」；新版裁判上线前，在固定样本上和旧版并跑，确认排名不变再替换。</p></div>
+      <div class="impl"><h4><span class="ix">08</span>对固定参考做成对比较，按 rubric 分项打分取均值</h4>
+        <p class="paper">论文：对齐教师不再循环自比，而是每个回答都和固定的 Gemma 4 31B-it 回答比较，用各 rubric 分数的均值代替总分 <span class="src">§3.5</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>编辑 RL 的奖励可以用一个固定的强基线编辑结果作为参照，分别就「指令遵循 / 非编辑区保留 / 画质」三项成对比较再取均值；参照固定，奖励尺度在训练过程中才不会漂移。</p></div>
+      <div class="impl"><h4><span class="ix">09</span>格式错误直接给负 advantage，长度只做软偏好</h4>
+        <p class="paper">论文：视频教师的回答如果 <code>&lt;think&gt;</code> 块不唯一，奖励置 0、advantage 设为 −5；正确回答长度在 1,024–4,096 token 之间时，奖励系数从 1 线性降到 0.95，最多只偏好 5% <span class="src">§3.4.1</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>训练带思考链的编辑 planner 或 caption 模型时，结构化输出（JSON / op 列表）解析失败直接给固定负值，防止「格式坏了但碰巧答对」被强化；对长度只设很小的惩罚上限。</p></div>
+      <div class="impl"><h4><span class="ix">10</span>同时监控截断率和输出长度，作为失败预警</h4>
+        <p class="paper">论文：tau3-banking 在 MOPD 前截断率 20.9%，查出 19.7% 的失控循环；MOPD 后截断率降到 0.3%。量化验收也把「输出长度增幅 ≤5%」作为硬指标 <span class="src">附录 B.1 · §4</span>。</p>
+        <p class="do"><b>迁移建议（非论文内容）：</b>caption / 评测 VLM 在量化、蒸馏、换 checkpoint 时，除了准确率，同时跟踪平均输出长度和撞到 max_tokens 的比例；任何一项明显上升，都要先抽样人工看再上线。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>正文前后数字不一致：</b>摘要和 §1 写 NVFP4 中位恢复 99.62%（表 23，36 个基准）；结论节写 99.52%，这其实是 §4.5 里 FP8 KV cache 配置在 35 个基准上的值。结论节写的「对 Qwen3.8 Flash-Next 1.9×」与摘要一致，但没有提对 Qwen3.5 的 2.34×。</li>
+    <li class="key"><b>同一基准有多种口径：</b>TB2.1 在表 10 是 60.67（Terminus 2），测试时扩展一节的基线 pass@1 是 62.7，NVFP4 版本是 62.78（表 23），Codex harness 下是 61.80（§3.10）；SWE-bench Pro 在表 10 是 51.78（OpenCode），Claude Code 下是 49.45。引用时要说明是哪种设置。</li>
+    <li><b>正文与表格对不上：</b>§4.7 正文说 MTP 专家量化后接受长度从 4.612 降到 4.592，但表 20 中 4.592 是「NVFP4 主干 + BF16 MTP」，专家量化后是 4.518。</li>
+    <li><b>配比大多没给：</b>1T 蒸馏数据、两阶段 SFT、主 RL 阶段的环境配比都<span class="nd">原文未披露</span>；Super 蒸馏只写了「沿用同一配方」。</li>
+    <li><b>缺关键消融：</b>两阶段 MOPD 对单阶段、近端教师 α 的取值、Kimi K3 换老师、删除 &lt;5,000 token 回答，都只有描述或观察，没有对照实验；Indic CPT 也没有拆开合成数据与自然数据的贡献（原文自己承认）。</li>
+    <li><b>中期训练在标准 harness 下没有收益：</b>OpenHands 下 SWE-bench Pro 52.1→51.7、Multilingual 65.9→65.6，都在约 1 点的噪声范围内；收益集中在其他 harness，而且是用一份实验 SFT（约 33B token）测的，不是最终后训练。</li>
+    <li><b>部分评测不可复现：</b>NV Chat Benchmark 是内部集；HLE（with tools）出自内部 harness；8 个多模态基准（BabyVision、CharXiv-RQ 等）用的是官方实现或「计划开源」的内部 scaffold；IndiVibe 和 Indic 细节要等配套报告。</li>
+    <li><b>多模态并不领先同规模模型：</b>对比 Qwen3.5 122B-A10B，BabyVision（29.60 对 35.65）、MathVision、V*、OCRBench-v2 ZH 都更低（表 10）。Lightning 后训练版本没有任何外部对比。</li>
+    <li><b>Base 评测有几个值得核对的数字：</b>表 6 中 Super 与 Lightning 的 GSM8K（91.74）和 PIQA（85.09）完全相同；Lightning 的 GPQA Diamond 是 33.33。原文没有解释。</li>
+    <li><b>效率对比的条件很窄：</b>2.34× / 1.90× 是在 GB200、20 轮 2K/1K 代理负载、≥50 tok/s/user 下测的；原文说明「所选工作点取决于平台和服务配置」。</li>
+    <li><b>去污染有已知盲区（原文 C.6）：</b>召回受限于候选选择；只对题干打分，共享答案集之类的污染查不出；合成增强只是近似。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置 / 页码</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>Super 与六个开源模型的基准对比 + 吞吐</td><td><a href="#eval">评测</a> · p.2 · <code>figures/fig1.jpg</code></td></tr>
+        <tr><td>图 2</td><td>Indic 四阶段合成数据管线</td><td><a href="#data">数据</a> · p.7 · <code>figures/fig2.jpg</code></td></tr>
+        <tr><td>图 3</td><td>Indic 任务与 IndiVibe 语言质量（N3 对 N3.5）</td><td>未收录，见原文 p.8</td></tr>
+        <tr><td>图 4</td><td>Super-V3.5-VL 后训练管线</td><td><a href="#train">训练配方</a> · p.13 · <code>figures/fig4.jpg</code></td></tr>
+        <tr><td>图 5</td><td>视觉 grounded 推理数据生成</td><td>文字转述于 <a href="#data">数据 4.4</a> · p.14</td></tr>
+        <tr><td>图 6</td><td>各起草位置的 MTP 联合接受率</td><td>未收录，见原文 p.22</td></tr>
+        <tr><td>图 7–8</td><td>SWE-bench Pro 精度-算力权衡；6 个 harness 对比</td><td>未收录，见原文 p.27</td></tr>
+        <tr><td>图 9</td><td>测试时扩展（LAV 选择）</td><td>数字见 <a href="#eval">评测</a> · p.29</td></tr>
+        <tr><td>图 10–11</td><td>NVFP4 对 BF16 吞吐；对 Qwen 的吞吐</td><td>数字见 <a href="#eval">评测</a> · p.44–45</td></tr>
+        <tr><td>图 12</td><td>PG19 整书翻译（SEGALE）</td><td>未收录，见原文 p.66</td></tr>
+        <tr><td>表 1 / 2 / 3</td><td>Indic token 量；CPT 前后；Lightning 配比消融</td><td><a href="#data">数据</a> · <a href="#eval">评测</a></td></tr>
+        <tr><td>表 4 / 5</td><td>中期训练配比；中期训练效果</td><td><a href="#data">数据</a> · <a href="#eval">评测</a> · p.10</td></tr>
+        <tr><td>表 6</td><td>Base 模型评测</td><td><a href="#eval">评测（折叠）</a> · p.11</td></tr>
+        <tr><td>表 7</td><td>Agent 视觉训练效果（SpatialClaw）</td><td>均值见 <a href="#data">数据 4.4</a> · p.15</td></tr>
+        <tr><td>表 8 / 9</td><td>MTP 加强；SPEED-Bench 接受长度</td><td><a href="#tldr">TL;DR</a> · p.21–22</td></tr>
+        <tr><td>表 10</td><td>后训练 Super 主评测</td><td><a href="#eval">评测</a> · p.23</td></tr>
+        <tr><td>表 11</td><td>Text Arena Elo</td><td><a href="#eval">评测（折叠）</a> · p.26</td></tr>
+        <tr><td>表 12–21</td><td>量化配方、校准、QAD、KV cache、MTP 与草稿模型量化</td><td><a href="#train">训练配方（折叠）</a> · p.32–42</td></tr>
+        <tr><td>表 22 / 23</td><td>Lightning / Super 的 BF16 对 NVFP4</td><td><a href="#eval">评测</a> · p.42–43</td></tr>
+        <tr><td>表 24 / 25</td><td>ReplaySSM；VR200 分离式部署</td><td><a href="#eval">评测</a> · p.48–49</td></tr>
+        <tr><td>表 26–28</td><td>LiLiCorr 数据、配置、接受长度</td><td><a href="#data">数据 4.5</a> · p.52–54</td></tr>
+        <tr><td>表 29–30</td><td>长文翻译数据分布</td><td><a href="#data">数据 4.4</a> · p.66–67</td></tr>
+        <tr><td>表 40–43</td><td>去污染配置、标签、合成评测</td><td><a href="#data">数据 4.6</a> · p.76–78</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 NVIDIA《Nemotron 3.5 Super and Lightning: Open, Efficient Mixture-of-Experts Hybrid Mamba-Transformer Models for Agentic AI》（<a href="https://arxiv.org/abs/2610.38095" target="_blank" rel="noopener">arXiv:2610.38095</a> v1，2026-10-28）。页内数字均出自原文，标 <span class="src calc">推算</span> 的为本页计算；架构示意为本页绘制，不是论文原图。论文图片版权归原作者所有，仅用于学习与评论。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

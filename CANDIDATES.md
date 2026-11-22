@@ -16,15 +16,15 @@
 | LLM | 2026-06 | MiniMax | MiniMax Sparse Attention (M3) | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) | 已发布 |
 | LLM | 2026-07 | Google DeepMind | Gemma 4 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) | 已发布 |
 | LLM | 2025-12 | NVIDIA | Nemotron 3 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) | 已发布 |
-| LLM | 2026-10 | NVIDIA | Nemotron 3.5 Super & Lightning | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) | 旧稿待重做 |
+| LLM | 2026-10 | NVIDIA | Nemotron 3.5 Super & Lightning | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) | 已发布 |
 | LLM | 2026-01 | Xiaomi | MiMo-V2-Flash | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) | 已发布 |
 | LLM | 2026-01 | Mistral | Ministral 3 | [arXiv:2601.08584](https://arxiv.org/abs/2601.08584) | 已发布 |
 | LLM | 2026-02 | Baidu | ERNIE 5.0 | [arXiv:2602.04705](https://arxiv.org/abs/2602.04705) | 已发布 |
 | LLM | 2026-06 | ByteDance Seed | Seed2.0 Model Card | [arXiv:2607.00248](https://arxiv.org/abs/2607.00248) | 待写 |
 | LLM | 2025-12 | AI2 | Olmo 3 | [arXiv:2512.13961](https://arxiv.org/abs/2512.13961) | 待写 |
 | VLM | 2025-11 | Qwen | Qwen3-VL | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) | 已发布 |
-| VLM | 2026-02 | Moonshot | Kimi K2.5 | [arXiv:2602.02276](https://arxiv.org/abs/2602.02276) | 旧稿待重做 |
-| VLM | 2026-04 | Zhipu | GLM-5V-Turbo | [arXiv:2604.26752](https://arxiv.org/abs/2604.26752) | 旧稿待重做 |
+| VLM | 2026-02 | Moonshot | Kimi K2.5 | [arXiv:2602.02276](https://arxiv.org/abs/2602.02276) | 已发布 |
+| VLM | 2026-04 | Zhipu | GLM-5V-Turbo | [arXiv:2604.26752](https://arxiv.org/abs/2604.26752) | 已发布 |
 | VLM | 2026-01 | StepFun | STEP3-VL-10B | [arXiv:2601.09668](https://arxiv.org/abs/2601.09668) | 旧稿待重做 |
 | VLM | 2026-04 | Qwen | Qwen3.5-Omni | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) | 已发布 |
 | VLM | 2026-06 | Kuaishou | Keye-VL-2.0 | [arXiv:2606.10651](https://arxiv.org/abs/2606.10651) | 待写 |

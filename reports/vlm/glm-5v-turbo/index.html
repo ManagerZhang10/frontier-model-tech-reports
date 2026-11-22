@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLM-5V-Turbo 中文深读 · CogViT + MMTP + 30+ 类任务联合 RL 的多模态 Agent 基座 | 前沿模型技术报告</title>
+<meta name="description" content="Z.ai & 清华 arXiv 2604.26752 中文深读：双教师蒸馏的 CogViT 视觉编码器、用 <|image|> 占位的多模态 MTP、30+ 类任务联合 RL 与多模态 RL 基础设施、ImageMining 基准。附数据构建、评测口径，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: architecture schematic + small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-dash { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.archsvg .ln-warm { stroke: var(--warm); stroke-width: 1.6; fill: none; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-acc { fill: var(--accent); }
+.archsvg .ah-warm { fill: var(--warm); }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow.f5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.ratio .rbar .c { background: var(--good); }
+.bar-legend span.c::before { background: var(--good); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.tags span { font-size: .84rem; padding: 2px 10px; border-radius: 999px; background: var(--bg-accent); border: 1px solid var(--line); }
+.tags span.hot { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); font-weight: 600; }
+.ladder { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 10px 0 4px; }
+.ladder div { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: .88rem; }
+.ladder div b { display: block; font: 700 .74rem/1.2 var(--f-mono); color: var(--accent); margin-bottom: 3px; }
+.grid2.g2 { grid-template-columns: 1fr 1fr; }
+@media (max-width: 960px) { .grid2.g2 { grid-template-columns: 1fr; } .flow.f5 { grid-template-columns: 1fr 1fr; } .ladder { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) { .flow.f5, .ladder { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型</div>
+    <h1>GLM-5V-Turbo<span class="sub">Toward a Native Foundation Model for Multimodal Agents：CogViT + 多模态 MTP + 30+ 类任务联合 RL</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Z.ai</b> &amp; 清华大学</span>
+      <span>发布 <b>2026-04-29</b>（arXiv v1）</span>
+      <span>arXiv <b>2604.26752</b></span>
+      <span>本页依据 <b>v3</b>（2026-05-12）全文核对</span>
+    </div>
+    <p class="lede">在纯文本底座 <b>GLM-5-Turbo</b> 上做的多模态 Agent 模型<span class="src">§1</span>：视觉编码器换成自研 <b>CogViT</b>（SigLIP2 + DINOv3 双教师蒸馏 MIM，再做 SigLIP 式对比预训练）<span class="src">§2.1</span>；MTP 头对图像只喂一个共享的 <code>&lt;|image|&gt;</code> 占位符（<b>MMTP</b>）<span class="src">§2.2 · 图 2</span>；后训练在 <b>30+</b> 类感知 / 推理 / Agent 任务上联合 RL<span class="src">§2.3</span>。Design2Code <b>94.8</b>、AndroidWorld <b>75.7</b>，但 OSWorld、Vision2Web 落后于 Claude Opus 4.6<span class="src">图 4 · 读图</span>。</p>
+    <div class="badges">
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>权重开放：原文未声明（工具为专有，经 chat.z.ai 使用）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>语言底座 GLM-5-Turbo</span>
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>VLM · 多模态 Agent / Coding / GUI</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2604.26752" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2604.26752</a>
+      <a href="https://arxiv.org/pdf/2604.26752" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://github.com/zai-org/ImageMining" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>ImageMining 基准</a>
+      <a href="https://github.com/zai-org/GLM-skills" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>GLM-skills</a>
+      <a href="https://chat.z.ai/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>chat.z.ai</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">胶囊 <span class="src">§2.1</span> = 原文出处；<span class="src">读图</span> = 从论文图中读出；<span class="src calc">推算</span> = 本页计算；<span class="nd">原文未披露</span></div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">语言底座</div><div class="stat-num sm">GLM-5-Turbo</div><div class="stat-sub">原文称其为「language-only base model」</div><span class="src">§1</span></div>
+    <div class="card stat"><div class="stat-k">参数 / 上下文</div><div class="stat-num sm"><span class="nd">原文未披露</span></div><div class="stat-sub">GLM-5 的规模不能直接套用到本模型</div><span class="src">全文</span></div>
+    <div class="card stat"><div class="stat-k">视觉编码器</div><div class="stat-num sm">CogViT</div><div class="stat-sub">两阶段：双教师蒸馏 MIM → 对比式图文预训练</div><span class="src">§2.1</span></div>
+    <div class="card stat"><div class="stat-k">CogViT 图文语料</div><div class="stat-num">8B</div><div class="stat-sub">中英双语；对比阶段 global batch 64K</div><span class="src">§2.1</span></div>
+    <div class="card stat"><div class="stat-k">MIM 阶段配比</div><div class="stat-num sm">80 / 10 / 10</div><div class="stat-sub">自然图 / 指令数据 / 科学图像（%）</div><span class="src">§2.1</span></div>
+    <div class="card stat"><div class="stat-k">联合 RL 任务</div><div class="stat-num">30+</div><div class="stat-sub">类，覆盖感知、推理、Agent</div><span class="src">§1 · §2.3</span></div>
+    <div class="card stat"><div class="stat-k">ImageMining</div><div class="stat-num">217</div><div class="stat-sub">题；7 个领域 × 5 类推理；自研</div><span class="src">§3.3</span></div>
+    <div class="card stat"><div class="stat-k">Design2Code</div><div class="stat-num">94.8</div><div class="stat-sub">Claude Opus 4.6 为 77.3（读图）</div><span class="src">§1 · 图 4</span></div>
+    <div class="card stat"><div class="stat-k">AndroidWorld / OSWorld</div><div class="stat-num sm">75.7 / 62.3</div><div class="stat-sub">OSWorld 上 Opus 4.6 为 72.2（读图）</div><span class="src">§1 · 图 4</span></div>
+    <div class="card stat"><div class="stat-k">发布</div><div class="stat-num sm">2026-04-29</div><div class="stat-sub">arXiv v1；本页核对的 PDF 为 v3（2026-05-12）</div><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>目标是「原生多模态 Agent 基座」，不是给 LLM 外挂视觉</h3><p>感知被当成推理、规划、工具调用和执行的一部分<span class="src">摘要 · §1</span>。实际落地是 GLM-5-Turbo 底座 + CogViT + MLP adapter<span class="src">图 2</span>，并接入 Claude Code、AutoClaw、OpenClaw 等框架<span class="src">§3.2 · §3.5</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>两处结构改动：CogViT 和 <code>&lt;|image|&gt;</code> 版 MTP</h3><p>CogViT 第一阶段让学生 ViT 在 SigLIP2（语义）与 DINOv3（纹理）两个特征空间里重建被遮住的区域，遮挡率 35%<span class="src">§2.1</span>。MMTP 比较了三种做法，选了「保留位置、视觉 token 全换成共享占位符」这一种：0.5B 消融里 loss 更低、收敛更稳，也不用跨流水线阶段传视觉 embedding<span class="src">§2.2</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>30+ 类任务联合 RL，作者说几乎所有能力都在涨</h3><p>相对 SFT：RefCOCO-avg +4.8%、MVBench +5.6%、SUNRGBD +7.7%、CharXiv +7.7%、OSWorld +4.9%、CC-Backend +0.2%<span class="src">§2.3</span>。代价也写了：RL 没覆盖到的能力，后训练后可能下降<span class="src">§2.3</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>多模态编码与搜索领先，GUI 和端到端建站不占优</h3><p>Design2Code 94.8、MMSearch 72.9、BrowseComp-VL 51.9，表内最高；OSWorld 62.3 低于 Kimi K2.5 的 63.3 和 Opus 4.6 的 72.2；Vision2Web 31.0 是三家里最低的<span class="src">图 4 · 读图</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>数据配比只给了 CogViT 一段，评测设置基本没写</h3><p>多模态预训练只列了 10 类数据名，SFT / RL 的数据量和比例都没有；对比模型的分数是自测还是引用、开不开工具、跑几次，原文都没说。见 <a href="#limits">§09</a>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：CogViT + MLP Adapter + GLM-5-Turbo + MMTP</h2>
+  <p class="sec-intro">原文没有单独的整体架构图，图 2 是 MMTP 设计图，其中右半部分顺带画出了整体结构（视觉输入 → CogViT + MLP Adapter，文本 → Embedding → Transformer Block × L → 共享参数的 MTP 模块）。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="MMTP 设计：三种把图像 token 送入 MTP 头的方案，以及整体模型结构" loading="lazy"></div>
+    <figcaption><b>多模态 MTP（MMTP）设计。</b>左上是三种候选：① 直接把视觉 embedding 送进 MTP 头；② 把视觉 token 全部 mask，退化为纯文本 MTP；③ 保留视觉位置，用一个共享可学习的 <code>&lt;|image|&gt;</code> token 代替所有视觉 token（采用）。右侧：视觉输入经 CogViT + MLP Adapter、文本经 Embedding Layer，拼成序列进入 Transformer Block × L，之后接 MTP Module 1–3（共享参数）。左下：方案 ① 与 ③ 的 MTP 训练 loss 曲线，③ 更低。<span class="from">来源：论文图 2（p.3）</span></figcaption>
+  </figure>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 300" role="img" aria-label="GLM-5V-Turbo 结构示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-acc" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-warm" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <!-- inputs -->
+      <rect class="box" x="20" y="236" width="150" height="40" rx="9"/><text class="t" x="34" y="261">图像 / 视频输入</text>
+      <rect class="box" x="200" y="236" width="150" height="40" rx="9"/><text class="t" x="214" y="261">文本输入</text>
+      <rect class="box-acc" x="20" y="150" width="150" height="62" rx="9"/><text class="t" x="34" y="174">CogViT</text><text class="s" x="34" y="192">+ MLP Adapter</text><text class="m" x="34" y="206">NaFlex 原比例输入</text>
+      <rect class="box" x="200" y="150" width="150" height="62" rx="9"/><text class="t" x="214" y="178">Embedding Layer</text>
+      <path class="ln" d="M95 236 V216" marker-end="url(#ah)"/>
+      <path class="ln" d="M275 236 V216" marker-end="url(#ah)"/>
+      <!-- backbone -->
+      <rect class="box-acc" x="20" y="64" width="330" height="62" rx="9"/>
+      <text class="t" x="34" y="90">Transformer Block × L</text>
+      <text class="s" x="34" y="110">语言底座 GLM-5-Turbo · 层数 / 参数原文未披露</text>
+      <path class="ln-acc" d="M95 150 V130" marker-end="url(#aha)"/>
+      <path class="ln" d="M275 150 V130" marker-end="url(#ah)"/>
+      <text class="m" x="110" y="143">v₁₁ v₁₂ t₁ t₂ v₂₁ …</text>
+      <!-- MTP -->
+      <rect class="box-dash" x="430" y="14" width="430" height="272" rx="12"/>
+      <text class="s" x="446" y="36">MMTP（§2.2 · 图 2）：MTP 头的输入序列</text>
+      <rect class="box-warm" x="450" y="52" width="390" height="70" rx="9"/>
+      <text class="t" x="464" y="76">MTP Module 1 → 2 → 3（共享参数）</text>
+      <text class="s" x="464" y="96">轻量头；原文推测其容量不足以吸收与文本分布差异大的视觉表示</text>
+      <text class="w" x="464" y="113">模块数按图 2 读出</text>
+      <path class="ln" d="M350 95 H446" marker-end="url(#ah)"/>
+      <text class="s" x="362" y="88">隐状态</text>
+      <rect class="box" x="450" y="142" width="390" height="34" rx="8"/>
+      <text class="s" x="464" y="164">① 直接传视觉 embedding：需跨 PP 阶段传递，0.5B 上 loss 更高</text>
+      <rect class="box" x="450" y="184" width="390" height="34" rx="8"/>
+      <text class="s" x="464" y="206">② 全部 mask：要额外处理 SP / CP 的切分、对齐与偏移</text>
+      <rect class="box-acc" x="450" y="226" width="390" height="44" rx="8"/>
+      <text class="t" x="464" y="245">③ &lt;|image|&gt; 占位符（采用）</text>
+      <text class="m" x="464" y="262">保留视觉位置 · 一个共享可学习 token</text>
+      <path class="ln-warm" d="M840 248 H852 V87 H844" marker-end="url(#ahw)"/>
+    </svg>
+    <div class="cap">示意，本页据图 2 与 §2.1–§2.2 绘制。主干与 MTP 头之间如何传隐状态（如是否像 DeepSeek-V3 那样拼接前一深度的表示）原文未写，这里只画了一条箭头表示「有连接」；视觉 token 的下采样 / 压缩比、adapter 结构也未披露。</div>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>改动</th><th>做法</th><th>原文给的证据</th></tr></thead>
+      <tbody>
+        <tr><td>CogViT 第一阶段</td><td>蒸馏式 MIM：学生 ViT 在 SigLIP2（语义）与 DINOv3（纹理）的特征空间里重建被遮区域；遮挡率 35%、224×224；Muon + cosine decay；加 QK-Norm 防 logit 爆炸<span class="src">§2.1</span></td><td>图 1 柱状图（本地裁图缺图例与基准名，见 §06）；无「单教师 vs 双教师」消融</td></tr>
+        <tr><td>CogViT 第二阶段</td><td>对比式图文预训练：分辨率换成 NaFlex（变尺寸、保持原始宽高比）；sigmoid SigLIP loss，global batch 扩到 64K，双向分布式实现；8B 中英双语图文语料；Muon，vision / text / projection 三部分各自的学习率与衰减<span class="src">§2.1</span></td><td>同上；具体学习率未给</td></tr>
+        <tr><td>MMTP</td><td>MTP 头的视觉输入换成共享 <code>&lt;|image|&gt;</code>，保留位置信息<span class="src">§2.2</span></td><td>0.5B 模型消融：比方案 ① loss 更低、收敛更稳（图 2 左下曲线）；方案 ② 只有工程论证，无曲线</td></tr>
+        <tr><td>语言底座</td><td>GLM-5-Turbo；正文以它作为纯文本对照<span class="src">§1 · §5</span></td><td>CC-Backend 22.8 vs 20.5（读图，见 §06.3）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：只有 CogViT 给了配比，其余给的是「类别 + 构造约束」</h2>
+  <p class="sec-intro">本文没有数据章节，数据信息散在 §2.1、§2.3、§3.3、§4（Lens 1–3）和 §6。下面按阶段收拢；凡是没有数字的，明确标「原文未披露」。</p></div>
+
+  <h3 class="prose">4.1 CogViT 预训练数据</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>阶段 1：蒸馏式 MIM <span class="tag ok-tag">有配比</span></h4>
+      <div class="ratio">
+        <div class="rlab"><span>quality-aware mixture</span><span><span class="src">§2.1</span></span></div>
+        <div class="rbar"><span class="a" style="width:80%">高质量自然图 80%</span><span class="b" style="width:10%">10%</span><span class="c" style="width:10%">10%</span></div>
+        <div class="bar-legend"><span>高质量自然图 80%</span><span class="s">指令跟随数据 10%</span><span class="c">科学图像 10%</span></div>
+      </div>
+      <p>固定 224×224、遮挡率 35%。总图像数、去重与质量打分方式 <span class="nd">原文未披露</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>阶段 2：对比式图文预训练 <span class="tag">只有规模</span></h4>
+      <dl class="kv">
+        <dt>语料</dt><dd>8B 中英双语图文（「8-billion bilingual image-text corpus」）<span class="src">§2.1</span></dd>
+        <dt>目的</dt><dd>增强跨语言理解</dd>
+        <dt>batch</dt><dd>global 64K<span class="src">§2.1</span></dd>
+        <dt>中英比例</dt><dd><span class="nd">原文未披露</span></dd>
+        <dt>清洗 / 过滤</dt><dd><span class="nd">原文未披露</span></dd>
+      </dl>
+    </div>
+  </div>
+
+  <h3 class="prose">4.2 多模态预训练：10 类数据，重点是多模态编码</h3>
+  <div class="prose">
+    <p>预训练用纯文本 + 多模态混合数据，「从预训练阶段就深度融合视觉和语言」<span class="src">§2.3</span>。多模态部分列了以下类别，<b>没有任何比例或 token 数</b>：</p>
+  </div>
+  <div class="tags wide">
+    <span>世界知识</span><span>交错图文</span><span>OCR</span><span class="hot">编码（重点）</span><span>GUI</span><span>视频</span><span>多模态工具调用</span><span>空间感知</span><span>grounding</span><span>学科解题</span>
+  </div>
+  <div class="prose">
+    <ul>
+      <li><b>多模态编码数据被特别强调</b>，目的是把视觉理解和代码生成对齐，从而提升多模态 Agent 任务<span class="src">§2.3</span>。</li>
+      <li><b>学科图像 ↔ SVG 配对数据</b>加进预训练后，对下游 STEM 解题有正面作用（只有定性描述）<span class="src">§4 Lens 1</span>。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">4.3 SFT / Agent 数据：critic 数据与分层任务</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>GUI 感知 critic 数据 <span class="tag nd-tag">无规模</span></h4>
+      <p>GUI-agent 指令微调里加入一部分 critic 数据，专挑推理过程中的错误：<b>看错界面细节、认错目标元素、下一步动作判断错误</b>。作者称这能提升模型对 GUI 细节的观察、减少几类反复出现的感知失败<span class="src">§4 Lens 1</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>冷启动轨迹 <span class="tag nd-tag">无规模</span></h4>
+      <p>Agent 训练仍依赖人工构造或强过滤的冷启动轨迹，这会收窄后续 RL 的探索空间；<b>加大冷启动阶段的轨迹多样性</b>能部分缓解，让 RL 更容易找到附近的更优变体<span class="src">§6</span>。多样性如何度量 <span class="nd">原文未披露</span>。</p>
+    </div>
+  </div>
+  <div class="mini-h wide">GUI Agent 的多级任务层级（SFT 与 RL 都用）<span class="src">§4 Lens 2</span></div>
+  <div class="ladder wide">
+    <div><b>L1</b>元素感知</div>
+    <div><b>L2</b>GUI grounding</div>
+    <div><b>L3</b>单步动作预测</div>
+    <div><b>L4</b>轨迹级动作预测</div>
+  </div>
+  <p class="footnote wide">理由：低层任务在同样资源下更容易构造、标注和验证；低层能力不够时只推高层任务往往不涨、还让训练更不稳<span class="src">§4 Lens 2</span>。各层数据量与比例 <span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.4 视觉深搜数据（ImageMining 能力的训练数据）</h3>
+  <div class="prose">
+    <p>为了让模型具备 ImageMining 测的能力，作者搭了一条多阶段自动化数据管线<span class="src">§3.3</span>：</p>
+  </div>
+  <div class="flow wide">
+    <div class="card stage"><div class="sid">D1</div><h4>知识发现</h4><p>约束「Visual Jump」（WEB_VISUAL）：中间推理跳转必须经过视觉环节，逼模型真去解析图像，而不是走文本捷径或参数知识<span class="src">§3.3</span></p></div>
+    <div class="card stage"><div class="sid">D2</div><h4>QA 重构</h4><p>把发现链改写成问答；具体规则 <span class="nd">原文未披露</span></p></div>
+    <div class="card stage"><div class="sid">D3</div><h4>质量过滤</h4><p>过滤标准与通过率 <span class="nd">原文未披露</span></p></div>
+    <div class="card stage"><div class="sid">+</div><h4>OCR Search 专项</h4><p>图表、地图、海报：要求先做实体隔离与局部裁剪，再发起搜索链<span class="src">§3.3</span></p></div>
+  </div>
+
+  <h3 class="prose">4.5 RL 数据：30+ 类任务、按来源打标签</h3>
+  <div class="prose">
+    <ul>
+      <li>覆盖感知、推理、Agent 三大块，超过 30 类任务<span class="src">§2.3</span>；具体任务清单与每类样本量 <span class="nd">原文未披露</span>。</li>
+      <li>每个样本带 <b>data-source 标签</b>，reward、pass@k 等指标可按来源跨并行组聚合、分别上报<span class="src">§2.4</span>。</li>
+      <li>奖励由独立的 reward 系统统一调度多个 verifier：规则 verifier 本地同步执行，模型判官经 API 异步调用，再按可配置的聚合策略合成奖励<span class="src">§2.4</span>。判官用的是哪个模型 <span class="nd">原文未披露</span>。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">4.6 已披露规模一览</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>数据</th><th>已披露</th><th>未披露</th></tr></thead>
+      <tbody>
+        <tr><td>CogViT 阶段 1</td><td>80% 自然图 / 10% 指令 / 10% 科学图像；224×224；遮挡 35%<span class="src">§2.1</span></td><td>总量、过滤</td></tr>
+        <tr><td>CogViT 阶段 2</td><td>8B 中英双语图文；batch 64K<span class="src">§2.1</span></td><td>中英比例、过滤</td></tr>
+        <tr><td>多模态预训练</td><td>10 类数据名；强调编码；含图像-SVG 配对<span class="src">§2.3 · §4</span></td><td>token 总量、文本 / 多模态比、各类比例</td></tr>
+        <tr><td>SFT</td><td>含 GUI critic 子集、四级 GUI 任务层级<span class="src">§4</span></td><td>条数、配比、来源</td></tr>
+        <tr><td>RL</td><td>30+ 类任务；规则 + 模型 verifier<span class="src">§2.3 · §2.4</span></td><td>任务清单、样本量、步数</td></tr>
+        <tr><td>ImageMining（评测）</td><td>217 题；7 领域；5 类推理；源自人工收集的 trace<span class="src">§3.3</span></td><td>各领域题数、标注流程</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2>
+  <p class="sec-intro">只有 CogViT 的两阶段给了较具体的设置；LLM 侧的预训练阶段划分、token 数、学习率、RL 算法超参都没写。</p></div>
+
+  <div class="flow f5 wide">
+    <div class="card stage"><div class="sid">V1</div><h4>CogViT 蒸馏 MIM</h4><dl><dt>教师</dt><dd>SigLIP2 + DINOv3</dd><dt>遮挡</dt><dd>35%</dd><dt>分辨率</dt><dd>224²</dd></dl><p>Muon、cosine decay、QK-Norm<span class="src">§2.1</span></p></div>
+    <div class="card stage"><div class="sid">V2</div><h4>CogViT 对比预训练</h4><dl><dt>loss</dt><dd>sigmoid SigLIP</dd><dt>batch</dt><dd>64K</dd><dt>数据</dt><dd>8B 双语</dd></dl><p>NaFlex 变分辨率；分模块学习率<span class="src">§2.1</span></p></div>
+    <div class="card stage"><div class="sid">P</div><h4>多模态预训练</h4><dl><dt>数据</dt><dd>文本 + 10 类多模态</dd><dt>规模</dt><dd>未披露</dd></dl><p>从此阶段起视觉-语言深度融合<span class="src">§2.3</span></p></div>
+    <div class="card stage"><div class="sid">S</div><h4>SFT</h4><dl><dt>特色</dt><dd>GUI critic 数据</dd><dt>结构</dt><dd>四级任务层级</dd></dl><p>冷启动轨迹人工构造 / 强过滤<span class="src">§4 · §6</span></p></div>
+    <div class="card stage"><div class="sid">RL</div><h4>联合多任务 RL</h4><dl><dt>任务</dt><dd>30+ 类</dd><dt>技巧</dt><dd>RVPO（UI-to-code）</dd></dl><p>作者把 on-policy 蒸馏也归入「多任务协同 RL」<span class="src">§2.3</span></p></div>
+  </div>
+  <p class="footnote wide">RVPO 即原文的「relative visual policy optimization」，引自 UI2Code<sup>N</sup>[45]，只说在 UI-to-code 任务上采用，本文没展开<span class="src">§2.3</span>。on-policy 蒸馏只在 §2.3 末尾提了一句，何时做、老师是谁 <span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">5.1 联合 RL：RL 相对 SFT 的增益</h3>
+  <div class="chart-cell wide"><svg class="chart" viewBox="0 0 900 290" role="img" aria-label="RL 相对 SFT 的提升（原文记作 +x%）"><text class="ch-t" x="0" y="16">RL 相对 SFT 的提升（原文记作 +x%）</text><text class="ch-src" x="0" y="32">§2.3 正文 · 横轴从 0 起 · 单位照抄原文</text><line class="axis" x1="120.0" y1="40" x2="120.0" y2="264" stroke-opacity="0.9"/><text class="ch-ax" x="120.0" y="278" text-anchor="middle">0</text><line class="axis" x1="268.8" y1="40" x2="268.8" y2="264" stroke-opacity="0.18"/><text class="ch-ax" x="268.8" y="278" text-anchor="middle">2</text><line class="axis" x1="417.6" y1="40" x2="417.6" y2="264" stroke-opacity="0.18"/><text class="ch-ax" x="417.6" y="278" text-anchor="middle">4</text><line class="axis" x1="566.4" y1="40" x2="566.4" y2="264" stroke-opacity="0.18"/><text class="ch-ax" x="566.4" y="278" text-anchor="middle">6</text><line class="axis" x1="715.2" y1="40" x2="715.2" y2="264" stroke-opacity="0.18"/><text class="ch-ax" x="715.2" y="278" text-anchor="middle">8</text><line class="axis" x1="864.0" y1="40" x2="864.0" y2="264" stroke-opacity="0.18"/><text class="ch-ax" x="864.0" y="278" text-anchor="middle">10</text><text class="ch-lbl" x="114" y="58" text-anchor="end">RefCOCO-avg</text><rect class="bar-q" x="120" y="48" width="357.1" height="13" rx="3"/><text class="ch-val" x="482.1" y="58">4.8</text><text class="ch-lbl" x="114" y="80" text-anchor="end">PointBench</text><rect class="bar-q" x="120" y="70" width="238.1" height="13" rx="3"/><text class="ch-val" x="363.1" y="80">3.2</text><text class="ch-lbl" x="114" y="102" text-anchor="end">MVBench</text><rect class="bar-q" x="120" y="92" width="416.6" height="13" rx="3"/><text class="ch-val" x="541.6" y="102">5.6</text><text class="ch-lbl" x="114" y="124" text-anchor="end">SUNRGBD (3D)</text><rect class="bar-q" x="120" y="114" width="572.9" height="13" rx="3"/><text class="ch-val" x="697.9" y="124">7.7</text><text class="ch-lbl" x="114" y="146" text-anchor="end">OCRBench</text><rect class="bar-q" x="120" y="136" width="312.5" height="13" rx="3"/><text class="ch-val" x="437.5" y="146">4.2</text><text class="ch-lbl" x="114" y="168" text-anchor="end">CharXiv</text><rect class="bar-q" x="120" y="158" width="572.9" height="13" rx="3"/><text class="ch-val" x="697.9" y="168">7.7</text><text class="ch-lbl" x="114" y="190" text-anchor="end">STEM 四项</text><rect class="bar-q" x="120" y="180" width="133.9" height="13" rx="3"/><text class="ch-val" x="258.9" y="190">1.8</text><text class="ch-lbl" x="114" y="212" text-anchor="end">OSWorld</text><rect class="bar-q" x="120" y="202" width="364.6" height="13" rx="3"/><text class="ch-val" x="489.6" y="212">4.9</text><text class="ch-lbl" x="114" y="234" text-anchor="end">CC-Backend</text><rect class="bar-q" x="120" y="224" width="14.9" height="13" rx="3"/><text class="ch-val" x="139.9" y="234">0.2</text><text class="ch-lbl" x="114" y="256" text-anchor="end">MMSearch</text><rect class="bar-q" x="120" y="246" width="260.4" height="13" rx="3"/><text class="ch-val" x="385.4" y="256">3.5</text></svg></div>
+  <p class="tbl-note wide">原文写法是「improvements of 4.8%」这类百分号，没说明是绝对分差还是相对提升，本页照抄。「STEM 四项」= MMMU_Val、MMMU_Pro、MathVista、LogicVista，原文只给一个 +1.8%，未说是平均值<span class="src">§2.3</span>。</p>
+  <div class="prose">
+    <p>作者给出的三条观察（均为定性）<span class="src">§2.3</span>：</p>
+    <ul>
+      <li><b>跨域干扰比 SFT 小</b>：多个域可以一起稳定上涨；分布窄、单任务 RL 易震荡的域，联合训练反而更稳。</li>
+      <li><b>思维模式会迁移</b>：一个域学到的推理行为有时能带到另一个域。</li>
+      <li><b>未覆盖的能力会掉</b>：与训练分布越正交的能力越容易在后训练后下降，所以 RL 的任务覆盖范围本身决定泛化边界；可用语义 / 结构相关的代理任务补，比如单轮 UI-to-code 的 RL 能帮多轮编码。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">5.2 多模态 RL 基础设施（§2.4）</h3>
+  <div class="grid2 g2 wide">
+    <div class="card mod"><h4>统一任务与奖励抽象</h4><p>VLM RL Gym 统一单步 / 多步任务接口；reward 系统独立于训练主路径，规则 verifier 同步、模型判官异步，可配置聚合；样本带 data-source 标签分来源统计<span class="src">§2.4</span>。</p></div>
+    <div class="card mod"><h4>全流水线解耦与重叠</h4><p>rollout、reward、batch 构建、权重传输解耦；每个推理请求注册完成回调，完成即算 reward；参考模型参数常驻 CPU、用前异步预取；支持按完成数或时间阈值的两种 early-abort，被中止的 prompt 缓存复用<span class="src">§2.4</span>。</p></div>
+    <div class="card mod"><h4>多模态显存管理</h4><p>ViT 与 projector 单独设计显存策略：定向重计算 + CPU offload，避免激活显存随图片数线性增长<span class="src">§2.4</span>。</p></div>
+    <div class="card mod"><h4>拓扑感知切分与负载均衡</h4><p>CP / TP 切分前移到数据加载阶段，边界对齐下采样组，省掉跨 rank 的 patch 聚合；DP 组间均衡后用异步 all-to-all 精确分发；大 Python 对象移出 GPU 通信路径，GPU 通信缓冲约省 <b>7 GB</b>；rollout 变长序列按「序列长度 × ViT token 数」联合 bin-packing<span class="src">§2.4</span>。</p></div>
+  </div>
+
+  <details class="more wide">
+    <summary>超参与配置：已披露 vs 未披露<span class="hint">展开</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table class="txt">
+          <thead><tr><th>环节</th><th>已披露</th><th>未披露</th></tr></thead>
+          <tbody>
+            <tr><td>CogViT V1</td><td>遮挡 35%、224×224、Muon、cosine decay、QK-Norm<span class="src">§2.1</span></td><td>学习率、步数、ViT 参数量</td></tr>
+            <tr><td>CogViT V2</td><td>NaFlex、SigLIP sigmoid loss、batch 64K、分模块 LR<span class="src">§2.1</span></td><td>LR 数值、步数</td></tr>
+            <tr><td>MMTP</td><td>3 个 MTP 模块共享参数（读图）；0.5B 消融<span class="src">图 2 · §2.2</span></td><td>MTP loss 权重、推理时是否用作投机解码</td></tr>
+            <tr><td>预训练 / SFT</td><td>数据类别<span class="src">§2.3</span></td><td>阶段划分、token 数、上下文长度、LR</td></tr>
+            <tr><td>RL</td><td>30+ 类任务、RVPO、early-abort 两种模式<span class="src">§2.3 · §2.4</span></td><td>算法（GRPO 与否）、group size、KL、步数、判官模型</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">四类：多模态编码、多模态工具调用、GUI Agent、纯文本编码与 Claw<span class="src">§5</span>。对比对象：Kimi K2.5、Claude Opus 4.6；纯文本部分另加 GLM-5-Turbo。原文没有数据表，主结果全在图 4 / 图 5；正文点到的数字标 <span class="src">§1</span>，其余为 <span class="src">读图</span>。</p></div>
+
+  <h3 class="prose">6.1 多模态编码 / 工具调用 / GUI（图 4）</h3>
+  <div class="wide"><div class="tbl-wrap"><table>
+    <thead><tr><th>基准</th><th class="q">GLM-5V-Turbo</th><th>Kimi K2.5</th><th>Claude Opus 4.6</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="4">多模态编码</td></tr>
+      <tr><td>Design2Code</td><td class="q best">94.8<sup>§1</sup></td><td>91.3</td><td>77.3</td></tr>
+      <tr><td>Flame-VLM-Code</td><td class="q">93.8</td><td>88.8</td><td class="best">98.8</td></tr>
+      <tr><td>Vision2Web</td><td class="q">31.0</td><td>33.2</td><td class="best">43.5</td></tr>
+      <tr class="grp"><td colspan="4">多模态工具调用</td></tr>
+      <tr><td>ImageMining（自研）</td><td class="q best">30.7<sup>§1</sup></td><td>24.4</td><td>–</td></tr>
+      <tr><td>BrowseComp-VL</td><td class="q best">51.9<sup>§1</sup></td><td>42.9</td><td>35.9</td></tr>
+      <tr><td>MMSearch</td><td class="q best">72.9<sup>§1</sup></td><td>58.7</td><td>63.8</td></tr>
+      <tr><td>MMSearch-Plus</td><td class="q best">30.0<sup>§3.1</sup></td><td>25.6</td><td>25.6</td></tr>
+      <tr><td>SimpleVQA</td><td class="q best">78.2<sup>§1</sup></td><td>71.5</td><td>63.2</td></tr>
+      <tr><td>Facts</td><td class="q best">58.6</td><td>57.8</td><td>–</td></tr>
+      <tr><td>V*</td><td class="q best">89.0</td><td>84.3</td><td>66.5</td></tr>
+      <tr class="grp"><td colspan="4">GUI Agent</td></tr>
+      <tr><td>OSWorld</td><td class="q">62.3<sup>§1</sup></td><td>63.3</td><td class="best">72.2</td></tr>
+      <tr><td>AndroidWorld</td><td class="q best">75.7<sup>§1</sup></td><td>43.1</td><td>62.0</td></tr>
+      <tr><td>WebVoyager</td><td class="q best">88.5</td><td>84.3</td><td>88.0</td></tr>
+    </tbody>
+  </table></div></div>
+  <div class="keybox wide"><span class="k-q">GLM-5V-Turbo 列</span><span class="k-best">该行最高（本页按数值标）</span></div>
+  <p class="tbl-note wide">全部数值读自图 4（<code>figures/fig4.jpg</code>）；上标 <sup>§1</sup> / <sup>§3.1</sup> 表示正文同一数字可核对。「–」= 图中未给分。<b>V*</b> 的星号是基准名本身（V-Star），不是脚注。原文未说明对比模型分数来自自测还是官方报告，也未给工具 / 思考模式 / 采样次数等设置。</p>
+
+  <div class="chart-grid wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="Design2Code"><text class="ch-t" x="0" y="16">Design2Code</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="183.9" height="13" rx="3"/><text class="ch-val" x="298.9" y="58">94.8</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="177.1" height="13" rx="3"/><text class="ch-val" x="292.1" y="80">91.3</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="150.0" height="13" rx="3"/><text class="ch-val" x="265.0" y="102">77.3</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="MMSearch"><text class="ch-t" x="0" y="16">MMSearch</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="141.4" height="13" rx="3"/><text class="ch-val" x="256.4" y="58">72.9</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="113.9" height="13" rx="3"/><text class="ch-val" x="228.9" y="80">58.7</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="123.8" height="13" rx="3"/><text class="ch-val" x="238.8" y="102">63.8</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="BrowseComp-VL"><text class="ch-t" x="0" y="16">BrowseComp-VL</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="100.7" height="13" rx="3"/><text class="ch-val" x="215.7" y="58">51.9</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="83.2" height="13" rx="3"/><text class="ch-val" x="198.2" y="80">42.9</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="69.6" height="13" rx="3"/><text class="ch-val" x="184.6" y="102">35.9</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="AndroidWorld"><text class="ch-t" x="0" y="16">AndroidWorld</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="146.9" height="13" rx="3"/><text class="ch-val" x="261.9" y="58">75.7</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="83.6" height="13" rx="3"/><text class="ch-val" x="198.6" y="80">43.1</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="120.3" height="13" rx="3"/><text class="ch-val" x="235.3" y="102">62.0</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="OSWorld"><text class="ch-t" x="0" y="16">OSWorld</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="120.9" height="13" rx="3"/><text class="ch-val" x="235.9" y="58">62.3</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="122.8" height="13" rx="3"/><text class="ch-val" x="237.8" y="80">63.3</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="140.1" height="13" rx="3"/><text class="ch-val" x="255.1" y="102">72.2</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 340 136" role="img" aria-label="Vision2Web"><text class="ch-t" x="0" y="16">Vision2Web</text><text class="ch-src" x="0" y="32">图 4 · 读图 · 横轴从 0 起</text><line class="axis" x1="110.0" y1="40" x2="110.0" y2="110" stroke-opacity="0.9"/><text class="ch-ax" x="110.0" y="124" text-anchor="middle">0</text><line class="axis" x1="158.5" y1="40" x2="158.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="158.5" y="124" text-anchor="middle">25</text><line class="axis" x1="207.0" y1="40" x2="207.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="207.0" y="124" text-anchor="middle">50</text><line class="axis" x1="255.5" y1="40" x2="255.5" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="255.5" y="124" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="110" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="124" text-anchor="middle">100</text><text class="ch-lbl" x="104" y="58" text-anchor="end">GLM-5V-Turbo</text><rect class="bar-q" x="110" y="48" width="60.1" height="13" rx="3"/><text class="ch-val" x="175.1" y="58">31.0</text><text class="ch-lbl" x="104" y="80" text-anchor="end">Kimi K2.5</text><rect class="bar-o" x="110" y="70" width="64.4" height="13" rx="3"/><text class="ch-val" x="179.4" y="80">33.2</text><text class="ch-lbl" x="104" y="102" text-anchor="end">Claude Opus 4.6</text><rect class="bar-o2" x="110" y="92" width="84.4" height="13" rx="3"/><text class="ch-val" x="199.4" y="102">43.5</text></svg></div></div>
+  <div class="chart-legend wide"><span class="l1">GLM-5V-Turbo</span><span class="l3">Kimi K2.5</span><span class="l4">Claude Opus 4.6</span></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="论文图 4：GLM-5V-Turbo 与 Kimi K2.5、Claude Opus 4.6 在多模态编码、工具调用和 GUI Agent 基准上的对比表" loading="lazy"></div>
+    <figcaption><b>多模态编码、工具调用与 GUI Agent 评测。</b>三列分别为 GLM-5V-Turbo、Kimi K2.5、Claude Opus 4.6，粗体为行内最高。裁图下方还带出了一段正文和图 5 的第一行（CC-Backend）。<span class="from">来源：论文图 4（p.11）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">6.2 纯文本编码与 Claw（图 5，本地未裁图）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th class="q">GLM-5V-Turbo</th><th>GLM-5-Turbo</th><th>Kimi K2.5</th><th>Claude Opus 4.6</th></tr></thead>
+      <tbody>
+        <tr><td>CC-Backend</td><td class="q">22.8<sup>§1</sup></td><td>20.5</td><td>25.3</td><td class="best">26.9</td></tr>
+        <tr><td>CC-Frontend</td><td class="q">68.4<sup>§1</sup></td><td colspan="3"><span class="nd">图 5 未裁入本地，不转录</span></td></tr>
+        <tr><td>CC-RepoExploration</td><td class="q">72.2<sup>§1</sup></td><td colspan="3"><span class="nd">同上</span></td></tr>
+        <tr><td>PinchBench</td><td class="q">87.0 / 80.7<sup>§1</sup></td><td colspan="3"><span class="nd">同上</span></td></tr>
+        <tr><td>ClawEval</td><td class="q">57.7 / 75.0<sup>§1</sup></td><td colspan="3"><span class="nd">同上</span></td></tr>
+        <tr><td>ZClawBench</td><td class="q">57.6<sup>§1</sup></td><td colspan="3"><span class="nd">同上</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">CC-Backend 一行的其余三列读自 <code>fig4.jpg</code> 底部带出的图 5 第一行<span class="src">读图</span>。正文称 GLM-5V-Turbo 在 CC-Backend / CC-Frontend / CC-RepoExploration 上「甚至超过」GLM-5-Turbo<span class="src">§1</span>。PinchBench、ClawEval 的两个数字各代表什么（如不同指标或设置），正文没有解释。CC-Bench-V2 来自 GLM-5 报告 [49]，在 Claude Code 框架内评测<span class="src">§5</span>。</p>
+
+  <h3 class="prose">6.3 CogViT 编码器对比（图 1）</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1 局部：CogViT 与其他视觉编码器的准确率柱状图" loading="lazy"></div>
+    <figcaption><b>CogViT 与其他 SOTA 视觉编码器在通用与细粒度多模态任务上的对比（局部）。</b>本地裁图只保留了柱子和数值，缺少图例、对比编码器名称和横轴任务名，顶部第一组的高亮数值也被截掉，因此本页<b>不转录任何具体对比结论</b>；原文正文也只说 CogViT「具有竞争力」。<span class="from">来源：论文图 1（p.2）</span></figcaption>
+  </figure>
+
+  <details class="more wide">
+    <summary>ImageMining 基准细节<span class="hint">展开</span></summary>
+    <div class="body prose">
+      <p>定位：「think with image, deep search with image」，要求主动挖掘图像，靠多步工具调用（如局部裁剪、放大细节以修正搜索 query）完成；表现与「图上工具」使用精度强相关<span class="src">§3.3</span>。</p>
+      <ul>
+        <li>规模：217 道，源自人工收集的 trace 样本<span class="src">§3.3</span>。</li>
+        <li>7 个领域：Social、Entertainment、Products、Places、Rich Text、Nature、Science。</li>
+        <li>5 类推理：Universal Recognition（动植物与器物细粒度识别）、Spatio-Temporal Reasoning（基于视觉线索的地理推断）、Event Reasoning（新闻事件、产品发布）、Text-based Reasoning（论文、报告等富文本）、Visual Search（交叉检索特定艺术品或图像）。</li>
+        <li>结果：GLM-5V-Turbo 30.7、Kimi K2.5 24.4、Claude Opus 4.6 未报<span class="src">§1 · 图 4 读图</span>。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">工具表（表 1）、官方 skills（表 2）、接入 Claude Code / AutoClaw 属于产品与生态工程，多任务 RL 的思路也延续自 GLM-4.1V-Thinking / GLM-4.5V<span class="src">§2.3</span>。下面只列本文给了做法和可核对证据的点。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>MMTP：MTP 头对图像只喂 <code>&lt;|image|&gt;</code> 占位符</h4><p>系统比较了「直传视觉 embedding / 全 mask / 占位符」三种方案，选占位符：不用跨 PP 阶段传视觉 embedding，又与 SP / CP 切分天然兼容<span class="src">§2.2</span>。</p><div class="why">证据：0.5B 模型的 loss 曲线（图 2 左下，只比了 ① 与 ③）；没有大模型或下游指标对照。</div></div>
+    <div class="card nv"><h4>CogViT：SigLIP2 + DINOv3 双教师特征空间 MIM，再接 SigLIP 对比</h4><p>先用两个教师分别提供语义和纹理目标，再用 NaFlex + 64K batch + 8B 双语图文做对比对齐<span class="src">§2.1</span>。</p><div class="why">证据：图 1 的对比柱状图；没有单教师 / 去掉 MIM 的消融。</div></div>
+    <div class="card nv"><h4>面向多模态 RL 的拓扑感知切分</h4><p>把 CP / TP 切分前移到数据加载并对齐下采样组，免去 patch 全量聚合；按序列长度 × ViT token 数联合 bin-packing<span class="src">§2.4</span>。</p><div class="why">证据：只有一个数字——GPU 通信缓冲约省 7 GB；吞吐 / 时延无对比。</div></div>
+    <div class="card nv"><h4>ImageMining + 「Visual Jump」数据约束</h4><p>评测要求在图上裁剪、放大后再搜索；训练数据管线强制中间跳转经过视觉环节，并专门构造图表 / 地图 / 海报的 OCR Search 数据<span class="src">§3.3</span>。</p><div class="why">证据：基准已在 GitHub 公开；数据管线的规模与过滤标准没有给。</div></div>
+    <div class="card nv"><h4>30+ 类任务联合 RL 的逐基准增益</h4><p>给出了 10 组「RL vs SFT」增益，并明确报告了副作用：RL 未覆盖的能力会退化<span class="src">§2.3</span>。</p><div class="why">证据：§2.3 的增益数字；没有给退化的具体数字，也没有单任务 RL 的对照。</div></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这是理解侧 VLM，不生成图像。但它的编码器预训练、反文本捷径的数据约束、感知 critic 数据、分层任务和 Vision2Web 的验证协议，正对应编辑模型的数据构建、caption 质检和评测设计。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>语义目标和纹理目标分开给</h4><p class="paper">论文：CogViT 的 MIM 同时对齐 SigLIP2（语义）和 DINOv3（纹理）两个特征空间<span class="src">§2.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的「非编辑区保持」筛选不要只用一种特征相似度。用 SigLIP 类特征判语义是否变了（如人物身份、物体类别），用 DINO 类特征或局部 patch 特征判纹理是否变了（如皮肤质感、布料纹理），两个分数分别设阈值，入库时都记下来。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>源图池配比写成明确数字</h4><p class="paper">论文：MIM 阶段直接写明 80% 高质量自然图 / 10% 指令数据 / 10% 科学图像<span class="src">§2.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据版本说明里固定写「源图类别 × 占比」（人像 / 商品 / 场景 / 文字海报 / 合成图），每次改动报差值。评测出问题时，先查是不是某类源图被稀释了。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>让样本必须「看图才能做」</h4><p class="paper">论文：深搜数据要求中间推理跳转经过视觉环节（Visual Jump），防止模型靠文本捷径或参数知识答题<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑指令里多放只能从图里确定的指代（「左数第二个杯子」「穿条纹衫的人」），少放「把天空变蓝」这类不看图也能做的指令。用纯文本 LLM 只读指令和 caption 预测编辑区域，预测对的样本降权，确保训练集里有足够多需要定位的指令。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>先定位再操作的专项数据</h4><p class="paper">论文：针对图表、地图、海报构造 OCR Search 数据，要求先做实体隔离和局部裁剪，再发起搜索<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>文字编辑、小物体编辑单独建子集：每条样本带目标区域框，质检时先裁出该区域放大对比 src / tgt，再看全图。小区域编辑在全图缩略图上看不出问题，局部验收要作为固定步骤。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>结构化表示当「密集 caption」</h4><p class="paper">论文：预训练加入学科图像 ↔ SVG 配对数据，对 STEM 有正面作用；前端 / SVG 编码迫使模型抓布局、相对位置和局部细节<span class="src">§4 Lens 1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>海报、UI、图表类编辑，除自然语言指令外再存一份结构化描述（元素列表 + 框 + 文字内容 + 层级）。改字、挪位置这类编辑可以直接对比前后两份结构化描述做自动验收，比 VLM 打分更稳定。</p></div>
+    </div>
+
+    <div class="impl-group">caption 与标注</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>按错误类型造 critic 数据</h4><p class="paper">论文：GUI 指令微调加入 critic 数据，专挑「看错细节、认错目标、下一步判断错」三类错误，减少感知幻觉<span class="src">§4 Lens 1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption 质检模型的训练数据按错误类型造负样本：改错对象（「红杯子」写成「蓝杯子」）、漏 op、多写图里没有的变化、位置说反。质检报告按这几类分别统计，而不是只给一个「合格 / 不合格」。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>caption 也分层构造、分层验收</h4><p class="paper">论文：GUI Agent 拆成元素感知 → grounding → 单步动作 → 轨迹四级，SFT 和 RL 都用；低层更易标注和验证<span class="src">§4 Lens 2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多 op 编辑 caption 按「对象清单 → 每个对象的框 → 单个 op 描述 → 完整指令」逐层生成，每层单独验收；低层（对象、框）错了就不往上走。这样出错时能定位到哪一层，也能复用低层标注。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>冷启动指令要多样</h4><p class="paper">论文：冷启动轨迹人工构造或强过滤会收窄 RL 的探索空间；加大轨迹多样性能让 RL 找到更好的变体<span class="src">§6</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 SFT 指令池不要只用一套 VLM 模板改写。同一编辑保留几种说法（口语 / 精确 / 模糊 / 中英混写），统计句式重复率；RL 前先看 SFT 模型对不同说法的输出是否一致。</p></div>
+    </div>
+
+    <div class="impl-group">奖励与评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>任务规格要完整，功能和视觉分开度量</h4><p class="paper">论文：Vision2Web 的任务规格不只有文字，还有 PRD、mockup、参考页、素材；评测用按依赖顺序执行的分步验证，并把交互中的功能正确性和隔离比较下的视觉一致性分开度量<span class="src">§4 Lens 3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测的每题规格 = 指令 + 编辑区 mask + （可选）参考图。打分拆成「指令完成度」和「非编辑区保持度」两个分数分开报，不先加权合成一个总分；多轮编辑按轮次逐步验证，前一轮不过就记录失败位置。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>规则 verifier 和模型判官分层，样本带来源标签</h4><p class="paper">论文：独立 reward 系统调度规则 verifier（同步）和模型判官（异步），按可配置策略聚合；每个样本带 data-source 标签，按来源分别报 reward 和 pass@k<span class="src">§2.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 先过规则检查（尺寸、mask 外像素差、人脸数是否变化），不过就直接给低分，不调用 VLM 判官；通过的再交给判官。按任务类型（加物 / 删物 / 换背景 / 改字）分别看 reward 曲线，避免某类任务的 reward hacking 被平均值掩盖。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>RL 期间监控没训到的能力</h4><p class="paper">论文：RL 未覆盖、与训练分布越正交的能力，越可能在后训练后下降<span class="src">§2.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 只训了几类任务时，留一个固定的「未覆盖能力」监控集（文字渲染、多人合影、风格化、超分辨率保真），每个 checkpoint 都跑。下降超过阈值就往 RL 任务池补相关的代理任务。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>小规模自建集要报分组结果</h4><p class="paper">论文：ImageMining 只有 217 题，覆盖 7 领域 × 5 类推理，但只报一个总分；该基准由作者自建，GLM-5V-Turbo 在上面领先<span class="src">§3.3 · 图 4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>自建编辑评测集在两三百题量级时，按类别报分数、标出每类题数，并给 bootstrap 置信区间。自家模型参与建集时，说明建集时是否用过自家模型筛题。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>基础信息缺失。</b>总参数、激活参数、上下文长度、视觉 token 预算都没写；权重是否开放、许可证也没说。正文能确认的公开物只有 ImageMining 基准、GLM-skills 和 ZClawBench 数据集链接<span class="src">§3.3 · §3.5 · 参考文献 [2]</span>。</li>
+    <li class="key"><b>数据配比基本未披露。</b>只有 CogViT 阶段 1 给了 80 / 10 / 10；多模态预训练只有类别名，SFT、critic 数据、RL 各任务的规模与比例都没有<span class="src">§2.1 · §2.3</span>。</li>
+    <li class="key"><b>评测设置没写。</b>没有数据表，主结果只在图 4 / 图 5；没说对比模型分数是自测还是引用、是否给了同样的工具链、思考模式、采样次数。ImageMining 和 Facts 上 Opus 4.6 为空<span class="src">图 4</span>。</li>
+    <li><b>正文结论比图里的数字更乐观。</b>§3.1 说在这些类别上「matching or exceeding」Kimi K2.5 和 Claude Opus 4.6，但图 4 中 Vision2Web（31.0 vs 33.2 / 43.5）、OSWorld（62.3 vs 63.3 / 72.2）、Flame-VLM-Code（93.8 vs 98.8）都落后；§5 讲 GUI 时只点名 AndroidWorld 和 WebVoyager<span class="src">§3.1 · §5 · 图 4 读图</span>。</li>
+    <li><b>Lens 3 的范例恰是短板。</b>作者把 Vision2Web（自家基准）作为端到端任务设计的范例，但 GLM-5V-Turbo 在该基准上是三家最低<span class="src">§4 · 图 4 读图</span>。</li>
+    <li><b>关键设计缺消融。</b>MMTP 只有 0.5B 上方案 ① vs ③ 的 loss 曲线，方案 ② 无实验；CogViT 双教师、critic 数据、分层任务、轨迹多样性都只有定性描述<span class="src">§2.1 · §2.2 · §4 · §6</span>。</li>
+    <li><b>RL 增益的单位不清。</b>「+4.8%」等没说明是绝对分还是相对百分比；STEM 四个基准合给一个 +1.8%；作者提到 RL 后有能力下降，但没给是哪些能力、降多少<span class="src">§2.3</span>。</li>
+    <li><b>「近 8 倍」无法核对。</b>MMSearch-Plus 30.0 被说成比 GLM-4.6V「nearly an eightfold improvement」，但全文没有 GLM-4.6V 的分数<span class="src">§3.1</span>。</li>
+    <li><b>双数字指标无解释。</b>PinchBench 87.0 / 80.7、ClawEval 57.7 / 75.0 各自含义正文未说明<span class="src">§1</span>。</li>
+    <li><b>编校问题。</b>§5 把 Design2Code 写成「Desing2Code」；MMSearch、OSWorld 在参考文献里各重复一次（[18]/[19]、[43]/[44]），正文混用；本地图 1 裁图缺图例，无法独立核对 CogViT 的比较结论。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>CogViT 与其他视觉编码器对比柱状图（<code>figures/fig1.jpg</code>，p.2；局部裁图，缺图例）</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>图 2</td><td>MMTP 三种方案、整体结构与 loss 曲线（<code>figures/fig2.jpg</code>，p.3）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 3</td><td>多模态深度研究报告与技术博客生成示例（未裁图）</td><td>—</td></tr>
+        <tr><td>图 4</td><td>多模态编码 / 工具调用 / GUI Agent 评测（<code>figures/fig4.jpg</code>，p.11）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>图 5</td><td>纯文本编码与 Claw 评测（未单独裁图；CC-Backend 行见图 4 裁图底部）</td><td><a href="#eval">§06.2</a></td></tr>
+        <tr><td>图 6–25</td><td>附录 Demo：股票分析、网页复刻、PRD 建站、UI 复刻、论文转网页 / PPT、图片素材收集、文档写作、多语 OCR、文档转写、视觉搜索、视频跟踪、grounding、3D 框、手指计数（未裁图）</td><td>—</td></tr>
+        <tr><td>表 1</td><td>多模态工具分类：通用（识别、多模态搜索、浏览器、图像处理）、创作（网页、幻灯片）、深度研究；共列 28 个工具名<span class="src calc">推算</span>，<code>zai_</code> 前缀为专有</td><td>—</td></tr>
+        <tr><td>表 2</td><td>15 个官方 skills：Native 5、External Tool 5（含 Image Captioning、Prompt Generation）、Specialized 5（基于 GLM-OCR / GLM-Image）</td><td>—</td></tr>
+        <tr><td>本页图</td><td>结构示意 SVG；RL 增益条形图（§2.3）；6 组基准条形图（图 4 读图）</td><td><a href="#arch">§03</a> · <a href="#train">§05</a> · <a href="#eval">§06</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 GLM-5V-Turbo Team（Z.ai &amp; Tsinghua University）《GLM-5V-Turbo: Toward a Native Foundation Model for Multimodal Agents》（<a href="https://arxiv.org/abs/2604.26752" target="_blank" rel="noopener">arXiv:2604.26752</a>）撰写。主发布日期取 arXiv v1：2026-04-29；本页核对所用 PDF 为 v3（2026-05-12）。所有数字均来自原文正文或论文图；标 <span class="src">读图</span> 的从图中读出，标 <span class="src calc">推算</span> 的为本页计数或计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，此处仅作评论引用。
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

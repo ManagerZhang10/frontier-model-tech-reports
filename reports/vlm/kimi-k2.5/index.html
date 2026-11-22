@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kimi K2.5 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Kimi K2.5（Kimi Team, Moonshot AI）中文深读：在 Kimi K2（1.04T / 32B 激活）上做文本-视觉联合预训练，zero-vision SFT 与联合文本-视觉 RL，加上用 PARL 训练的 Agent Swarm 并行编排。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+  .ar .hd { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .ar .t { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .ar .s { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  .ar .s2 { fill: var(--ink-2); font: 500 11px var(--f-body); }
+  .ar .frame { fill: var(--card); stroke: var(--warm); stroke-width: 1.2; }
+  .ar .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arw); }
+  .ar .arrow-a { stroke: var(--accent); stroke-width: 1.8; fill: none; marker-end: url(#arwA); }
+  .ar .dash { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 4; fill: none; }
+  .ar .mk { fill: var(--muted); }
+  .ar .mkA { fill: var(--accent); }
+  .ratio .rbar .b { color: #fff; }
+  :root[data-theme="dark"] .ratio .rbar span { color: #141218; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ratio .rbar span { color: #141218; } }
+  .flow.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 960px) { .flow.three { grid-template-columns: 1fr; } .flow.three .stage::after { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型</div>
+    <h1>Kimi K2.5<span class="sub">Visual Agentic Intelligence · Technical Report of Kimi K2.5</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Kimi Team, Moonshot AI</b></span>
+      <span>arXiv v1 <b>2026-02-02</b></span>
+      <span>arXiv <b>2602.02276</b></span>
+    </div>
+    <p class="lede">在万亿参数 MoE 语言模型 <strong>Kimi K2</strong> 上接一个原生分辨率的 <strong>MoonViT-3D</strong> 视觉编码器，用约 <strong>15T</strong> 图文混合 token 做联合预训练。论文的主要贡献有两块：一是让文本和视觉<strong>互相增强</strong>的三项做法（早融合、低视觉比例；只用纯文本数据做 SFT 的 zero-vision SFT；按能力而非模态组织的联合 RL）；二是 <strong>Agent Swarm</strong>：用 PARL 只训练编排者、子 Agent 冻结，学会把任务拆开并行执行。在 WideSearch 上，达到同一目标分数所需的执行时间比单 Agent 少 3×–4.5×。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源（后训练权重）</span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">LLM 底座 1.04T 总参 / 32B 激活</span>
+      <span class="badge">MoE · 384 专家激活 8 个</span>
+      <span class="badge">视觉语言模型 · 多模态 Agent</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2602.02276" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>arXiv 论文</a>
+      <a href="https://huggingface.co/moonshotai/Kimi-K2.5" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>HuggingFace 权重</a>
+      <a href="https://github.com/MoonshotAI/WorldVQA" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>WorldVQA 基准</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均摘自原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+  </nav>
+
+  <main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">LLM 底座</div><div class="stat-num sm">Kimi K2 · 1.04T / 32B</div><div class="stat-sub">MoE，384 专家每 token 激活 8 个（稀疏度 48）；MuonClip 优化器</div><span class="src">§4.1</span></div>
+    <div class="card stat"><div class="stat-k">视觉编码器</div><div class="stat-num sm">MoonViT-3D</div><div class="stat-sub">由 SigLIP-SO-400M 初始化，NaViT patch packing，图像和视频共用一套权重</div><span class="src">§4.2</span></div>
+    <div class="card stat"><div class="stat-k">预训练 token</div><div class="stat-num sm">1T + 15T + 500B→200B</div><div class="stat-sub">ViT 训练 / 联合预训练 / 长上下文 mid-training</div><span class="src">表 3</span></div>
+    <div class="card stat"><div class="stat-k">视频压缩</div><div class="stat-num">4×</div><div class="stat-sub">最多 4 帧一组，在 projector 前按组做时间池化；同样上下文能装 4× 长的视频</div><span class="src">§1 §4.2</span></div>
+    <div class="card stat"><div class="stat-k">上下文</div><div class="stat-num sm">32K → 256K</div><div class="stat-sub">YaRN 分步扩展到 262,144；评测统一用 256k</div><span class="src">表 3 §5.1.1</span></div>
+    <div class="card stat"><div class="stat-k">后训练</div><div class="stat-num sm">Zero-vision SFT → 联合 RL</div><div class="stat-sub">SFT 只用纯文本数据；RL 按能力分域，文本和视觉数据混在一起训</div><span class="src">§2.2 §2.3</span></div>
+    <div class="card stat"><div class="stat-k">BrowseComp（Agent Swarm）</div><div class="stat-num">78.4</div><div class="stat-sub">单 Agent 60.6；GPT-5.2 Pro 77.9</div><span class="src">表 6</span></div>
+    <div class="card stat"><div class="stat-k">WideSearch 提速</div><div class="stat-num">3×–4.5×</div><div class="stat-sub">达到同一 Item-F1 所需的执行时间，对比单 Agent</div><span class="src">§5.2 图 8</span></div>
+    <div class="card stat"><div class="stat-k">多模态训练效率</div><div class="stat-num">90%</div><div class="stat-sub">相对纯文本训练；靠 Decoupled Encoder Process 实现</div><span class="src">§4.5.1</span></div>
+    <div class="card stat"><div class="stat-k">许可证 / 数据配比</div><div class="stat-num sm"><span class="nd">原文未披露</span></div><div class="stat-sub">权重发布在 HF，但正文没写许可证；实际图文比例和各类数据占比也没给</div><span class="src">全文</span></div>
+  </div>
+  <p class="footnote wide">版本说明：发布日期取 arXiv v1（2026-02-02）。本页核对的 PDF / 文本是 <b>v2（2026-08-07）</b>，所有数字以 v2 为准；v1 与 v2 之间的改动本页没有逐条对比。</p>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看懂</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>视觉数据要早加、少加、一直加</h3><p>固定图文 token 总预算做对照：训练一开始就以 10:90 混入视觉，6 项指标里有 5 项最好，比如视觉推理 43.8 vs 39.0、OCR 65.7 vs 61.5（对照组是训练进行到 80% 才以 50:50 加入）<span class="src">表 1</span>。因此 K2.5 在整个训练过程中保持恒定的图文比例<span class="src">§2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>只用纯文本 SFT 也能激活视觉工具调用</h3><p>Zero-vision SFT：所有图像操作都改写成 IPython 里的程序化操作，SFT 阶段不放任何视觉轨迹<span class="src">§2.2</span>。作者称加入人工设计的视觉轨迹反而损害泛化，但<span class="nd">没有给出对比数字</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>视觉 RL 让文本分数也涨了</h3><p>做完 outcome-based 视觉 RL 后测纯文本基准：MMLU-Pro 84.7 → 86.4，GPQA-Diamond 84.3 → 86.4，LongBench v2 56.7 → 58.9<span class="src">表 2</span>。所以最终的 RL 按能力（知识 / 推理 / 代码 / Agent）分域，不按模态分<span class="src">§2.3</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>Agent Swarm：只训编排者，学会并行</h3><p>BrowseComp 60.6 → 78.4，WideSearch 72.7 → 79.0，内部 Swarm Bench 41.6 → 58.3<span class="src">表 6</span>。奖励里有两个辅助项，分别防“退回串行”和“为了并行而并行”，训练中会退火到 0<span class="src">§3</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>视觉强项在 OCR / 文档 / 视频，基线多为自测</h3><p>OCRBench 92.3，OmniDocBench 1.5 88.8，LVBench 75.9；OSWorld-Verified 63.3，低于 Claude Opus 4.5 的 66.3<span class="src">表 4</span>。很多基线分是 Kimi 自己复测的（带 *）；GPT-5.2 在视觉评测中约 10% 无输出，按答错计<span class="src">附录 E.2</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：MoonViT-3D + MLP projector + Kimi K2 MoE</h2>
+  <p class="sec-intro">三件套沿用 Kimi-VL 的设计原则<span class="src">§4.2</span>。论文没有给模型结构总图（图 3 是 Agent Swarm 的系统图，放在下方），所以先用一张示意图把文字描述画出来。</p></div>
+
+  <div class="card diagram wide ar">
+    <svg viewBox="0 0 760 270" role="img" aria-label="Kimi K2.5 模型结构示意：图像或每组最多 4 帧的视频进入 MoonViT-3D，视频在每组内做时间池化，经 MLP projector 与文本 token 一起进入 Kimi K2 MoE">
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0L10 5L0 10z"/></marker>
+        <marker id="arwA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mkA" d="M0 0L10 5L0 10z"/></marker>
+      </defs>
+      <text class="hd" x="0" y="16">结构示意（按 §1、§4.1、§4.2 的文字描述绘制）</text>
+      <!-- inputs -->
+      <rect class="dg-box" x="0" y="40" width="130" height="58" rx="8"/>
+      <text class="t" x="65" y="64" text-anchor="middle">图像</text>
+      <text class="s" x="65" y="82" text-anchor="middle">原生分辨率，不切子图</text>
+      <rect class="dg-box" x="0" y="118" width="130" height="82" rx="8"/>
+      <text class="t" x="65" y="138" text-anchor="middle">视频</text>
+      <rect class="frame" x="22" y="150" width="20" height="16" rx="2"/><rect class="frame" x="46" y="150" width="20" height="16" rx="2"/><rect class="frame" x="70" y="150" width="20" height="16" rx="2"/><rect class="frame" x="94" y="150" width="20" height="16" rx="2"/>
+      <text class="s" x="65" y="186" text-anchor="middle">连续 ≤4 帧为一组</text>
+      <!-- vit -->
+      <rect class="dg-vit" x="170" y="40" width="190" height="160" rx="10"/>
+      <text class="t" x="265" y="64" text-anchor="middle">MoonViT-3D</text>
+      <text class="s2" x="265" y="86" text-anchor="middle">SigLIP-SO-400M 初始化</text>
+      <text class="s2" x="265" y="106" text-anchor="middle">NaViT patch packing</text>
+      <text class="s2" x="265" y="132" text-anchor="middle">一组帧的 2D patch 合并</text>
+      <text class="s2" x="265" y="150" text-anchor="middle">展平成一条 1D 序列，</text>
+      <text class="s2" x="265" y="168" text-anchor="middle">时空共用同一注意力</text>
+      <text class="s" x="265" y="190" text-anchor="middle">图像 / 视频完全共享参数</text>
+      <!-- pool -->
+      <rect class="dg-merger" x="390" y="118" width="120" height="82" rx="8"/>
+      <text class="t" x="450" y="142" text-anchor="middle">时间池化</text>
+      <text class="s" x="450" y="162" text-anchor="middle">组内 patch 级平均</text>
+      <text class="s" x="450" y="180" text-anchor="middle">4× 时间压缩</text>
+      <!-- projector -->
+      <rect class="dg-box" x="390" y="40" width="120" height="58" rx="8"/>
+      <text class="t" x="450" y="66" text-anchor="middle">MLP projector</text>
+      <text class="s" x="450" y="84" text-anchor="middle">对接 1T LLM</text>
+      <!-- llm -->
+      <rect class="dg-llm-hot" x="550" y="40" width="210" height="160" rx="10"/>
+      <text class="t" x="655" y="66" text-anchor="middle">Kimi K2 MoE</text>
+      <text class="s2" x="655" y="90" text-anchor="middle">1.04T 总参 / 32B 激活</text>
+      <text class="s2" x="655" y="110" text-anchor="middle">384 专家，每 token 选 8</text>
+      <text class="s2" x="655" y="130" text-anchor="middle">MuonClip + QK-Clip</text>
+      <text class="s2" x="655" y="156" text-anchor="middle">thinking / instant 两种模式</text>
+      <text class="s" x="655" y="186" text-anchor="middle">上下文 YaRN 扩到 262,144</text>
+      <!-- text input -->
+      <rect class="dg-box" x="550" y="226" width="210" height="34" rx="8"/>
+      <text class="s2" x="655" y="248" text-anchor="middle">文本 token / 工具返回</text>
+      <!-- arrows -->
+      <path class="arrow" d="M130 69 H168"/>
+      <path class="arrow" d="M130 159 H168"/>
+      <path class="arrow" d="M360 159 H388"/>
+      <path class="arrow" d="M450 118 V100"/>
+      <path class="arrow" d="M360 69 H388"/>
+      <path class="arrow-a" d="M510 69 H548"/>
+      <path class="arrow" d="M655 226 V202"/>
+    </svg>
+    <div class="cap">示意。组件、初始化、4 帧分组、projector 前做时间池化、参数量都来自原文；方框大小和位置不代表计算量。原文说“最多四帧”一组，没写不足 4 帧时如何补齐；视觉编码器和 projector 的参数量<span class="nd">原文未披露</span>。</div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>MoonViT-3D：把 patch-n'-pack 推广到时间维 <span class="tag">§4.2</span></h4><p>最多 4 帧连续画面视为一个时空块，各帧的 2D patch 一起展平、打包进同一条 1D 序列，用同一套注意力同时处理空间和时间。作者认为多出来的时间注意力有助于理解高速运动和视觉特效，权重共享则让图像能力直接迁移到视频。<b>不另设视频专用模块</b>。</p></div>
+    <div class="card mod"><h4>相对 Kimi-VL 的变化 <span class="tag">§4.2 §4.3</span></h4><ul><li>视觉编码器从 2D MoonViT 升级为 3D，图像 / 视频共享嵌入空间</li><li>ViT 续训<b>去掉了对比损失</b>，只保留 caption 交叉熵</li><li>LLM 从 Moonlight 换成 1T 级的 Kimi K2；ViT 先和 Moonlight-16B-A3B 对齐，再只训 projector 接到 K2 上</li></ul></div>
+    <div class="card mod"><h4>相对 Kimi K2：多了什么 <span class="tag">§1 §4.4</span></h4><p>语言骨干结构不变，从 K2 接近训练结束的 checkpoint 继续训<span class="src">§4.3</span>。新增的是视觉输入、thinking / instant 合一，以及推理时的 Agent Swarm 编排接口（<code>create_subagent</code>、<code>assign_task</code>）<span class="src">附录 E.8</span>。</p></div>
+    <div class="card mod"><h4>训练侧改动：Decoupled Encoder Process <span class="tag">§4.5.1</span></h4><p>视觉编码器很小，所以在每张卡上各复制一份，按图像数 / patch 数在全局 batch 内均衡做前向，只保留输出激活；然后跑骨干的前向和反向；最后重算视觉前向并做反向。这样 PP Stage-0 不再被多模态输入撑爆，K2 原有的纯文本并行策略可以直接复用，多模态训练效率达到纯文本的 <b>90%</b>。</p></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="论文图 3：左侧 Orchestrator 持有 create_subagent、assign_task、search、browser 等工具；先创建 AI Researcher、Physics Researcher、Fact Checker、Web Developer 等子 Agent，再分批下发任务（如 100 个任务、25 个任务）并收回结果，最后汇总为 Final Results" loading="lazy"></div>
+    <figcaption><b>Agent Swarm 的系统结构。</b>编排者可训练，先通过 <code>create_subagent</code> 动态生成领域子 Agent（AI / 物理 / 生命科学 / 人类学研究员、事实核查、网页开发等），再用 <code>assign_task</code> 分批并发派任务、收回结果、汇总。子 Agent 冻结，由固定的中间策略 checkpoint 实例化。图中“100 个任务”“25 个任务”只是示例。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：类别讲得清楚，比例几乎都没给</h2>
+  <p class="sec-intro">数据描述分散在 §2.1、§4.3、§4.4 和附录 B / C。能拿到的是：每个阶段用了哪些类型的数据、多少 token，以及视觉数据的 7 个类别。拿不到的是：实际的图文比例、各类别占比、过滤阈值、SFT / RL 的样本数。<b>下面不画任何占比条，只有一组配比实验的比例是原文直接给出的。</b></p></div>
+
+  <h3 class="wide">4.1 唯一给出比例的地方：图文配比对照实验</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>实验设置 <span class="tag">§2.1 表 1</span></h4>
+      <p>图文 token 总预算固定，同时改“视觉从什么时候加入”和“加入后的图文比例”。为了凑准比例，先训一段精确算好的纯文本 token，再引入视觉数据。</p>
+      <div class="bar-legend"><span>视觉</span><span class="s">文本</span></div>
+      <div class="ratio"><div class="rlab"><b>Early · 0% 处加入</b><span>视觉:文本 = 10:90</span></div><div class="rbar"><span class="a" style="width:10%">10</span><span class="b" style="width:90%">90</span></div></div>
+      <div class="ratio"><div class="rlab"><b>Mid · 50% 处加入</b><span>20:80</span></div><div class="rbar"><span class="a" style="width:20%">20</span><span class="b" style="width:80%">80</span></div></div>
+      <div class="ratio"><div class="rlab"><b>Late · 80% 处加入</b><span>50:50</span></div><div class="rbar"><span class="a" style="width:50%">50</span><span class="b" style="width:50%">50</span></div></div>
+      <p class="tbl-note">比例指视觉数据加入之后的混合比例，原文给出。总 token 预算、模型规模、6 个维度各由哪些基准组成，<span class="nd">原文未披露</span>。</p>
+    </div>
+    <div class="card mod"><h4>结果 <span class="tag">表 1 · 附录 B.1</span></h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>维度</th><th>Early</th><th>Mid</th><th>Late</th></tr></thead>
+        <tbody>
+          <tr><td>视觉知识</td><td class="best">25.8</td><td>25.0</td><td>24.2</td></tr>
+          <tr><td>视觉推理</td><td class="best">43.8</td><td>40.7</td><td>39.0</td></tr>
+          <tr><td>OCR</td><td class="best">65.7</td><td>64.1</td><td>61.5</td></tr>
+          <tr><td>文本知识</td><td class="best">45.5</td><td>43.9</td><td>43.1</td></tr>
+          <tr><td>文本推理</td><td>58.5</td><td class="best">58.6</td><td>57.8</td></tr>
+          <tr><td>代码</td><td class="best">24.8</td><td>24.0</td><td>24.0</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">● 为本页标出的每行最高分。正文说 Early “yields better results”，其实文本推理一项 Mid 高 0.1。附录 B.1 的观察：Mid / Late 刚加入视觉时，文本能力会先掉再回升（dip-and-recover），Early 没有这个现象。</p>
+    </div>
+  </div>
+  <p class="tbl-note wide"><b>注意：</b>K2.5 正式训练用的是哪个恒定比例，<span class="nd">原文未披露</span>。另外，正式训练是从 K2 接近训练结束的 checkpoint 接着训的<span class="src">§4.3</span>，并不是“从第 0 步就加入视觉”的设置，和表 1 里的 Early 不完全对应。</p>
+
+  <h3 class="wide">4.2 各阶段数据</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>阶段</th><th>数据类型（表 3 原文）</th><th>序列长度</th><th>Token</th><th>训练对象</th></tr></thead>
+      <tbody>
+        <tr><td><b>ViT 训练</b></td><td>Alt text、合成 caption、Grounding、OCR、视频</td><td>4096</td><td>1T</td><td>ViT</td></tr>
+        <tr><td><b>联合预训练</b></td><td>上一阶段的数据，再加文本、知识、图文交错、视频、OS 截图</td><td>4096</td><td>15T</td><td>ViT + LLM</td></tr>
+        <tr><td><b>长上下文 mid-training</b></td><td>上一阶段的数据，再加高质量文本与多模态、长文本、长视频、推理、Long-CoT</td><td>32768 → 262144</td><td>500B → 200B</td><td>ViT + LLM</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">表 3 用 “+” 表示在上一阶段数据基础上追加。“500B → 200B”和“32768 → 262144”对应分步扩展上下文，原文没有说明每一步的 token 怎么分。</p>
+
+  <h3 class="wide">4.3 视觉预训练语料：7 类 + 3 项专门补充</h3>
+  <div class="cats wide">
+    <div class="card cat"><b>V1</b><span><b>Caption</b>：LAION、DataComp 等，负责基础模态对齐；<b>严格限制合成 caption 的比例</b>，以减少幻觉</span></div>
+    <div class="card cat"><b>V2</b><span><b>图文交错</b>：书籍、网页、教程（MMC4、OBELICS 等），用于多图理解和长上下文</span></div>
+    <div class="card cat"><b>V3</b><span><b>OCR</b>：多语言文本、密集版面、多页文档</span></div>
+    <div class="card cat"><b>V4</b><span><b>知识</b>：学术材料经版面解析器处理，用于视觉推理</span></div>
+    <div class="card cat"><b>V5</b><span><b>感知 / Grounding</b>：bbox 标注、点指代，以及新增的<b>轮廓级分割</b>任务（像素级感知）</span></div>
+    <div class="card cat"><b>V6</b><span><b>视频</b>：来源多样，既有小时级长视频理解，也有细粒度时空感知</span></div>
+    <div class="card cat"><b>V7</b><span><b>Agent</b>：桌面 / 移动 / 网页的 GUI 截图与动作轨迹，含人工标注的示范</span></div>
+    <div class="card cat"><b>+1</b><span><b>STEM 解题语料</b>：定向检索加爬取；没有问答形式的原始材料，用 in-context learning 改写成 K-12 到大学难度的结构化题目</span></div>
+    <div class="card cat"><b>+2</b><span><b>图像-代码对</b>：HTML、React、SVG 等代码与渲染截图配对，让结构逻辑和视觉几何对齐</span></div>
+    <div class="card cat"><b>+3</b><span><b>文本语料</b>：网页、代码、数学、知识四个领域；加大代码权重（仓库级代码，issue / code review / commit 历史，从 PDF 和网页中提取的代码文档）</span></div>
+  </div>
+  <p class="tbl-note wide">来源：附录 B.2、B.3。原文对清洗只说了一句“全部数据经过严格过滤、去重与质量控制”，<span class="nd">没有给方法、阈值或淘汰率</span>。联合预训练阶段在 K2 的数据分布上做了三处调整：引入新的 unique token、提高代码相关内容的权重、限制每个数据源的最大 epoch 数<span class="src">§4.3</span>。</p>
+
+  <h3 class="wide">4.4 Caption 与标注方式</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span>环节</span><span>输入</span><span>做法</span><span>输出 / 约束</span></div>
+    <div class="pipe-row"><div class="lbl">ViT 续训<span class="src">§4.3</span></div><div class="chip">图文对、视频文本对</div><div class="chip m">文本目标混合了 alt text、合成的图像 / 视频 caption、grounding bbox、OCR 文本；<b>只用 caption 交叉熵，不用对比损失</b></div><div class="chip o">第一步与 Moonlight-16B-A3B 对齐，约 1T token、训练 FLOPs 很少；第二步很短，只训 MLP projector</div></div>
+    <div class="pipe-row"><div class="lbl">预训练 caption<span class="src">B.3</span></div><div class="chip">LAION / DataComp 类数据</div><div class="chip m">真实 alt text 为主，合成 caption 作补充</div><div class="chip o">严格限制合成 caption 的量（具体上限<span class="nd">未披露</span>）</div></div>
+    <div class="pipe-row"><div class="lbl">SFT 回复<span class="src">§4.4.1</span></div><div class="chip">各领域的 prompt</div><div class="chip m">由 K2、K2 Thinking 和若干内部专家模型生成候选回复；领域专用管线，结合人工标注、prompt 工程和多阶段校验</div><div class="chip o">规模只写了 “large-scale”</div></div>
+    <div class="pipe-row"><div class="lbl">Zero-vision<span class="src">§2.2</span></div><div class="chip">纯文本 SFT 数据</div><div class="chip m">所有图像操作改写成 IPython 程序（例如二值化后计数来估计物体大小）</div><div class="chip o">泛化到定位、计数、OCR 等需要看图的任务</div></div>
+    <div class="pipe-row"><div class="lbl">RL → RFT<span class="src">§2.3</span></div><div class="chip">必须看图才能做对的任务</div><div class="chip m">从 outcome-based 视觉 RL 中抽取轨迹做拒绝采样微调</div><div class="chip o">形成自我改进的数据管线，给后续联合 RL 提供更丰富的多模态推理轨迹</div></div>
+  </div>
+
+  <h3 class="wide">4.5 后训练数据</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>视觉 RL 任务三域 <span class="tag">§2.3</span></h4><ul><li><b>Grounding 与计数</b>：定位、数清物体</li><li><b>图表与文档理解</b>：结构化视觉信息和文字提取</li><li><b>Vision-critical STEM</b>：<b>筛选出必须依赖图像才能解的</b>数理题</li></ul><p>另外合成了复杂的视觉谜题，用 Kimi K2 当 LLM verifier 判分<span class="src">§4.4.2</span>。</p></div>
+    <div class="card mod"><h4>PARL 的合成 prompt <span class="tag">§3</span></h4><p>专门构造串行执行很难在固定步数和工具预算内完成的任务：<b>wide search</b>（同时探索大量独立信息源）、<b>deep search</b>（多条推理分支，最后再汇总），以及长文档分析、大规模文件下载这类贴近真实使用的任务。<b>prompt 里不明说要并行</b>，靠任务分布本身让并行策略更划算。</p></div>
+  </div>
+
+  <details class="more wide"><summary>数据基础设施（附录 C.1）<span class="hint">存储、增广、确定性</span></summary><div class="body">
+    <dl class="kv">
+      <dt>存储</dt><dd>S3 兼容对象存储，视觉数据保留原始格式，不预先转码</dd>
+      <dt>灵活性</dt><dd>训练过程中动态 shuffle、混合、tokenize、loss mask、sequence packing，数据比例可以随时调整</dd>
+      <dt>增广</dt><dd>视觉和文本都做随机增广；几何变换时<b>同步更新 2D 坐标和朝向元数据</b></dd>
+      <dt>确定性</dt><dd>管理随机种子和 worker 状态，中断恢复后的数据顺序和不中断时完全一致</dd>
+      <dt>平台</dt><dd>统一平台管理数据注册、可视化、统计分析、跨云同步和生命周期</dd>
+    </dl>
+  </div></details>
+
+  <h3 class="wide">已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项目</th><th>数量</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Kimi K2 文本预训练（底座）</td><td>15T 高质量文本 token</td><td>§4.1</td></tr>
+        <tr><td>ViT 训练阶段</td><td>1T token（第一步“约 1T”）</td><td>表 3 §4.3</td></tr>
+        <tr><td>联合预训练</td><td>15T 图文 token，序列长度 4K</td><td>表 3 §4.3</td></tr>
+        <tr><td>长上下文 mid-training</td><td>500B → 200B token</td><td>表 3</td></tr>
+        <tr><td>三个阶段合计</td><td>约 16.7T <span class="src calc">推算</span>，正文却写“约 15T，跨三个阶段”</td><td>§4.3 表 3</td></tr>
+        <tr><td>配比实验的视觉比例</td><td>10% / 20% / 50%</td><td>表 1</td></tr>
+        <tr><td>K2.5 正式训练的图文比例</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>7 类视觉数据各自的量或占比、文本 4 个领域的占比</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>合成 caption 的上限、过滤阈值、去重方法</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>SFT 样本数、RL prompt 数、PARL 合成 prompt 数</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：三段预训练 + SFT + 联合 RL + PARL</h2>
+  <p class="sec-intro">预训练从 K2 的 checkpoint 接着训<span class="src">§4.3</span>。后训练的 RL 算法同时用于文本-视觉联合 RL 和 PARL<span class="src">§4.4.2</span>；两者谁先谁后、是否交替进行，<span class="nd">原文没写</span>。</p></div>
+
+  <div class="flow three wide">
+    <div class="card stage"><div class="sid">P1</div><h4>ViT 训练</h4><dl><dt>训练对象</dt><dd>MoonViT-3D，之后只训 projector</dd><dt>Token</dt><dd>1T</dd><dt>序列</dt><dd>4096</dd><dt>损失</dt><dd>仅 caption 交叉熵</dd><dt>对齐对象</dt><dd>Moonlight-16B-A3B</dd></dl></div>
+    <div class="card stage"><div class="sid">P2</div><h4>联合预训练</h4><dl><dt>训练对象</dt><dd>ViT + LLM</dd><dt>Token</dt><dd>15T</dd><dt>序列</dt><dd>4096</dd><dt>起点</dt><dd>K2 接近训练结束的 checkpoint</dd><dt>图文比例</dt><dd>恒定（数值<span class="nd">未披露</span>）</dd></dl></div>
+    <div class="card stage"><div class="sid">P3</div><h4>长上下文 mid-training</h4><dl><dt>训练对象</dt><dd>ViT + LLM</dd><dt>Token</dt><dd>500B → 200B</dd><dt>序列</dt><dd>32768 → 262144</dd><dt>方法</dt><dd>YaRN 插值，分步扩展</dd><dt>数据</dt><dd>高质量数据 + 长文本 / 长视频 / Long-CoT</dd></dl></div>
+  </div>
+
+  <div class="post-flow wide">
+    <div class="card stage"><div class="sid">S1</div><h4>Zero-vision SFT</h4><ul><li>只用纯文本 SFT 数据</li><li>图像操作全部走 IPython</li><li>回复由 K2 / K2 Thinking / 内部专家模型生成</li><li>作者称“初步实验”中加入图文 SFT 明显更差<span class="src">§2.2</span></li></ul></div>
+    <div class="card stage"><div class="sid">S2</div><h4>联合文本-视觉 RL</h4><ul><li>先做 outcome-based 视觉 RL（三域），再从中抽轨迹做 RFT</li><li>正式 RL 按能力分域（知识 / 推理 / 代码 / Agent…），每个域同时用纯文本和多模态 query</li><li>GRM 不区分模态，跨模态轨迹统一打分<span class="src">§2.3</span></li></ul></div>
+    <div class="card stage"><div class="sid">S3</div><h4>PARL（Agent Swarm）</h4><ul><li>只更新编排者；子 Agent 由固定的中间策略 checkpoint 实例化并冻结，它们的轨迹不进入优化目标</li><li>先用小子 Agent 训，再换成大模型</li><li>按“关键步数”而非总步数设预算</li><li>集群上可以动态调整子 Agent 和编排者的推理实例比例<span class="src">§3</span></li></ul></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>策略优化：只按 log-ratio 截断的 token 级梯度屏蔽 <span class="tag">§4.4.2 式 1</span></h4><p>每题采样 K 条回复，优势取 r − r̄（同题回复的平均奖励）；另加 τ·(log-ratio)² 的平方正则；按 batch 内的总 token 数 N 归一化。log π<sub>θ</sub>/π<sub>old</sub> 落在 [α, β] 之外的 token 梯度直接置零，<b>和优势的正负无关</b>，这是与 PPO clip 的区别。目的是压住训练框架与推理框架不一致带来的 off-policy 偏移。优化器仍用 MuonClip。</p><p class="tbl-note">α、β、τ、K 的取值<span class="nd">原文未给</span>。</p></div>
+    <div class="card mod"><h4>奖励设计 <span class="tag">§4.4.2</span></h4><ul><li>可验证任务：规则化的 outcome 奖励，另加 budget-control 奖励</li><li>Grounding：用 IoU 做软匹配，按 F1 给奖励</li><li>点定位：最优匹配后用高斯加权距离做软匹配，按 F1 给奖励</li><li>多边形分割：把预测多边形栅格化成 mask，与 GT 算 IoU</li><li>OCR：归一化编辑距离</li><li>计数：预测与 GT 的绝对差</li><li>视觉谜题：Kimi K2 当 verifier</li><li>开放任务：GRM，按任务配多套 rubric，防 reward hacking</li></ul></div>
+    <div class="card mod"><h4>PARL 奖励 <span class="tag">§3</span></h4><p>r<sub>PARL</sub> = λ<sub>1</sub>·r<sub>parallel</sub> + λ<sub>2</sub>·r<sub>finish</sub> + r<sub>perf</sub></p><ul><li>r<sub>parallel</sub>：奖励创建子 Agent，防止<b>串行坍缩</b>（编排者退回单 Agent 执行）</li><li>r<sub>finish</sub>：奖励子任务真正完成，防止<b>虚假并行</b>（大量创建子 Agent 却不做有意义的拆分）</li><li>λ<sub>1</sub>、λ<sub>2</sub> 训练中退火到 0；初值<span class="nd">未给</span></li></ul></div>
+    <div class="card mod"><h4>关键步数（Critical Steps）<span class="tag">§3</span></h4><p>按计算图里的关键路径来定义：每个阶段的耗时 = 主 Agent 步数 + 该阶段并行组里最长那个子 Agent 的步数，全部阶段累加。拆得多但最长分支没变短，就拿不到好处。附录 E.8 的步数上限：BrowseComp 编排者 15 步、每个子 Agent 100 步；WideSearch 都是 100 步；内部 Bench 编排者 100 步、每个子 Agent 50 步。</p></div>
+  </div>
+
+  <div class="card mod wide"><h4>Toggle：在“限预算”和“放开推理”之间交替 <span class="tag">§4.4.2 式 2 · 图 5</span></h4>
+    <p>每 m 轮切换一次：Phase0 只在某题平均正确率高于 λ 时才强制 token 预算；Phase1 放开到最大长度。每题的预算取这道题答对回复长度的 ρ 分位数，训练开始时估一次，之后不变。在 <b>K2 Thinking</b> 上验证：输出 token 平均减少 25–30%，性能影响可以忽略；只在数学和代码上训练，GPQA 和 MMLU-Pro 的 token 也会减少<span class="src">§4.4.2</span>。m、λ、ρ <span class="nd">未给</span>。</p>
+  </div>
+
+  <details class="more wide"><summary>推理 token 用量对比（表 5）<span class="hint">括号内为平均输出 token</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>基准</th><th class="q">Kimi K2.5</th><th>Kimi K2 Thinking</th><th>Gemini-3.0 Pro</th><th>DeepSeek-V3.2 Thinking</th></tr></thead>
+      <tbody>
+        <tr><td>AIME 2025</td><td class="q">96.1 (25k)</td><td>94.5 (30k)</td><td>95.0 (15k)</td><td>93.1 (16k)</td></tr>
+        <tr><td>HMMT Feb 2025</td><td class="q">95.4 (27k)</td><td>89.4 (35k)</td><td>97.3 (16k)</td><td>92.5 (19k)</td></tr>
+        <tr><td>HMMT Nov 2025</td><td class="q">91.1 (24k)</td><td>89.2 (32k)</td><td>94.5 (15k)</td><td>90.2 (18k)</td></tr>
+        <tr><td>IMO-AnswerBench</td><td class="q">81.8 (36k)</td><td>78.6 (37k)</td><td>83.1 (18k)</td><td>78.3 (27k)</td></tr>
+        <tr><td>LiveCodeBench</td><td class="q">85.0 (18k)</td><td>82.6 (25k)</td><td>87.4 (13k)</td><td>83.3 (16k)</td></tr>
+        <tr><td>GPQA Diamond</td><td class="q">87.6 (14k)</td><td>84.5 (13k)</td><td>91.9 (8k)</td><td>82.4 (7k)</td></tr>
+        <tr><td>HLE-Text</td><td class="q">31.5 (24k)</td><td>23.9 (29k)</td><td>38.4 (13k)</td><td>25.1 (21k)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">K2.5 比 K2 Thinking 用的 token 少，但仍明显多于 Gemini-3.0 Pro 和 DeepSeek-V3.2。</p>
+  </div></details>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig10.jpg" alt="论文图 10：Rollout Manager 启动 Single Agent Task；任务内含可插拔组件（Toolset、Judge、Prompt & Instruction Enhancement）与 Core Agent Loop，后者与 Env Pool 中的 Black-Box Env（经 LLM Gateway）和 White-Box Env 交互；Core Agent Loop 通过 Token-in / Token-out 调用推理引擎服务，经 Mismatch Correction 连接训练引擎服务；任务可递归调用" loading="lazy"></div>
+    <figcaption><b>Agentic RL 框架。</b>Gym 风格接口；每个 Agent 任务是一个独立的异步协程，可以递归触发子任务 rollout（PARL、Agent-as-Judge 都靠这一点实现）。Rollout Manager 最多同时调度 <b>100,000</b> 个并发任务，支持 partial rollout。推理严格 Token-in / Token-out，记录 log prob 用于训推不一致的修正；只能走标准 API 的黑盒环境通过 LLM Gateway 代理并记录。<span class="from">来源：论文图 10 · 附录 D</span></figcaption>
+  </figure>
+
+  <details class="more wide"><summary>训练集群与并行配置（附录 C）<span class="hint">H800 · PP16 · EP16</span></summary><div class="body">
+    <dl class="kv">
+      <dt>硬件</dt><dd>NVIDIA H800 集群，节点间 8×400 Gbps RoCE</dd>
+      <dt>并行</dt><dd>16 路 PP（带 virtual stage）+ 16 路 EP + ZeRO-1 DP；节点数是 32 的倍数即可</dd>
+      <dt>通信</dt><dd>EP all-to-all 在 interleaved 1F1B 调度下与计算重叠</dd>
+      <dt>显存</dt><dd>对 LayerNorm、SwiGLU、MLA up-projection 做选择性重算；不敏感的激活压缩到 FP8-E4M3；其余激活卸载到 CPU，与计算重叠</dd>
+      <dt>未披露</dt><dd><span class="nd">GPU 数量、训练时长、学习率、batch size、RL 步数</span></dd>
+    </dl>
+  </div></details>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：视觉 / 视频 / Agent 都强，基线大量自测</h2>
+  <p class="sec-intro">对比对象：Claude Opus 4.5（extended thinking）、GPT-5.2（xhigh）、Gemini 3 Pro（high thinking）；开源模型方面，文本基准对比 DeepSeek-V3.2（thinking），视觉基准对比 Qwen3-VL-235B-A22B-Thinking<span class="src">§5.1.1 附录 E.2</span>。K2.5 统一用 temperature 1.0、top-p 0.95、256k 上下文。</p></div>
+
+  <div class="keybox wide"><span><b>*</b> = 基线没有公开分数，由 Kimi 在相同条件下复测</span><span><b>†</b> = DeepSeek-V3.2 只报 HLE 的纯文本子集</span><span>原表的加粗（全局 SOTA）在纯文本中丢失，本页没有重新标注</span></div>
+
+  <div class="chart-grid wide">
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 178" role="img" aria-label="BrowseComp（准确率 %）（0–100）">
+<text class="ch-t" x="0" y="15">BrowseComp（准确率 %）</text><text class="ch-src" x="0" y="30">表 6 · 全部 5 列</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="162"/><text class="ch-ax" x="132.0" y="174" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="162"/><text class="ch-ax" x="179.5" y="174" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="162"/><text class="ch-ax" x="227.0" y="174" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="162"/><text class="ch-ax" x="274.5" y="174" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="162"/><text class="ch-ax" x="322.0" y="174" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">K2.5 Agent Swarm</text><rect class="bar-q" x="132" y="44" width="149.0" height="15" rx="3"/><text class="ch-val" x="286.0" y="56">78.4</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">GPT-5.2 Pro</text><rect class="bar-o2" x="132" y="68" width="148.0" height="15" rx="3"/><text class="ch-val" x="285.0" y="80">77.9</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">GPT-5.2</text><rect class="bar-o2" x="132" y="92" width="125.0" height="15" rx="3"/><text class="ch-val" x="262.0" y="104">65.8</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">Kimi K2.5 单 Agent</text><rect class="bar-qi" x="132" y="116" width="115.1" height="15" rx="3"/><text class="ch-val" x="252.1" y="128">60.6</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="140" width="70.3" height="15" rx="3"/><text class="ch-val" x="207.3" y="152">37.0</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="162"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 130" role="img" aria-label="WideSearch（Item-F1 %）（0–100）">
+<text class="ch-t" x="0" y="15">WideSearch（Item-F1 %）</text><text class="ch-src" x="0" y="30">表 6 · GPT-5.2 未测</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="114"/><text class="ch-ax" x="132.0" y="126" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="114"/><text class="ch-ax" x="179.5" y="126" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="114"/><text class="ch-ax" x="227.0" y="126" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="114"/><text class="ch-ax" x="274.5" y="126" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="114"/><text class="ch-ax" x="322.0" y="126" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">K2.5 Agent Swarm</text><rect class="bar-q" x="132" y="44" width="150.1" height="15" rx="3"/><text class="ch-val" x="287.1" y="56">79.0</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="68" width="144.8" height="15" rx="3"/><text class="ch-val" x="281.8" y="80">76.2*</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Kimi K2.5 单 Agent</text><rect class="bar-qi" x="132" y="92" width="138.1" height="15" rx="3"/><text class="ch-val" x="275.1" y="104">72.7</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="114"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 130" role="img" aria-label="In-house Swarm Bench（0–100）">
+<text class="ch-t" x="0" y="15">In-house Swarm Bench</text><text class="ch-src" x="0" y="30">表 6 · 内部集，不可复现</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="114"/><text class="ch-ax" x="132.0" y="126" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="114"/><text class="ch-ax" x="179.5" y="126" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="114"/><text class="ch-ax" x="227.0" y="126" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="114"/><text class="ch-ax" x="274.5" y="126" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="114"/><text class="ch-ax" x="322.0" y="126" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">K2.5 Agent Swarm</text><rect class="bar-q" x="132" y="44" width="110.8" height="15" rx="3"/><text class="ch-val" x="247.8" y="56">58.3</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="68" width="87.0" height="15" rx="3"/><text class="ch-val" x="224.0" y="80">45.8</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Kimi K2.5 单 Agent</text><rect class="bar-qi" x="132" y="92" width="79.0" height="15" rx="3"/><text class="ch-val" x="216.0" y="104">41.6</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="114"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 178" role="img" aria-label="OCRBench（0–100）">
+<text class="ch-t" x="0" y="15">OCRBench</text><text class="ch-src" x="0" y="30">表 4 · * 为 Kimi 内部复测</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="162"/><text class="ch-ax" x="132.0" y="174" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="162"/><text class="ch-ax" x="179.5" y="174" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="162"/><text class="ch-ax" x="227.0" y="174" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="162"/><text class="ch-ax" x="274.5" y="174" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="162"/><text class="ch-ax" x="322.0" y="174" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Kimi K2.5</text><rect class="bar-q" x="132" y="44" width="175.4" height="15" rx="3"/><text class="ch-val" x="312.4" y="56">92.3</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o2" x="132" y="68" width="171.6" height="15" rx="3"/><text class="ch-val" x="308.6" y="80">90.3*</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Qwen3-VL-235B</text><rect class="bar-o" x="132" y="92" width="166.2" height="15" rx="3"/><text class="ch-val" x="303.2" y="104">87.5</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="116" width="164.3" height="15" rx="3"/><text class="ch-val" x="301.4" y="128">86.5*</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o2" x="132" y="140" width="153.3" height="15" rx="3"/><text class="ch-val" x="290.3" y="152">80.7*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="162"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 178" role="img" aria-label="OmniDocBench 1.5（0–100）">
+<text class="ch-t" x="0" y="15">OmniDocBench 1.5</text><text class="ch-src" x="0" y="30">表 4 · (1−NED)×100</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="162"/><text class="ch-ax" x="132.0" y="174" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="162"/><text class="ch-ax" x="179.5" y="174" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="162"/><text class="ch-ax" x="227.0" y="174" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="162"/><text class="ch-ax" x="274.5" y="174" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="162"/><text class="ch-ax" x="322.0" y="174" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Kimi K2.5</text><rect class="bar-q" x="132" y="44" width="168.7" height="15" rx="3"/><text class="ch-val" x="305.7" y="56">88.8</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o2" x="132" y="68" width="168.2" height="15" rx="3"/><text class="ch-val" x="305.1" y="80">88.5</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="92" width="166.6" height="15" rx="3"/><text class="ch-val" x="303.6" y="104">87.7*</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o2" x="132" y="116" width="162.8" height="15" rx="3"/><text class="ch-val" x="299.8" y="128">85.7</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Qwen3-VL-235B</text><rect class="bar-o" x="132" y="140" width="155.8" height="15" rx="3"/><text class="ch-val" x="292.8" y="152">82.0*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="162"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 178" role="img" aria-label="OSWorld-Verified（成功率 %）（0–100）">
+<text class="ch-t" x="0" y="15">OSWorld-Verified（成功率 %）</text><text class="ch-src" x="0" y="30">表 4 · 设置差异见下文</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="162"/><text class="ch-ax" x="132.0" y="174" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="162"/><text class="ch-ax" x="179.5" y="174" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="162"/><text class="ch-ax" x="227.0" y="174" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="162"/><text class="ch-ax" x="274.5" y="174" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="162"/><text class="ch-ax" x="322.0" y="174" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Claude Opus 4.5</text><rect class="bar-o2" x="132" y="44" width="126.0" height="15" rx="3"/><text class="ch-val" x="263.0" y="56">66.3</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Kimi K2.5</text><rect class="bar-q" x="132" y="68" width="120.3" height="15" rx="3"/><text class="ch-val" x="257.3" y="80">63.3</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Qwen3-VL-235B</text><rect class="bar-o" x="132" y="92" width="72.4" height="15" rx="3"/><text class="ch-val" x="209.4" y="104">38.1</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">Gemini 3 Pro</text><rect class="bar-o2" x="132" y="116" width="39.3" height="15" rx="3"/><text class="ch-val" x="176.3" y="128">20.7*</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">GPT-5.2 (xhigh)</text><rect class="bar-o2" x="132" y="140" width="16.3" height="15" rx="3"/><text class="ch-val" x="153.3" y="152">8.6*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="162"/></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">K2.5（Agent Swarm / 主结果）</span><span class="l2">K2.5 单 Agent</span><span class="l4">闭源模型</span><span class="l3">开源模型</span></div>
+  <p class="tbl-note wide">横轴都从 0 开始，满分 100。数值旁的 * 沿用原表的复测记号。WideSearch 里 Claude 的 76.2 在表 4 中带 *，表 6 没标。</p>
+
+  <h3 class="wide">精选：视觉 / 视频 / 电脑操作</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th class="q">Kimi K2.5</th><th>Claude Opus 4.5</th><th>GPT-5.2 (xhigh)</th><th>Gemini 3 Pro</th><th>Qwen3-VL-235B-A22B</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="6">图像 · 推理与知识</td></tr>
+        <tr><td>MMMU-Pro</td><td class="q">78.5</td><td>74.0</td><td>79.5*</td><td>81.0</td><td>69.3</td></tr>
+        <tr><td>MathVision</td><td class="q">84.2</td><td>77.1*</td><td>83.0</td><td>86.1*</td><td>74.6</td></tr>
+        <tr><td>CharXiv (RQ)</td><td class="q">77.5</td><td>67.2*</td><td>82.1</td><td>81.4</td><td>66.1</td></tr>
+        <tr><td>WorldVQA</td><td class="q">46.3</td><td>36.8</td><td>28.0</td><td>47.4</td><td>23.5</td></tr>
+        <tr><td>BabyVision</td><td class="q">36.5</td><td>14.2</td><td>34.4</td><td>49.7</td><td>22.2</td></tr>
+        <tr class="grp"><td colspan="6">图像 · 感知与 OCR / 文档</td></tr>
+        <tr><td>BLINK</td><td class="q">78.9</td><td>68.8*</td><td>—</td><td>78.7*</td><td>68.9</td></tr>
+        <tr><td>MMVP</td><td class="q">87.0</td><td>80.0*</td><td>83.0*</td><td>90.0*</td><td>84.3</td></tr>
+        <tr><td>OCRBench</td><td class="q">92.3</td><td>86.5*</td><td>80.7*</td><td>90.3*</td><td>87.5</td></tr>
+        <tr><td>OmniDocBench 1.5</td><td class="q">88.8</td><td>87.7*</td><td>85.7</td><td>88.5</td><td>82.0*</td></tr>
+        <tr><td>InfoVQA (test)</td><td class="q">92.6</td><td>76.9*</td><td>84*</td><td>57.2*</td><td>89.5</td></tr>
+        <tr class="grp"><td colspan="6">视频</td></tr>
+        <tr><td>VideoMMMU</td><td class="q">86.6</td><td>84.4*</td><td>85.9</td><td>87.6</td><td>80.0</td></tr>
+        <tr><td>MotionBench</td><td class="q">70.4</td><td>60.3*</td><td>64.8*</td><td>70.3</td><td>—</td></tr>
+        <tr><td>Video-MME</td><td class="q">87.4</td><td>77.6*</td><td>86.0*</td><td>88.4*</td><td>79.0</td></tr>
+        <tr><td>LongVideoBench</td><td class="q">79.8</td><td>67.2*</td><td>76.5*</td><td>77.7*</td><td>65.6*</td></tr>
+        <tr><td>LVBench</td><td class="q">75.9</td><td>57.3</td><td>—</td><td>73.5*</td><td>63.6</td></tr>
+        <tr class="grp"><td colspan="6">电脑操作</td></tr>
+        <tr><td>OSWorld-Verified</td><td class="q">63.3</td><td>66.3</td><td>8.6*</td><td>20.7*</td><td>38.1</td></tr>
+        <tr><td>WebArena</td><td class="q">58.9</td><td>63.4*</td><td>—</td><td>—</td><td>26.4*</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 4。“—”表示原表未报。原文对 OSWorld 的补充说明：K2.5 只靠 GUI 动作、不调外部工具；Operator（o3）为 42.9，WebArena 上 Operator 为 58.1<span class="src">§5.1.2</span>。</p>
+
+  <h3 class="wide">精选：Agent / 推理 / 代码</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th class="q">Kimi K2.5</th><th>Claude Opus 4.5</th><th>GPT-5.2 (xhigh)</th><th>Gemini 3 Pro</th><th>DeepSeek-V3.2</th></tr></thead>
+      <tbody>
+        <tr><td>HLE-Full / w/ tools</td><td class="q">30.1 / 50.2</td><td>30.8 / 43.2</td><td>34.5 / 45.5</td><td>37.5 / 45.8</td><td>25.1† / 40.8†</td></tr>
+        <tr><td>AIME 2025</td><td class="q">96.1</td><td>92.8</td><td>100</td><td>95.0</td><td>93.1</td></tr>
+        <tr><td>GPQA-Diamond</td><td class="q">87.6</td><td>87.0</td><td>92.4</td><td>91.9</td><td>82.4</td></tr>
+        <tr><td>BrowseComp / w/ ctx manage</td><td class="q">60.6 / 74.9</td><td>37.0 / 57.8</td><td>65.8（跨两行）</td><td>37.8 / 59.2</td><td>51.4 / 67.6</td></tr>
+        <tr><td>WideSearch（item-F1）</td><td class="q">72.7</td><td>76.2*</td><td>—</td><td>57.0</td><td>32.5*</td></tr>
+        <tr><td>DeepSearchQA</td><td class="q">77.1</td><td>76.1*</td><td>71.3*</td><td>63.2*</td><td>60.9*</td></tr>
+        <tr><td>SWE-Bench Verified</td><td class="q">76.8</td><td>80.9</td><td>80.0</td><td>76.2</td><td>73.1</td></tr>
+        <tr><td>Terminal Bench 2.0</td><td class="q">50.8</td><td>59.3</td><td>54.0</td><td>54.2</td><td>46.4</td></tr>
+        <tr><td>LiveCodeBench (v6)</td><td class="q">85.0</td><td>82.2*</td><td>—</td><td>87.4*</td><td>83.3</td></tr>
+        <tr><td>GDPVal-AA</td><td class="q">41.0</td><td>45.0</td><td>48.0</td><td>35.0</td><td>34.0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 4。HLE 分子集：无工具时文本 31.5、图像 21.3；带工具时文本 51.8、图像 39.8<span class="src">§5.1.2</span>。GDPVal-AA 引用 Artificial Analysis 截至 2026-01-28 的榜单<span class="src">附录 E.9</span>。</p>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1 裁图：五组柱状图，每组蓝色 Kimi 柱后跟 OpenAI、Claude、Gemini 三根灰柱；数值依次为 50.2/45.5/43.2/45.8，74.9/65.8/57.8/59.2，77.1/71.3/76.1/63.2，76.8/80.0/80.9/76.2，73.0/72.0/77.5/65.0" loading="lazy"></div>
+    <figcaption><b>主结果概览（裁图）。</b>这张裁图只保留了 5 组柱子，没有基准名。按数值对照表 4，依次是 HLE-Full w/ tools、BrowseComp（w/ ctx manage）、DeepSearchQA、SWE-Bench Verified、SWE-Bench Multilingual（本页对照，非原图标注）；每组顺序为 K2.5、GPT-5.2、Claude Opus 4.5、Gemini 3 Pro。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <details class="more wide"><summary>评测协议细节（附录 E）<span class="hint">采样次数、帧数、上下文管理</span></summary><div class="body">
+    <dl class="kv">
+      <dt>推理题</dt><dd>最大生成 96k token；AIME / HMMT Avg@64，GPQA Avg@8</dd>
+      <dt>LongBench v2</dt><dd>输入统一截到约 128k；GPT-5.2 改用 <b>high</b> 档，因为 xhigh 常不按选择题格式作答</dd>
+      <dt>图像 / 视频</dt><dd>最大 64k token，Avg@3；ZeroBench（带工具）每步最多 24k、最多 30 步</dd>
+      <dt>视频采样</dt><dd>短视频（VideoMMMU / MMVU / MotionBench）均匀抽 128 帧，最大边 896；长视频（Video-MME / LongVideoBench / LVBench）均匀抽 2048 帧，分辨率 448</dd>
+      <dt>OmniDocBench</dt><dd>(1 − 归一化 Levenshtein 距离) × 100</dd>
+      <dt>代码</dt><dd>Avg@5；SWE-Bench 用内部框架，工具只有 bash / create_file / insert / view / str_replace / submit，非 thinking 模式；Terminal Bench 也用非 thinking 模式</dd>
+      <dt>Agent 搜索</dt><dd>工具为搜索、代码解释器、浏览器；默认不做上下文管理，超出上下文直接算失败；HLE 带工具时用 Hide-Tool-Result，BrowseComp 另报 discard-all 结果；Seal-0 / WideSearch Avg@4，其余单次</dd>
+      <dt>电脑操作</dt><dd>每回合最多 100 步；OSWorld 温度 0，WebArena 温度 0.1；单次运行；上下文里放最近 3 张截图、完整思考历史和任务指令（沿用 OpenCUA 配置）；WebArena 手工修了评测脚本，fuzzy_match 用 GPT-4o 判；Claude Opus 4.5 只给 computer-use 工具，不给浏览器工具，和其 System Card 的配置不同</dd>
+      <dt>GPT-5.2 失败</dt><dd>视觉评测约 10% 无输出（重试 3 次），按答错计；API 不稳定，WideSearch 等高成本基准跳过</dd>
+    </dl>
+  </div></details>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Agent Swarm 的延迟曲线 <span class="tag">§5.2 图 8</span></h4><p>WideSearch 上，目标 Item-F1 从 30% 提高到 70% 时，单 Agent 所需执行时间从基线的约 1.8× 涨到 7.0× 以上；Agent Swarm 基本稳定在 0.6×–1.6×。图中标出的节省倍数依次为 ×3.0、×3.0、×3.2、×3.7、×4.5。摘要里“最多 4.5×”取的就是最右端那个点。</p></div>
+    <div class="card mod"><h4>Swarm 也是一种上下文管理 <span class="tag">§5.2 图 7</span></h4><p>子 Agent 各自维护有界的局部上下文，只把和任务相关的结果交回编排者，作者称之为 context sharding（按任务分片上下文），而不是事后截断。图 7 显示在 BrowseComp 上它比 Discard-all 准确率更高、关键步数更少（图未裁入本页，具体数值见原文）。</p></div>
+  </div>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>固定 token 预算下，比较视觉“何时加、加多少”</h4><p>反驳“后期大比例灌视觉 token”的常见做法：早加、低比例在 6 项中的 5 项上更好，并观察到晚加时文本能力会先掉再回升<span class="src">表 1 附录 B.1</span>。</p><p class="why">可核对，但只有一组三点对照；模型规模和预算没公开。</p></div>
+    <div class="card nv"><h4>Zero-vision SFT</h4><p>冷启动阶段完全不用视觉 SFT 数据，靠纯文本 SFT 加 IPython 图像操作来激活视觉工具调用，再交给视觉 RL 扩展能力（图 2 的四条 RL 曲线都从这里起步）<span class="src">§2.2 图 2</span>。</p><p class="why">和图文 SFT 的对比只停留在一句“初步实验”，没有数字。</p></div>
+    <div class="card nv"><h4>视觉 RL 带动文本，RL 按能力而不是按模态分域</h4><p>表 2 的三项文本基准在视觉 RL 后上涨 1.7–2.2 分；最终 RL 中每个能力域都混用纯文本和多模态 query，GRM 也不区分模态<span class="src">表 2 §2.3</span>。</p><p class="why">涨幅是同一模型训练前后的对比，没有“继续做文本 RL 同样步数”的对照。</p></div>
+    <div class="card nv"><h4>PARL：只训编排者，子 Agent 冻结</h4><p>以此避开端到端联合优化里的信用分配和训练稳定性问题；奖励加入 r<sub>parallel</sub> 和 r<sub>finish</sub> 并退火；用“关键步数”约束预算；构造串行做不完的 prompt<span class="src">§3</span>。</p><p class="why">三个设计各自有动机描述，但都没有单独去掉某一项的消融。</p></div>
+    <div class="card nv"><h4>MoonViT-3D + Decoupled Encoder Process</h4><p>图像和视频共用同一编码器，把最多 4 帧打包成时空块再做 4× 时间池化<span class="src">§4.2</span>；训练侧把视觉编码器从流水线里拆出来做全局负载均衡，多模态训练效率达到纯文本的 90%<span class="src">§4.5.1</span>。</p><p class="why">作者自己也提到，LongCat-Flash-Omni 的设计思路与 DEP 相近。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">K2.5 不是编辑模型，但它的 caption 目标设计、视觉奖励拆分、“必须看图”的过滤、图像-代码对和评测协议都能借过来。每条先写论文的做法（带出处），下面的高亮框都是<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">Caption 与标注</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>一个模型，多种文本目标</h4>
+        <p class="paper">论文：ViT 续训时，文本目标同时包括 alt text、合成 caption、grounding bbox、OCR 文本，只用 caption 交叉熵，去掉了对比损失<span class="src">§4.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>训练编辑用的 diff-captioner 或指令反推模型时，在同一格式里同时输出“改了什么（自然语言）+ 改动区域 bbox + 改动前后的文字（OCR）”，后两项可以直接当作程序可校验的弱监督。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>给合成 caption 设上限</h4>
+        <p class="paper">论文：预训练 caption 数据严格限制合成 caption 的比例，以减少幻觉<span class="src">附录 B.3</span>；上限多少没公开。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令如果全部由 VLM 从图对反推，容易出现“说改了但其实没改”的幻觉。保留一部分人写或规则生成的指令作为锚点，按来源（人写 / 规则 / VLM）分桶记账，评测时也按来源分开报分。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>图像-代码对：改代码，而不是改像素</h4>
+        <p class="paper">论文：预训练加入大量 HTML / React / SVG 代码与渲染截图的配对，用来对齐结构逻辑和视觉几何<span class="src">附录 B.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>海报、UI、图表、文字排版这类编辑，可以先改代码再渲染出前后两张图；没改的区域逐像素一致，code diff 本身就是精确的编辑 caption。</p></div>
+    </div>
+
+    <div class="impl-group">数据过滤与构造</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>筛掉不看图也能做对的题</h4>
+        <p class="paper">论文：视觉 RL 的 STEM 题经过筛选，必须依赖视觉输入才能解<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>对编辑评测集和推理型编辑指令做一遍“盲测”：只给文本指令、不给原图，让 VLM 预测编辑结果；能预测出来的样本说明主要考的是文本常识，应该降权或单独分组。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>几何增广要同步更新坐标</h4>
+        <p class="paper">论文：数据加载时做随机增广，几何变换要保持 2D 坐标和朝向元数据正确<span class="src">附录 C.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑图对的裁剪、翻转、缩放必须让原图、目标图、mask、bbox 共用同一组随机参数；在 dataloader 里加断言，检查变换后 mask 和像素差异区域的 IoU 不掉。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>早混、少混、一直混</h4>
+        <p class="paper">论文：固定总预算时，10:90 从一开始就混入，优于 50:50 后期集中加入；晚加入时会出现文本能力先掉再回升<span class="src">表 1 附录 B.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>往通用生成或理解模型里加编辑数据时，可以做同类对照（编辑数据 10% 全程混入 vs 末期 50% 集中加入），同时盯住 T2I 指标有没有“先掉再回升”。这条结论来自理解任务，能不能迁移到生成任务需要自己验证。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>按子任务选最贴合的可验证指标</h4>
+        <p class="paper">论文：grounding 用 IoU 软匹配 F1，点定位用高斯距离加最优匹配，分割用多边形栅格化后算 mask IoU，OCR 用归一化编辑距离，计数用绝对差<span class="src">§4.4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>把编辑指令拆成可程序校验的子项：改文字的用目标区域 OCR 的 NED；增删物体的用检测计数差；移动或缩放的用 bbox IoU；保持区域用 mask 外的像素或感知距离。最后再交给 VLM 评整体，不要只用一个 VLM 总分。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>多套 rubric 的 GRM，防止 reward hacking</h4>
+        <p class="paper">论文：GRM 按任务场景使用多套 rubric，以缓解 reward hacking 和对单一偏好信号的过拟合；评价维度包括生成物的审美质量和严格的指令遵循<span class="src">§4.4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的 VLM 奖励至少准备两套措辞和维度划分不同的 rubric，训练时轮换或取最小值；定期抽样检查高分样本，看是否出现“改动很小却拿高一致性分”的漏洞。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>失败算错，自测要标出来</h4>
+        <p class="paper">论文：没有公开分数的基线由自己复测并标 *；GPT-5.2 约 10% 无输出按答错计；视觉基准报 Avg@3，搜索类 Avg@4<span class="src">§5.1.1 附录 E</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>评闭源编辑 API 时，把拒绝 / 超时 / 安全拦截单独统计成一列，再分别给出“按失败计”和“剔除失败”两套分数；每个模型至少跑 3 个 seed，报均值和波动；复测的和引用的分数在表里用不同记号。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>数据配比基本没公开。</b>正式训练的恒定图文比例、7 类视觉数据和 4 个文本领域的占比、合成 caption 的上限、过滤阈值都没给；表 1 的对照实验也没写模型规模、token 预算和每个维度的基准构成。</li>
+    <li class="key"><b>关键做法缺消融。</b>Zero-vision SFT 和图文 SFT 的对比只有一句“初步实验”，没有数字；PARL 的 r<sub>parallel</sub> / r<sub>finish</sub>、冻结子 Agent、关键步数都没有单独消融；表 2 没有“同样步数的文本 RL”作对照。</li>
+    <li class="key"><b>基线可比性有限。</b>表 4 大量基线分带 *（Kimi 复测）；GPT-5.2 视觉评测约 10% 无输出按答错计；OSWorld 上 GPT-5.2 8.6* 和 Gemini 20.7* 都是复测，Claude 的工具配置也和其官方 System Card 不同；LongBench v2 用的是 GPT-5.2-high 而不是 xhigh<span class="src">附录 E.2 E.7</span>。</li>
+    <li><b>token 总量的说法前后不一。</b>§2 说在约 15T 图文 token 上联合预训练，§4.3 说“约 15T，跨三个阶段”，但把表 3 三个阶段的 1T、15T、500B、200B 加起来约 16.7T<span class="src calc">推算</span>。</li>
+    <li><b>单 Agent WideSearch 分数不一致。</b>引言写 Item-F1 从 72.8% 提到 79.0%，表 4 和表 6 的单 Agent 都是 72.7<span class="src">§1 表 6</span>。</li>
+    <li><b>“延迟最多降 4.5×”只是一个点。</b>它是 WideSearch 上目标 F1 = 70% 时的节省倍数，其余点在 3.0×–3.7×<span class="src">图 8</span>；BrowseComp 和内部 Bench 没有给时间数据。</li>
+    <li><b>BrowseComp 的 GPT-5.2 分数归属不清。</b>表 4 中 65.8 跨“无上下文管理”和“有上下文管理”两行；图 1 把它和 K2.5 的 74.9（有上下文管理）放在一起比较<span class="src">表 4 图 1</span>。</li>
+    <li><b>内部基准无法复现。</b>In-house Swarm Bench（WildSearch、Batch Download、WideRead、Long-Form Writing）没有公开；WebArena 的评测脚本经过手工修正，fuzzy_match 用 GPT-4o 判<span class="src">§5.2 附录 E.7</span>。</li>
+    <li><b>Toggle 不是在 K2.5 上验证的。</b>25–30% 的 token 节省是在 K2 Thinking 上测得的<span class="src">§4.4.2 图 5</span>；表 5 显示 K2.5 的输出长度仍是 Gemini-3.0 Pro 的约 1.4–2.0 倍<span class="src calc">推算</span>。</li>
+    <li><b>超参基本没给。</b>RL 的 α / β / τ、PARL 的 λ<sub>1</sub> / λ<sub>2</sub>、Toggle 的 m / λ / ρ、学习率、batch、GPU 数量都没有公开。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>主结果柱状图（本页为裁图，无基准名）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 2</td><td>从 zero-vision SFT 起步的视觉 RL 曲线（MMMU-Pro / MathVision / CharXiv / OCRBench）</td><td>未收录 · 原文第 4 页</td></tr>
+        <tr><td>图 3</td><td>Agent Swarm：可训练编排者 + 动态创建的冻结子 Agent</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 4</td><td>PARL 训练中准确率与并行度一起上升</td><td>未收录 · 第 6 页</td></tr>
+        <tr><td>图 5</td><td>Toggle 前后 K2 Thinking 的性能与 token 用量</td><td>未收录 · 第 10 页</td></tr>
+        <tr><td>图 6 / 7</td><td>子 Agent 词云；Agent Swarm 与 Discard-all 在 BrowseComp 上的对比</td><td>未收录 · 第 14 页</td></tr>
+        <tr><td>图 8</td><td>WideSearch 达到目标 Item-F1 所需的执行时间</td><td><a href="#eval">评测</a>（文字转述）</td></tr>
+        <tr><td>图 9</td><td>三种图文比例的完整学习曲线</td><td>未收录 · 第 22 页</td></tr>
+        <tr><td>图 10</td><td>Agentic RL 框架</td><td><a href="#train">训练配方</a></td></tr>
+        <tr><td>图 11 / 12</td><td>定性示例：32 段《黑神话：悟空》视频的并行分析；迷宫 / 饼图 / 找不同的工具化视觉推理</td><td>未收录 · 第 29–30 页</td></tr>
+        <tr><td>表 1</td><td>视觉注入时机与比例的对照实验</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>表 2</td><td>视觉 RL 前后的文本基准</td><td><a href="#tldr">TL;DR</a></td></tr>
+        <tr><td>表 3</td><td>训练阶段：数据、token、序列长度、训练对象</td><td><a href="#data">数据</a> · <a href="#train">训练</a></td></tr>
+        <tr><td>表 4</td><td>与闭源和开源模型的全面对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 5</td><td>推理模型的分数与 token 用量</td><td><a href="#train">训练配方</a></td></tr>
+        <tr><td>表 6</td><td>Agent Swarm 与单 Agent、闭源基线的对比</td><td><a href="#eval">评测</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本文基于 <a href="https://arxiv.org/abs/2602.02276" target="_blank" rel="noopener">Kimi K2.5: Visual Agentic Intelligence（arXiv:2602.02276）</a>，v1 发布于 2026-02-02；本页依据 v2（2026-08-07）全文核对。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」是本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

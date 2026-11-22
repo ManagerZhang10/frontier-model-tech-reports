@@ -35,4 +35,7 @@
   - [DeepSeek-V4.1-Flash](./reports/llm/deepseek-v4.1-flash/)（LLM）
   - [MiniMax-M2 Series](./reports/llm/minimax-m2/)（LLM）
   - [MiniMax Sparse Attention (M3)](./reports/llm/minimax-msa-m3/)（LLM · 方法）
+  - [Nemotron 3.5 Super and Lightning](./reports/llm/nemotron-3.5-super/)（LLM）
+  - [Kimi K2.5](./reports/vlm/kimi-k2.5/)（VLM）
+  - [GLM-5V-Turbo](./reports/vlm/glm-5v-turbo/)（VLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

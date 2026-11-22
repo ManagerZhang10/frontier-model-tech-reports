@@ -496,6 +496,54 @@
       "one_liner": "方法论文，不是完整模型卡。MSA 在 GQA 上加轻量 Index Branch，Main Branch 只在选出的 KV 块上做精确注意力。109B/6B 激活的多模态 MoE 实验模型、3T token：下游与 GQA 基本持平；1M 上下文注意力 FLOPs 降 28.4×，H800 上 prefill 14.2×、decode 7.6×。生产模型 MiniMax-M3 已在 HF 发布，但规模与训练细节原文未写。推理 kernel 开源。",
       "path": "reports/llm/minimax-msa-m3/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "nemotron-3.5-super",
+      "title": "Nemotron 3.5 Super and Lightning",
+      "subtitle": "Nemotron 3.5 Super and Lightning: Open, Efficient Mixture-of-Experts Hybrid Mamba-Transformer Models for Agentic AI",
+      "vendor": "NVIDIA",
+      "vendor_key": "nvidia",
+      "category": "llm",
+      "date": "2026-10-28",
+      "paper": "https://arxiv.org/abs/2610.38095",
+      "arxiv": "2610.38095",
+      "open_weights": true,
+      "params": "Super 120B / 12B 激活；Lightning 30B / 3B 激活",
+      "one_liner": "Super（120B-A12B，多模态）与 Lightning（30B-A3B，纯文本）由下一档 Nemotron 3 老师蒸馏 1T token，再加长上下文、Indic 继续预训练（最多 +9.82 分）和 SWE 中期训练。后训练 Super 在 SWE-bench Pro 上 51.78%。发布 Base / BF16 / NVFP4 与草稿模型；许可证原文未披露。PDF 页眉日期 2026-10-30，主日期按 arXiv v1 记为 2026-10-28。",
+      "path": "reports/llm/nemotron-3.5-super/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "kimi-k2.5",
+      "title": "Kimi K2.5",
+      "subtitle": "Kimi K2.5: Visual Agentic Intelligence",
+      "vendor": "Kimi Team, Moonshot AI",
+      "vendor_key": "moonshot",
+      "category": "vlm",
+      "date": "2026-02-02",
+      "paper": "https://arxiv.org/abs/2602.02276",
+      "arxiv": "2602.02276",
+      "open_weights": true,
+      "params": "底座 K2：1.04T / 32B 激活",
+      "one_liner": "在 Kimi K2（1.04T/32B，384 专家激活 8 个）上接 MoonViT-3D，约 15T 图文混合 token 联合预训练，并做 zero-vision SFT 与联合 RL。Agent Swarm（PARL 只训编排者）在 WideSearch 上达到同一目标分数的执行时间比单 Agent 少 3×–4.5×。后训练权重已发布，许可证原文未披露。",
+      "path": "reports/vlm/kimi-k2.5/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "glm-5v-turbo",
+      "title": "GLM-5V-Turbo",
+      "subtitle": "GLM-5V-Turbo: Toward a Native Foundation Model for Multimodal Agents",
+      "vendor": "Z.ai & Tsinghua University",
+      "vendor_key": "zhipu",
+      "category": "vlm",
+      "date": "2026-04-29",
+      "paper": "https://arxiv.org/abs/2604.26752",
+      "arxiv": "2604.26752",
+      "open_weights": false,
+      "params": "原文未披露（语言底座为 GLM-5-Turbo）",
+      "one_liner": "在 GLM-5-Turbo 上接自研 CogViT 与 MMTP（图像只喂共享 <|image|> 占位符），并在 30+ 类任务上联合 RL。Design2Code 94.8、AndroidWorld 75.7 出自正文；图 4 其余对比为读图。参数、许可证与权重发布原文均未声明。",
+      "path": "reports/vlm/glm-5v-turbo/",
+      "added": "2026-11-22"
     }
   ]
 }
