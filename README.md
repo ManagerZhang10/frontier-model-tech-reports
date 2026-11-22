@@ -31,6 +31,7 @@
 | LLM | [DeepSeek-V4](./reports/llm/deepseek-v4/) | DeepSeek | 2026-04-26 | [arXiv:2606.19348](https://arxiv.org/abs/2606.19348) |
 | LLM | [DeepSeek-V4.1-Flash](./reports/llm/deepseek-v4.1-flash/) | DeepSeek | 2026-09-17 | [arXiv:2609.19969](https://arxiv.org/abs/2609.19969) |
 | LLM | [MiniMax-M2 Series](./reports/llm/minimax-m2/) | MiniMax | 2026-05-26 | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) |
+| LLM（稀疏注意力方法） | [MiniMax Sparse Attention (M3)](./reports/llm/minimax-msa-m3/) | MiniMax | 2026-06-11 | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
 | VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
 | VLM | [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/) | Qwen Team | 2026-04-17 | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) |

@@ -13,7 +13,7 @@
 | LLM | 2026-07 | Moonshot | Kimi K3 | [arXiv:2607.24653](https://arxiv.org/abs/2607.24653) | 已发布 |
 | LLM | 2026-02 | Zhipu | GLM-5 | [arXiv:2602.15763](https://arxiv.org/abs/2602.15763) | 已发布 |
 | LLM | 2026-05 | MiniMax | MiniMax-M2 Series | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) | 已发布 |
-| LLM | 2026-06 | MiniMax | MiniMax Sparse Attention (M3) | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) | 旧稿待重做 |
+| LLM | 2026-06 | MiniMax | MiniMax Sparse Attention (M3) | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) | 已发布 |
 | LLM | 2026-07 | Google DeepMind | Gemma 4 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) | 已发布 |
 | LLM | 2025-12 | NVIDIA | Nemotron 3 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) | 已发布 |
 | LLM | 2026-10 | NVIDIA | Nemotron 3.5 Super & Lightning | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) | 旧稿待重做 |

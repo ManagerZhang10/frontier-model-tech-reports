@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniMax Sparse Attention (MSA) 中文深读 · GQA 上的块级稀疏注意力，MiniMax-M3 的长上下文底座 | 前沿模型技术报告</title>
+<meta name="description" content="MiniMax arXiv 2606.13392 中文深读：MSA 在 GQA 上加轻量 Index Branch，每个 GQA 组独立选 Top-16 个 128-token KV 块；109B 原生多模态 MoE、3T token 下与 GQA 持平，1M 上下文注意力 FLOPs 降 28.4×，H800 上 prefill 14.2×、decode 7.6×。附训练配方、评测、kernel 设计，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: MSA schematic, delta chart, small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-good { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.3; }
+.archsvg .zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .lane { font: 700 10.5px var(--f-mono); fill: var(--muted); letter-spacing: .08em; }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.archsvg .ln-warm { stroke: var(--warm); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-acc { fill: var(--accent); }
+.archsvg .ah-warm { fill: var(--warm); }
+.archsvg .cell { fill: var(--bg-accent); stroke: var(--line); stroke-width: .8; }
+.archsvg .cell-on { fill: var(--accent); opacity: .85; }
+.archsvg .cell-loc { fill: var(--good); opacity: .8; }
+.dchart .zero { stroke: var(--ink-2); stroke-width: 1.2; }
+.dchart .grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
+.dchart .grp { fill: var(--muted); font: 700 10px var(--f-mono); letter-spacing: .08em; }
+.dchart .pos-pt { fill: var(--accent); }
+.dchart .pos-cpt { fill: var(--bar-other2); }
+.dchart .v { fill: var(--ink-2); font: 600 9.5px var(--f-mono); }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.flow.f3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.algo { font: 500 .8rem/1.7 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.cell-legend { margin-top: 4px; font-size: .78rem; }
+.chart-legend .lc::before { background: var(--bar-other2); }
+.chart-legend .lg::before { background: var(--good); }
+.chart-legend .lw::before { background: var(--warm); }
+.flow.f3 .stage:first-child::after { display: none; }
+.mod code, .impl code { word-break: break-all; }
+.g22 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tl-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin: 8px 0 4px; font: 600 .72rem/22px var(--f-mono); color: #fff; }
+.tl-bar span { display: block; text-align: center; white-space: nowrap; overflow: hidden; }
+.tl-bar .d { background: var(--bar-other); color: var(--ink); }
+.tl-bar .w { background: var(--warm); }
+.tl-bar .s { background: var(--accent); }
+.tl-row { font-size: .86rem; color: var(--ink-2); margin-top: 14px; }
+.tl-row b { color: var(--ink); }
+@media (max-width: 760px) { .g22 { grid-template-columns: 1fr; } .flow.f3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型（稀疏注意力方法）</div>
+    <h1>MiniMax Sparse Attention (MSA)<span class="sub">GQA 上的块级稀疏注意力：每个 KV 组只看 16 个块，生产模型 MiniMax-M3 的长上下文底座</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>MiniMax</b>（合作单位：北大、NVIDIA、浙大、华科、南大、杭电）</span>
+      <span>发布 <b>2026-06-11</b>（arXiv v1）</span>
+      <span>arXiv <b>2606.13392</b></span>
+      <span>本页依据 <b>v2</b>（2026-06-12）</span>
+    </div>
+    <p class="lede">这是一篇<b>注意力方法论文</b>，不是完整模型卡。MSA 在标准 GQA 层上只加两个投影矩阵，组成轻量 <b>Index Branch</b>：每个 GQA 组独立给 128-token 的 KV 块打分，选出 Top-16 块（局部块始终保留）；<b>Main Branch</b> 只在这些块上做精确 softmax 注意力，每个 query 最多看 <b>2,048</b> 个 token<span class="src">§3.1 · §5.1</span>。在 <b>109B 总参、原生多模态</b>的 MoE 实验模型上（3T token），下游评测与 GQA 基本持平；1M 上下文时单 token 注意力 FLOPs 降 <b>28.4×</b>，H800 实测 prefill <b>14.2×</b>、decode <b>7.6×</b><span class="src">摘要 · §5.4 · 图 4</span>。作者称基于 MSA 的生产级原生多模态模型 <b>MiniMax-M3</b> 已在 Hugging Face 发布<span class="src">摘要</span>，但论文没写 M3 的规模和训练细节。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>推理 kernel 开源 · M3 已发布于 HF（摘要）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>实验模型 109B 总参 / 6B 激活</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>MiniMax-M3 参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>LLM · 稀疏注意力 · 原生多模态</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2606.13392" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2606.13392</a>
+      <a href="https://arxiv.org/pdf/2606.13392" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://github.com/MiniMax-AI/MSA" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.8c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>推理 kernel（GitHub）</a>
+      <a href="https://huggingface.co/MiniMaxAI/MiniMax-M3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>MiniMax-M3（HF）</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构 · Index / Main</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#index">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文（PDF 首页水印 2606.13392v2）；<span class="src calc">推算</span> 为本页自行计算。</div>
+</nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">MSA 不改 GQA 的 Q/K/V，只在旁边挂一个「选块器」。论文验证用的是 109B 实验模型，<b>不是</b> MiniMax-M3 本体。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">方法</span><span class="stat-num sm">GQA + 块级 Top-k</span><span class="stat-sub">Index Branch 选块，Main Branch 在选中块上做精确注意力</span><span class="src">§3</span></div>
+    <div class="card stat"><span class="stat-k">每个 query 的预算</span><span class="stat-num">2,048</span><span class="stat-sub">B<sub>k</sub> = 128 × k = 16 块，按 GQA 组各选各的</span><span class="src">§5.1 · §5.4</span></div>
+    <div class="card stat"><span class="stat-k">新增参数</span><span class="stat-num sm">2 个投影矩阵</span><span class="stat-sub">每组 1 个 index query 头 + 全组共享 1 个 index key 头</span><span class="src">§3 · 式 5</span></div>
+    <div class="card stat"><span class="stat-k">实验模型</span><span class="stat-num sm">109B 总参 · 6B 激活</span><span class="stat-sub">41 层 MoE（前 3 层稠密），文本 + 图像 / 视频原生多模态</span><span class="src">§5 · §5.1</span></div>
+    <div class="card stat"><span class="stat-k">注意力配置</span><span class="stat-num sm">64 Q 头 / 4 KV 头</span><span class="stat-sub">head dim 128，RoPE dim 64，GQA 比 G = 16</span><span class="src">§5.1 · §4.2</span></div>
+    <div class="card stat"><span class="stat-k">训练预算</span><span class="stat-num">3T</span><span class="stat-sub">token；PT 从头训，CPT = 2.6T 稠密 + 400B 稀疏续训</span><span class="src">§5.1</span></div>
+    <div class="card stat"><span class="stat-k">1M 上下文 · FLOPs</span><span class="stat-num">28.4×</span><span class="stat-sub">单 token 注意力 FLOPs 降幅（理论值）</span><span class="src">§5.4 · 图 4</span></div>
+    <div class="card stat"><span class="stat-k">1M 上下文 · H800 实测</span><span class="stat-num sm">prefill 14.2× · decode 7.6×</span><span class="stat-sub">注意力延迟加速，对比同配置 GQA</span><span class="src">摘要 · 图 4</span></div>
+    <div class="card stat"><span class="stat-k">质量（表 2 的 30 项打分基准）</span><span class="stat-num sm">PT 24 项 ≥ Full</span><span class="stat-sub">CPT 15 项 ≥ Full；不含 4 项 PPL</span><span class="src">表 2</span><span class="src calc">推算</span></div>
+    <div class="card stat"><span class="stat-k">生产模型</span><span class="stat-num sm">MiniMax-M3</span><span class="stat-sub">「由 MSA 驱动」的原生多模态模型，规模与配置原文未写</span><span class="src">摘要</span></div>
+  </div>
+  <p class="footnote wide">版本说明：主日期按 arXiv v1（2026-06-11）。本页依据的 PDF 首页水印为「arXiv:2606.13392v2 [cs.AI] 12 Jun 2026」，即 v2；本页未发现 v1/v2 差异说明。论文页脚标注「© 2026 MiniMax. All rights reserved」。</p>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>选块器只有两个投影矩阵</h3><p>index query 每个 GQA 组 1 个头，index key 全层共享 1 个头；token 级打分后对每个块取 max，再取 Top-k。最终方案<b>没有</b> index value 头，推理时选块只需 Q<sub>idx</sub>K<sub>idx</sub><sup>⊤</sup> 的块内最大值，不算 exp<span class="src">§3.1 · §C.3</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>用 KL 教选块器，且不让 KL 碰主干</h3><p>选块器去对齐 Main Branch 在选中块上的「组内平均」注意力分布；Index Branch 输入加 stop-gradient。不加时，大 KL 系数会让 LM loss 几百步内发散，小系数下短上下文基准也会慢慢退化<span class="src">§3.2 · §B.3</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>两条路线：从头训或从 GQA 转</h3><p>MSA-PT：40B token 全注意力 warmup 后一直稀疏训练。MSA-CPT：在 2.6T 的 GQA 检查点上换成 MSA，续训 400B（前 40B warmup）<span class="src">§5.1</span>。PT 在数学、图像、视频、检索上多数领先；CPT 更贴近原检查点<span class="src">§5.3 · 表 2</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>省下的 FLOPs 要靠 kernel 兑现</h3><p>exp-free 的小 k TopK（k = 16 时比 torch.topk 快 4.3–5.1×）；稀疏注意力改成 KV-outer 顺序，把 8 个 query 位置 × 16 个头拼成 128×128 MMA；热点块预切分 + 两阶段 combine，不用 atomic<span class="src">§4 · 表 1</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>质量证据止于 128K，效率数字在 1M</h3><p>长上下文质量只测到 HELMET / RULER 128K（CPT 续训约 140B 长文后 Overall −0.60 / +0.12）<span class="src">表 3</span>；1M 只有 FLOPs 与注意力延迟。Agent 类只报 PPL，没有任务成功率；只和自家 GQA 比，没有 NSA / DSA / MoBA 同规模对照<span class="src">表 2 · §6</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：Index Branch 选块 + Main Branch 精确注意力</h2>
+    <p class="sec-intro">MSA 是「先选再算」的两段式稀疏注意力（式 2）。作者称按奥卡姆剃刀设计：大量消融后只保留必要组件，并刻意沿用 sparse softmax 范式，以最大程度复用现有软硬件<span class="src">§1</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="MSA 总览：左侧 Index Branch 由 Linear Projection、Norm &amp; RoPE 得到 K_idx 与 Q_idx，计算 Score = Q_idx K_idx^T，经 Block Max Pooling 产生 Top-K Index；右侧 Main Branch 由 Q/K/V 经 Top-K KV Block 做 Sparse Attention 输出；最右是两个 Query Group 各自不同的块选择掩码" loading="lazy"></div>
+    <figcaption><b>MSA 总览。</b>左：Index Branch 用单个轻量头对完整因果上下文打分，块内 max-pooling 后为每个 query、每个 GQA 组选 k 个 KV 块，局部块无论得分高低都保留。中：Main Branch 只在选中块上做注意力。右：两个 Query Group 的选块掩码不同，说明各组独立选择。训练时用 KL 把 index 分布对齐到 Main Branch 在选中块上的组平均分布，Index Branch 的梯度与 Main Branch 隔离。本裁图包含英文原题注，左侧有 arXiv 水印，顶部「Attention Output」被截掉一半。<span class="from">来源：论文图 1（p.1）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">3.1 一层 MSA 里发生了什么</h3>
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 360" role="img" aria-label="MSA 单层前向与训练信号示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-acc" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-warm" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <text class="lane" x="160" y="14">INDEX BRANCH · 输入 stopgrad(X)</text>
+      <text class="lane" x="160" y="214">MAIN BRANCH · 标准 GQA 投影</text>
+
+      <rect class="box" x="8" y="140" width="128" height="70" rx="10"/><text class="t" x="72" y="166" text-anchor="middle">隐状态 X</text><text class="s" x="72" y="184" text-anchor="middle">N × d_model</text><text class="s" x="72" y="199" text-anchor="middle">实验模型 d = 3072</text>
+
+      <rect class="box-acc" x="160" y="24" width="160" height="76" rx="10"/><text class="t" x="240" y="46" text-anchor="middle">W_q^idx · W_k^idx</text><text class="m" x="240" y="65" text-anchor="middle">Q_idx：H_kv = 4 个头</text><text class="m" x="240" y="82" text-anchor="middle">K_idx：1 个共享头</text><text class="s" x="240" y="96" text-anchor="middle">d_idx 原文未给</text>
+      <rect class="box-acc" x="340" y="24" width="150" height="76" rx="10"/><text class="t" x="415" y="46" text-anchor="middle">token 打分</text><text class="m" x="415" y="65" text-anchor="middle">S = Q_idx K_idx^T/√d</text><text class="s" x="415" y="84" text-anchor="middle">因果可见的 token</text>
+      <rect class="box-acc" x="510" y="24" width="150" height="76" rx="10"/><text class="t" x="585" y="46" text-anchor="middle">块内 max-pool</text><text class="m" x="585" y="65" text-anchor="middle">B_k = 128</text><text class="s" x="585" y="84" text-anchor="middle">无可见 token 的块 = −∞</text>
+      <rect class="box-acc" x="680" y="24" width="190" height="76" rx="10"/><text class="t" x="775" y="46" text-anchor="middle">Top-k（每个 GQA 组）</text><text class="m" x="775" y="65" text-anchor="middle">k = 16，含局部块</text><text class="s" x="775" y="84" text-anchor="middle">组内 16 个 Q 头共享</text>
+
+      <rect class="box" x="160" y="224" width="160" height="70" rx="10"/><text class="t" x="240" y="248" text-anchor="middle">Q / K / V 投影</text><text class="m" x="240" y="267" text-anchor="middle">Q 64 头 · KV 4 头</text><text class="s" x="240" y="284" text-anchor="middle">与 GQA 完全一致</text>
+      <rect class="box-good" x="400" y="224" width="260" height="70" rx="10"/><text class="t" x="530" y="248" text-anchor="middle">块稀疏精确注意力</text><text class="m" x="530" y="267" text-anchor="middle">每 query ≤ k·B_k = 2,048 token</text><text class="s" x="530" y="284" text-anchor="middle">单 query 成本 O(N) → O(k·B_k)</text>
+      <rect class="box" x="720" y="224" width="150" height="70" rx="10"/><text class="t" x="795" y="248" text-anchor="middle">输出投影 W_o</text><text class="s" x="795" y="267" text-anchor="middle">→ 层输出</text>
+
+      <path class="ln" d="M136 160 C150 160 145 62 156 62" marker-end="url(#ah)"/>
+      <path class="ln" d="M136 190 C150 190 145 259 156 259" marker-end="url(#ah)"/>
+      <path class="ln-acc" d="M320 62 H336" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M490 62 H506" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M660 62 H676" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M775 100 C775 160 560 160 545 220" marker-end="url(#aha)"/>
+      <text class="m" x="690" y="150">块索引 I_i^(r)</text>
+      <path class="ln" d="M320 259 H396" marker-end="url(#ah)"/>
+      <path class="ln" d="M660 259 H716" marker-end="url(#ah)"/>
+
+      <path class="ln-warm" d="M530 294 V320 H148 V112 H236 V104" marker-end="url(#ahw)"/>
+      <text class="w" x="160" y="340">仅训练：L_KL( stopgrad(P_main 组平均) ‖ P_idx )，只更新 W_q^idx / W_k^idx</text>
+    </svg>
+    <div class="cap">示意，按 §3.1–3.2、式 5–11 与算法 1 绘制；具体维度来自 §5.1 的实验配置。Index 侧的 Norm &amp; RoPE 见原图 1，此处省略。</div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>相对 GQA 的改动 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>只多两个投影：<code>W_q^idx</code>（输出 H<sub>kv</sub> 个 index query 头）和 <code>W_k^idx</code>（1 个 index key 头，全组共享）<span class="src">式 5</span>。</li>
+        <li>选块粒度是<b>块</b>（B<sub>k</sub> 个连续 token），选择单位是 <b>GQA 组</b>：组内 G 个 query 头共享索引，各自保留 query 投影<span class="src">式 3 · 式 8</span>。</li>
+        <li>局部块（含当前位置 i 的块）训练和推理都强制入选，占 k 个名额中的 1 个<span class="src">§3.2</span>。</li>
+        <li>Main Branch 就是标准缩放点积注意力，只是 K/V 被 gather 到选中块<span class="src">式 8</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>计算量 <span class="tag">§3.3 · 式 12</span></h4>
+      <p>F<sub>GQA</sub>(N) = 2 H<sub>q</sub> d<sub>h</sub> N²</p>
+      <p>F<sub>MSA</sub>(N) = H<sub>kv</sub> d<sub>idx</sub> N² + 4 H<sub>q</sub> d<sub>h</sub> N k B<sub>k</sub></p>
+      <p>Index Branch 仍是 N²，但系数是 H<sub>kv</sub>d<sub>idx</sub>，远小于 H<sub>q</sub>d<sub>h</sub>；Main Branch 随 N 线性增长。所以 N 越大差距越大<span class="src">§3.3</span>。</p>
+      <p style="color:var(--muted);font-size:.88rem">把 §5.1 的配置和 28.4× 代入式 12 反推，d<sub>idx</sub> ≈ 128<span class="src calc">推算</span>。原文没有直接给出 d<sub>idx</sub>。</p>
+    </div>
+  </div>
+
+  <h3 class="prose">3.2 和同类做法的区别</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>方法</th><th>底座</th><th>选择粒度 / 共享方式</th><th>选块器怎么训</th></tr></thead>
+      <tbody>
+        <tr><td>NSA</td><td>MQA / MHA</td><td>压缩注意力 + 细粒度块选择 + 滑窗，三支并行</td><td>原生训练</td></tr>
+        <tr><td>MoBA</td><td>GQA</td><td>很大的 KV 块，块内 key 取平均打分</td><td>只靠 LM 梯度</td></tr>
+        <tr><td>InfLLM-V2</td><td>—</td><td>无参数块选择 + 局部滑窗，可零样本稠密 ↔ 稀疏切换</td><td>无参数</td></tr>
+        <tr><td>DSA</td><td>MLA（MQA 模式）</td><td>多头 ReLU lightning indexer，token 级；所有 query 头共享一个 Top-k</td><td>原文此处未描述</td></tr>
+        <tr class="hl"><td>MSA</td><td>GQA</td><td><b>每个 GQA 组独立 Top-k + 块级</b>：多组各取所需，KV 读取保持连续</td><td>KL 对齐 + 输入 stop-grad + warmup</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">整理自 §6 Related Works 的文字描述，不是论文里的表；作者把「组级 Top-k 共享 + 块级选择」两点同时成立视为与近邻的区别<span class="src">§6</span>。</p>
+
+  <h3 class="prose">3.3 Kernel 协同设计</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Index &amp; TopK <span class="tag">§4.1</span></h4>
+      <ul>
+        <li><b>exp-free</b>：softmax 保序，所以选块前直接对原始分数排序，跳过 max/exp/sum。</li>
+        <li>B<sub>k</sub> 与 k 一起定：大 B<sub>k</sub> 提高注意力的算术强度，小 k 让每行候选块数 B 和 k 都低于通用 top-k kernel 的甜区。部署配置 <b>B<sub>k</sub> = 128，k = 16</b>。</li>
+        <li>每个 warp 的 32 个 lane 各扫 1/32 行，在共享内存里维护 k 元素最小堆，堆顶缓存在寄存器里；最后做 k 轮 shuffle 合并，bank 无冲突。</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>KV-outer 稀疏注意力 <span class="tag">§4.2</span></h4>
+      <ul>
+        <li>Q-outer 的 FLOPs/IO ≈ G；KV-outer（按 KV 块收集选中它的 query）≈ ⅔B<sub>k</sub>。实验配置下约为 16 对 85<span class="src calc">推算</span>，所以选 KV-outer。</li>
+        <li><b>预切分</b>：sink 块几乎被所有 query 选中，按 query 维把热点 tile 切成每块 ≤ ~2kB<sub>k</sub> 个 query 的 chunk，并预分配写入槽位，不用 atomic。</li>
+        <li><b>两阶段 forward</b>：先写局部归一化的部分输出和 LSE，再由 combine kernel 合并；用 PDL 隐藏两次 launch 的间隔。</li>
+        <li><b>Query 拼接</b>：G = 16 时单个位置的 M 维只有 16，于是把 ⌈128/G⌉ = 8 个位置拼成 128×128 的 score MMA。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card mod wide"><h4>训练侧：Sparse KL loss <span class="tag">§4.3</span></h4>
+    <p>LSE 融合：Main Branch 前向时顺手把 LSE<sub>main</sub> 写到显存；Index Branch 计算时保存每个块的 LSE，再在 Top-k 块上归约得到 LSE<sub>idx</sub>。这样 KL 的 forward 整个省掉，backward 直接读这些标量。backward 用持久化 grid + 全局原子计数器领任务，按每个 tile 的 query 数切子 tile，做动态负载均衡。</p>
+  </div>
+
+  <details class="more wide">
+    <summary>表 1：TopK kernel 延迟（μs，H800，fp32，50 次热身后取中位数）<span class="hint">展开</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>序列长 N</th><th>块数 B</th><th>k</th><th>torch</th><th>TileLang</th><th class="q">Ours</th><th>vs torch</th><th>vs TileLang</th></tr></thead>
+          <tbody>
+            <tr><td>128K</td><td>1024</td><td>16</td><td>3970</td><td>2864</td><td class="q best">779</td><td>5.1×</td><td>3.7×</td></tr>
+            <tr><td>128K</td><td>2048</td><td>32</td><td>5378</td><td>3630</td><td class="q best">1991</td><td>2.7×</td><td>1.8×</td></tr>
+            <tr><td>512K</td><td>4096</td><td>16</td><td>33810</td><td>17779</td><td class="q best">7880</td><td>4.3×</td><td>2.3×</td></tr>
+            <tr><td>512K</td><td>8192</td><td>32</td><td>57659</td><td>26100</td><td class="q best">21326</td><td>2.7×</td><td>1.2×</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">部署配置为 B<sub>k</sub> = 128、k = 16；k = 32 的两行对应 B<sub>k</sub> = 64，仅作参考。三种实现选出的索引集合完全一致<span class="src">表 1</span>。</p>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：原文只交代了 token 预算</h2>
+    <p class="sec-intro">这是方法论文，数据只作为实验背景出现：原文只说实验模型「在文本与图像 / 视频的混合数据上原生多模态训练」<span class="src">§5</span>。来源、清洗、合成、caption、配比都没有写。因此下面只列<b>已披露的规模</b>，不画配比图。</p>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>项目</th><th>原文内容</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">已披露</td></tr>
+        <tr><td>数据类型</td><td>文本 + 图像 / 视频混合，原生多模态训练</td><td><span class="src">§5</span></td></tr>
+        <tr><td>总训练预算</td><td>Full、MSA-PT、MSA-CPT 三个模型都是 <b>3T token</b></td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>MSA-PT 的 warmup</td><td>40B token 的 indexer warmup（全注意力），之后一直稀疏训练</td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>MSA-CPT 的起点</td><td>在 2.6T token 上训练的 GQA 全注意力检查点</td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>MSA-CPT 续训</td><td>400B token，其中前 40B 为 indexer warmup</td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>长上下文扩展</td><td>在 CPT 检查点上再训<b>约 140B</b> token 长上下文数据</td><td><span class="src">§5.3</span></td></tr>
+        <tr><td>词表</td><td>200K token</td><td><span class="src">§5.1 · §B.1</span></td></tr>
+        <tr><td>消融用数据</td><td>10B pilot 模型各次运行用「与全规模相同的预训练语料」的子集</td><td><span class="src">§B.1</span></td></tr>
+        <tr class="grp"><td colspan="3">原文未披露</td></tr>
+        <tr><td>来源与规模</td><td>文本、图像、视频各自来自哪里、各多少 token：原文未披露</td><td>—</td></tr>
+        <tr><td>配比</td><td>文本 / 图像 / 视频比例、各阶段配比是否变化：原文未披露</td><td>—</td></tr>
+        <tr><td>清洗与过滤</td><td>原文未披露</td><td>—</td></tr>
+        <tr><td>合成数据</td><td>原文未披露</td><td>—</td></tr>
+        <tr><td>caption / 标注</td><td>图像、视频配什么文本、怎么生成：原文未披露</td><td>—</td></tr>
+        <tr><td>视觉编码方式</td><td>视觉编码器、视觉 token 数：原文未披露</td><td>—</td></tr>
+        <tr><td>预训练序列长度</td><td>3T 阶段的训练上下文长度、长上下文扩展的目标长度与数据构成：原文未披露（评测只做到 128K）</td><td><span class="src">表 3</span></td></tr>
+        <tr><td>pilot 的 token 数</td><td>只说「子集」，没给量</td><td><span class="src">§B.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card mod wide"><h4>Agent PPL 用的是什么数据？<span class="tag nd-tag">口径不明</span></h4>
+    <p>表 2 里 TAU2、AgentCompany、HLE、SWE 四行是「下游 agent 任务上的困惑度」，不是任务成功率<span class="src">§5.1</span>。原文没说明这些 PPL 是在什么轨迹或答案文本上算的、各多少条。只能当作「同一份数据上三个模型的相对比较」来看。</p>
+  </div>
+</section>
+
+<!-- ============ 5 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING RECIPE</div>
+    <h2>训练配方</h2>
+    <p class="sec-intro">只有预训练（含续训和长上下文扩展）；论文<b>没有</b>后训练和 RL，后者只出现在结论的展望里<span class="src">§7</span>。优化器、学习率、batch、KL 系数 λ 都没给数值。</p>
+  </div>
+
+  <div class="flow f3 wide">
+    <div class="card stage"><span class="sid">ROUTE A</span><h4>MSA-PT：从头稀疏预训练</h4>
+      <dl><dt>warmup</dt><dd>40B token 全注意力</dd><dt>之后</dt><dd>稀疏训练到 3T</dd><dt>B<sub>k</sub> / k</dt><dd>128 / 16</dd></dl>
+      <p>warmup 时两支都跑全注意力，只用 L<sub>KL</sub> 训练新加的 index 投影<span class="src">§3.2 · §5.1</span>。</p></div>
+    <div class="card stage"><span class="sid">ROUTE B</span><h4>MSA-CPT：从 GQA 转换</h4>
+      <dl><dt>起点</dt><dd>2.6T 的 GQA 检查点</dd><dt>续训</dt><dd>400B（含 40B warmup）</dd><dt>总计</dt><dd>3T</dd></dl>
+      <p>warmup 期间 KL 迅速下降，切到稀疏后 KL 保持低位<span class="src">§5.2 · 图 3</span>。</p></div>
+    <div class="card stage"><span class="sid">EXT</span><h4>长上下文扩展（仅 CPT）</h4>
+      <dl><dt>数据</dt><dd>约 140B token</dd><dt>评测</dt><dd>HELMET / RULER 128K</dd><dt>目标长度</dt><dd>未披露</dd></dl>
+      <p>每个 query 每组仍只看 2,048 个 KV token<span class="src">§5.3 · 表 3</span>。</p></div>
+  </div>
+
+  <div class="card mod wide">
+    <h4>token 时间线（按原文数字等比绘制）<span class="tag">§5.1</span></h4>
+    <div class="tl-row"><b>MSA-PT</b>：40B warmup + 其余约 2.96T 稀疏<span class="src calc">推算</span></div>
+    <div class="tl-bar" role="img" aria-label="MSA-PT 3T token 时间线"><span class="w" style="width:1.33%" title="warmup 40B"></span><span class="s" style="width:98.67%">稀疏预训练 ≈ 2.96T</span></div>
+    <div class="tl-row"><b>MSA-CPT</b>：2.6T 稠密 GQA → 40B warmup → 约 360B 稀疏续训<span class="src calc">推算</span></div>
+    <div class="tl-bar" role="img" aria-label="MSA-CPT 3T token 时间线"><span class="d" style="width:86.67%">GQA 全注意力 2.6T</span><span class="w" style="width:1.33%" title="warmup 40B"></span><span class="s" style="width:12%">≈360B</span></div>
+    <div class="chart-legend cell-legend"><span class="l3">GQA 稠密</span><span class="lw">indexer warmup（橙色细段）</span><span class="l1">MSA 稀疏</span></div>
+  </div>
+
+  <h3 class="prose">5.1 损失与三个稳定化手段</h3>
+  <div class="card mod wide">
+    <p><b>总损失</b>：L = L<sub>LM</sub> + λ Σ<sub>layers</sub> L<sub>KL</sub>；λ 原文未给数值<span class="src">算法 1</span>。</p>
+    <p><b>KL 的方向与对象</b>：D<sub>KL</sub>( stopgrad(P) ‖ P<sup>idx</sup> )，P 是组内 G 个头的 Main Branch 分布在概率层面取平均，只在选中块诱导出的 token 集合上计算，对所有位置和 GQA 组求平均<span class="src">式 9–10</span>。</p>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>手段</th><th>做法</th><th>不做会怎样（消融）</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Gradient Detach</td><td>Index Branch 的输入用 stopgrad(X)，KL 只更新 W<sub>q</sub><sup>idx</sup>、W<sub>k</sub><sup>idx</sup></td><td>大 KL 系数：梯度尖峰传进主干，LM loss 几百步内发散；稳定系数下短上下文基准逐渐退化，作者归因于「主干简化注意力分布去迎合 KL」的自蒸馏效应</td><td><span class="src">§3.2 · §B.3 · 图 8–9</span></td></tr>
+        <tr><td>Indexer Warmup</td><td>前若干步两支都跑全注意力，只训 index 投影，之后切稀疏</td><td>训练初期 Main Branch 注意力熵在头几百步急剧下降；从第 0 步就稀疏时，选块近乎随机，把主干引向无信息 token。加 warmup 的版本短上下文和长上下文检索都更好</td><td><span class="src">§3.2 · §B.4 · 图 10–11</span></td></tr>
+        <tr><td>Local Block</td><td>含当前位置的块始终入选，占 1 个名额</td><td>防止漏掉 query 紧邻的上下文。附录称最终只强制这个「不完整的自身块」，不强制首块和大局部窗</td><td><span class="src">§3.2 · §C.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">5.2 设计取舍的消融（附录）</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>问题</th><th>对比</th><th>结论</th><th>最终方案</th></tr></thead>
+      <tbody>
+        <tr><td>选块器的梯度来源</td><td>仅 LM（加 index value 输出） / 仅 KL / LM + KL</td><td>仅 LM：短上下文好、检索差；仅 KL：检索好、短上下文差；两者兼用最平衡<span class="src">§B.2 · 图 7</span></td><td>KL；value 头后来去掉</td></tr>
+        <tr><td>Index value 头</td><td>With-value vs No-value（续训设定）</td><td>有 warmup 后无系统性差异，各有胜负<span class="src">§C.3 · 表 6</span></td><td>去掉</td></tr>
+        <tr><td>可学习 attention sink</td><td>GPT-OSS 式 sink logit</td><td>没完全消除首 token sink，PPL 无一致收益<span class="src">§B.5 · 图 12–13</span></td><td>不用</td></tr>
+        <tr><td>动态选块 vs 滑窗</td><td>同 FLOPs 的「首块 + 局部窗」固定模式</td><td>滑窗在整条训练轨迹上 agent PPL 都更高<span class="src">§B.6 · 图 14</span></td><td>动态选块</td></tr>
+        <tr><td>块大小</td><td>B<sub>k</sub> = 32 / 64 / 128，总选中 token 数不变</td><td>PPL 几乎不变；RULER-8K 72.5 → 73.8，RULER-32K 66.1 → 64.6<span class="src">§C.1 · 表 4</span></td><td>128</td></tr>
+        <tr><td>强制 sink + 局部窗</td><td>No Forced vs Forced</td><td>多数指标接近；RULER-32K 61.5 vs 65.8<span class="src">§C.2 · 表 5</span></td><td>只强制自身块</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <details class="more wide">
+    <summary>Pilot 模型配置（附录 B 的消融底座）<span class="hint">展开</span></summary>
+    <div class="body">
+      <p>10B 级 pilot：16 层，d<sub>model</sub> = 2048，GQA 32 个 Q 头 / 4 个 KV 头，head dim 128，RoPE dim 64；MoE 64 个专家激活 4 个，专家内维 1536；共 10.53B 总参、1.47B 激活。优化器、学习率调度、tokenizer 与全规模相同（但全规模的具体数值原文也没给）<span class="src">§B.1</span>。</p>
+      <p>注意：表 4、表 5 是「更少迭代、部分评测」的设定<span class="src">§C.1</span>；表 6 标为「续训消融」，规模原文未单独说明。附录 B 的图 7–14 只有图，原文没给数值表。</p>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测：和自家 GQA 全注意力逐项对比</h2>
+    <p class="sec-intro">对比对象只有一个：同架构、同 3T 预算、匹配检查点的 GQA 全注意力模型（下表 Full）。全部是<b>预训练阶段</b>评测，没有对外模型对比<span class="src">§5.1</span>。</p>
+  </div>
+
+  <h3 class="prose">6.1 效率（1M 上下文）</h3>
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 132" role="img" aria-label="1M 上下文时 MSA 相对 GQA 的倍数">
+        <text class="ch-t" x="0" y="14">1M 上下文：MSA 相对 GQA 的倍数</text><text class="ch-src" x="360" y="14" text-anchor="end">§5.4 · 图 4</text>
+        <line class="axis" x1="110" y1="26" x2="110" y2="108"/>
+        <text class="ch-lbl" x="104" y="44" text-anchor="end">注意力 FLOPs ↓</text>
+        <rect class="bar-q" x="110" y="34" width="208.3" height="14" rx="2"/><text class="ch-val" x="322" y="45">28.4×</text>
+        <text class="ch-lbl" x="104" y="70" text-anchor="end">prefill 加速</text>
+        <rect class="bar-qi" x="110" y="60" width="104.1" height="14" rx="2"/><text class="ch-val" x="218" y="71">14.2×</text>
+        <text class="ch-lbl" x="104" y="96" text-anchor="end">decode 加速</text>
+        <rect class="bar-qi" x="110" y="86" width="55.7" height="14" rx="2"/><text class="ch-val" x="170" y="97">7.6×</text>
+        <text class="ch-ax" x="110" y="122">0×</text><text class="ch-ax" x="330" y="122" text-anchor="end">30×</text>
+      </svg>
+      <div class="chart-legend cell-legend"><span class="l1">理论 FLOPs</span><span class="l2">H800 实测注意力延迟</span></div>
+    </div>
+    <div class="chart-cell">
+      <div class="card mod" style="margin:0">
+        <h4>怎么读这三个数 <span class="tag">§5.4</span></h4>
+        <ul>
+          <li>测试配置：64 Q 头、4 KV 头、head dim 128；MSA 用 B<sub>k</sub> = 128、k = 16<span class="src">图 4</span>。</li>
+          <li>图 4 纵轴是<b>注意力延迟</b>，不是端到端吞吐；decode 的横轴是 KV 长度。</li>
+          <li>实测加速低于 FLOPs 降幅：多了建索引、Top-k、反向索引、query gather、负载均衡等开销，访存也不如稠密规整；但加速比随长度增长<span class="src">§5.4</span>。</li>
+          <li>batch、精度（kernel 支持 bf16 / fp8）、GQA 基线用的 kernel：原文未说明。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="GQA 与 MSA 效率对比三联图：左为单 token 注意力 FLOPs 随序列长度增长，1M 处标注 28.4× FLOPs reduction；中为 prefill 注意力延迟，1M 处 14.2× speedup；右为 decode 注意力延迟随 KV 长度变化，1M 处 7.6× speedup" loading="lazy"></div>
+    <figcaption><b>GQA 与 MSA 的效率对比。</b>左：理论单 token 注意力 FLOPs；中：prefill 实测注意力延迟；右：decode 实测注意力延迟（横轴为 KV 长度）。横轴 32K → 1M，GQA 的曲线随长度持续上升，MSA 的曲线明显更平。本页不从图中读取绝对值，只引用图上标注的倍数。<span class="from">来源：论文图 4（p.12）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">6.2 主结果：表 2（3T token 预算）</h3>
+  <p class="prose">先看差值。下图是 MSA-PT、MSA-CPT 相对 Full 的分差（本页计算）。PT 只在 6 项上低于 Full，最大的正差出现在 VisualWebBench（+12.8）和 EgoSchema（+8.0）。CPT 的负差集中在 ChartQA（−3.6）、EgoSchema（−3.8）、HumanEval（−3.1）、RULER-8K（−2.6）、GSM8K（−2.5）<span class="src">表 2</span><span class="src calc">推算</span>。</p>
+  <div class="diagram card wide">
+    <svg class="chart dchart" viewBox="0 0 760 776" role="img" aria-label="表 2 各基准 MSA-PT 与 MSA-CPT 相对 Full 的分差">
+      <text class="ch-t" x="0" y="14">相对 Full 的分差（分）</text><text class="ch-src" x="760" y="14" text-anchor="end">表 2 · 本页计算</text>
+      <line class="grid" x1="179.0" y1="26" x2="179.0" y2="754"/><text class="ch-ax" x="179.0" y="768" text-anchor="middle">−5</text><line class="zero" x1="324.0" y1="26" x2="324.0" y2="754"/><text class="ch-ax" x="324.0" y="768" text-anchor="middle">0</text><line class="grid" x1="469.0" y1="26" x2="469.0" y2="754"/><text class="ch-ax" x="469.0" y="768" text-anchor="middle">+5</text><line class="grid" x1="614.0" y1="26" x2="614.0" y2="754"/><text class="ch-ax" x="614.0" y="768" text-anchor="middle">+10</text>
+      <text class="grp" x="0" y="44">GENERAL</text><text class="ch-lbl" x="142" y="62" text-anchor="end">MMLU</text><rect class="pos-pt" x="324.0" y="52" width="5.8" height="7" rx="1.5"/><text class="v" x="333.8" y="58.5" text-anchor="start">+0.20</text><rect class="pos-cpt" x="318.2" y="60" width="5.8" height="7" rx="1.5"/><text class="v" x="314.2" y="66.5" text-anchor="end">−0.20</text><text class="ch-lbl" x="142" y="82" text-anchor="end">MMLU-Pro</text><rect class="pos-pt" x="324.0" y="72" width="8.7" height="7" rx="1.5"/><text class="v" x="336.7" y="78.5" text-anchor="start">+0.30</text><rect class="pos-cpt" x="324.0" y="80" width="17.4" height="7" rx="1.5"/><text class="v" x="345.4" y="86.5" text-anchor="start">+0.60</text><text class="ch-lbl" x="142" y="102" text-anchor="end">BBH</text><rect class="pos-pt" x="292.1" y="92" width="31.9" height="7" rx="1.5"/><text class="v" x="288.1" y="98.5" text-anchor="end">−1.10</text><rect class="pos-cpt" x="277.6" y="100" width="46.4" height="7" rx="1.5"/><text class="v" x="273.6" y="106.5" text-anchor="end">−1.60</text><text class="ch-lbl" x="142" y="122" text-anchor="end">GPQA Hard</text><rect class="pos-pt" x="324.0" y="112" width="11.6" height="7" rx="1.5"/><text class="v" x="339.6" y="118.5" text-anchor="start">+0.40</text><rect class="pos-cpt" x="324.0" y="120" width="11.6" height="7" rx="1.5"/><text class="v" x="339.6" y="126.5" text-anchor="start">+0.40</text><text class="ch-lbl" x="142" y="142" text-anchor="end">ARC Challenge</text><rect class="pos-pt" x="318.2" y="132" width="5.8" height="7" rx="1.5"/><text class="v" x="314.2" y="138.5" text-anchor="end">−0.20</text><rect class="pos-cpt" x="324.0" y="140" width="5.8" height="7" rx="1.5"/><text class="v" x="333.8" y="146.5" text-anchor="start">+0.20</text><text class="ch-lbl" x="142" y="162" text-anchor="end">TriviaQA</text><rect class="pos-pt" x="309.5" y="152" width="14.5" height="7" rx="1.5"/><text class="v" x="305.5" y="158.5" text-anchor="end">−0.50</text><rect class="pos-cpt" x="324.0" y="160" width="49.3" height="7" rx="1.5"/><text class="v" x="377.3" y="166.5" text-anchor="start">+1.70</text><text class="ch-lbl" x="142" y="182" text-anchor="end">WinoGrande</text><rect class="pos-pt" x="324.0" y="172" width="75.4" height="7" rx="1.5"/><text class="v" x="403.4" y="178.5" text-anchor="start">+2.60</text><rect class="pos-cpt" x="324.0" y="180" width="107.3" height="7" rx="1.5"/><text class="v" x="435.3" y="186.5" text-anchor="start">+3.70</text><text class="grp" x="0" y="204">MATH</text><text class="ch-lbl" x="142" y="222" text-anchor="end">GSM8K</text><rect class="pos-pt" x="324.0" y="212" width="43.5" height="7" rx="1.5"/><text class="v" x="371.5" y="218.5" text-anchor="start">+1.50</text><rect class="pos-cpt" x="251.5" y="220" width="72.5" height="7" rx="1.5"/><text class="v" x="247.5" y="226.5" text-anchor="end">−2.50</text><text class="ch-lbl" x="142" y="242" text-anchor="end">MGSM</text><rect class="pos-pt" x="324.0" y="232" width="55.1" height="7" rx="1.5"/><text class="v" x="383.1" y="238.5" text-anchor="start">+1.90</text><rect class="pos-cpt" x="324.0" y="240" width="2.9" height="7" rx="1.5"/><text class="v" x="330.9" y="246.5" text-anchor="start">+0.10</text><text class="ch-lbl" x="142" y="262" text-anchor="end">MathVista</text><rect class="pos-pt" x="324.0" y="252" width="87.0" height="7" rx="1.5"/><text class="v" x="415.0" y="258.5" text-anchor="start">+3.00</text><rect class="pos-cpt" x="324.0" y="260" width="20.3" height="7" rx="1.5"/><text class="v" x="348.3" y="266.5" text-anchor="start">+0.70</text><text class="ch-lbl" x="142" y="282" text-anchor="end">OlymMATH Easy P@100</text><rect class="pos-pt" x="324.0" y="272" width="87.0" height="7" rx="1.5"/><text class="v" x="415.0" y="278.5" text-anchor="start">+3.00</text><rect class="pos-cpt" x="295.0" y="280" width="29.0" height="7" rx="1.5"/><text class="v" x="291.0" y="286.5" text-anchor="end">−1.00</text><text class="grp" x="0" y="304">CODE</text><text class="ch-lbl" x="142" y="322" text-anchor="end">HumanEval</text><rect class="pos-pt" x="324.0" y="312" width="87.0" height="7" rx="1.5"/><text class="v" x="415.0" y="318.5" text-anchor="start">+3.00</text><rect class="pos-cpt" x="234.1" y="320" width="89.9" height="7" rx="1.5"/><text class="v" x="230.1" y="326.5" text-anchor="end">−3.10</text><text class="ch-lbl" x="142" y="342" text-anchor="end">EvalPlus</text><rect class="pos-pt" x="324.0" y="332" width="69.6" height="7" rx="1.5"/><text class="v" x="397.6" y="338.5" text-anchor="start">+2.40</text><rect class="pos-cpt" x="324.0" y="340" width="17.4" height="7" rx="1.5"/><text class="v" x="345.4" y="346.5" text-anchor="start">+0.60</text><text class="ch-lbl" x="142" y="362" text-anchor="end">BigCodeBench</text><rect class="pos-pt" x="300.8" y="352" width="23.2" height="7" rx="1.5"/><text class="v" x="296.8" y="358.5" text-anchor="end">−0.80</text><rect class="pos-cpt" x="324.0" y="360" width="26.1" height="7" rx="1.5"/><text class="v" x="354.1" y="366.5" text-anchor="start">+0.90</text><text class="ch-lbl" x="142" y="382" text-anchor="end">MultiPL-E MBPP P@10</text><rect class="pos-pt" x="309.5" y="372" width="14.5" height="7" rx="1.5"/><text class="v" x="305.5" y="378.5" text-anchor="end">−0.50</text><rect class="pos-cpt" x="295.0" y="380" width="29.0" height="7" rx="1.5"/><text class="v" x="291.0" y="386.5" text-anchor="end">−1.00</text><text class="grp" x="0" y="404">RETRIEVAL</text><text class="ch-lbl" x="142" y="422" text-anchor="end">RULER-8K</text><rect class="pos-pt" x="324.0" y="412" width="127.6" height="7" rx="1.5"/><text class="v" x="455.6" y="418.5" text-anchor="start">+4.40</text><rect class="pos-cpt" x="248.6" y="420" width="75.4" height="7" rx="1.5"/><text class="v" x="244.6" y="426.5" text-anchor="end">−2.60</text><text class="ch-lbl" x="142" y="442" text-anchor="end">RULER-32K</text><rect class="pos-pt" x="324.0" y="432" width="72.5" height="7" rx="1.5"/><text class="v" x="400.5" y="438.5" text-anchor="start">+2.50</text><rect class="pos-cpt" x="324.0" y="440" width="20.3" height="7" rx="1.5"/><text class="v" x="348.3" y="446.5" text-anchor="start">+0.70</text><text class="grp" x="0" y="464">IMAGE</text><text class="ch-lbl" x="142" y="482" text-anchor="end">AI2D</text><rect class="pos-pt" x="324.0" y="472" width="66.7" height="7" rx="1.5"/><text class="v" x="394.7" y="478.5" text-anchor="start">+2.30</text><rect class="pos-cpt" x="295.0" y="480" width="29.0" height="7" rx="1.5"/><text class="v" x="291.0" y="486.5" text-anchor="end">−1.00</text><text class="ch-lbl" x="142" y="502" text-anchor="end">ChartQA</text><rect class="pos-pt" x="324.0" y="492" width="11.6" height="7" rx="1.5"/><text class="v" x="339.6" y="498.5" text-anchor="start">+0.40</text><rect class="pos-cpt" x="219.6" y="500" width="104.4" height="7" rx="1.5"/><text class="v" x="215.6" y="506.5" text-anchor="end">−3.60</text><text class="ch-lbl" x="142" y="522" text-anchor="end">MMMU</text><rect class="pos-pt" x="297.9" y="512" width="26.1" height="7" rx="1.5"/><text class="v" x="293.9" y="518.5" text-anchor="end">−0.90</text><rect class="pos-cpt" x="257.3" y="520" width="66.7" height="7" rx="1.5"/><text class="v" x="253.3" y="526.5" text-anchor="end">−2.30</text><text class="ch-lbl" x="142" y="542" text-anchor="end">OCRBench v2</text><rect class="pos-pt" x="324.0" y="532" width="20.3" height="7" rx="1.5"/><text class="v" x="348.3" y="538.5" text-anchor="start">+0.70</text><rect class="pos-cpt" x="303.7" y="540" width="20.3" height="7" rx="1.5"/><text class="v" x="299.7" y="546.5" text-anchor="end">−0.70</text><text class="ch-lbl" x="142" y="562" text-anchor="end">CharXiv</text><rect class="pos-pt" x="324.0" y="552" width="116.0" height="7" rx="1.5"/><text class="v" x="444.0" y="558.5" text-anchor="start">+4.00</text><rect class="pos-cpt" x="312.4" y="560" width="11.6" height="7" rx="1.5"/><text class="v" x="308.4" y="566.5" text-anchor="end">−0.40</text><text class="ch-lbl" x="142" y="582" text-anchor="end">VisualWebBench</text><rect class="pos-pt" x="324.0" y="572" width="371.2" height="7" rx="1.5"/><text class="v" x="699.2" y="578.5" text-anchor="start">+12.80</text><rect class="pos-cpt" x="324.0" y="580" width="110.2" height="7" rx="1.5"/><text class="v" x="438.2" y="586.5" text-anchor="start">+3.80</text><text class="ch-lbl" x="142" y="602" text-anchor="end">CVBench</text><rect class="pos-pt" x="324.0" y="592" width="78.3" height="7" rx="1.5"/><text class="v" x="406.3" y="598.5" text-anchor="start">+2.70</text><rect class="pos-cpt" x="324.0" y="600" width="52.2" height="7" rx="1.5"/><text class="v" x="380.2" y="606.5" text-anchor="start">+1.80</text><text class="grp" x="0" y="624">VIDEO</text><text class="ch-lbl" x="142" y="642" text-anchor="end">EgoSchema</text><rect class="pos-pt" x="324.0" y="632" width="232.0" height="7" rx="1.5"/><text class="v" x="560.0" y="638.5" text-anchor="start">+8.00</text><rect class="pos-cpt" x="213.8" y="640" width="110.2" height="7" rx="1.5"/><text class="v" x="209.8" y="646.5" text-anchor="end">−3.80</text><text class="ch-lbl" x="142" y="662" text-anchor="end">LongVideoBench</text><rect class="pos-pt" x="324.0" y="652" width="95.7" height="7" rx="1.5"/><text class="v" x="423.7" y="658.5" text-anchor="start">+3.30</text><rect class="pos-cpt" x="324.0" y="660" width="11.6" height="7" rx="1.5"/><text class="v" x="339.6" y="666.5" text-anchor="start">+0.40</text><text class="ch-lbl" x="142" y="682" text-anchor="end">MLVU</text><rect class="pos-pt" x="324.0" y="672" width="81.2" height="7" rx="1.5"/><text class="v" x="409.2" y="678.5" text-anchor="start">+2.80</text><rect class="pos-cpt" x="310.7" y="680" width="13.3" height="7" rx="1.5"/><text class="v" x="306.7" y="686.5" text-anchor="end">−0.46</text><text class="ch-lbl" x="142" y="702" text-anchor="end">MMVU</text><rect class="pos-pt" x="324.0" y="692" width="49.3" height="7" rx="1.5"/><text class="v" x="377.3" y="698.5" text-anchor="start">+1.70</text><rect class="pos-cpt" x="324.0" y="700" width="1.0" height="7" rx="1.5"/><text class="v" x="328.0" y="706.5" text-anchor="start">±0</text><text class="ch-lbl" x="142" y="722" text-anchor="end">VideoMME</text><rect class="pos-pt" x="324.0" y="712" width="126.7" height="7" rx="1.5"/><text class="v" x="454.7" y="718.5" text-anchor="start">+4.37</text><rect class="pos-cpt" x="281.7" y="720" width="42.3" height="7" rx="1.5"/><text class="v" x="277.7" y="726.5" text-anchor="end">−1.46</text><text class="ch-lbl" x="142" y="742" text-anchor="end">TemporalBench</text><rect class="pos-pt" x="324.0" y="732" width="116.0" height="7" rx="1.5"/><text class="v" x="444.0" y="738.5" text-anchor="start">+4.00</text><rect class="pos-cpt" x="324.0" y="740" width="34.8" height="7" rx="1.5"/><text class="v" x="362.8" y="746.5" text-anchor="start">+1.20</text>
+    </svg>
+    <div class="chart-legend cell-legend"><span class="l1">MSA-PT − Full</span><span class="lc">MSA-CPT − Full</span></div>
+    <div class="cap">按表 2 数值相减；以 0 为中线，横轴单位为分（百分点）。不含 4 项 PPL。</div>
+  </div>
+
+  <div class="tbl-wrap tall wide">
+    <table>
+      <thead><tr><th>基准</th><th>Full</th><th class="q">MSA-PT</th><th>MSA-CPT</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">General</td></tr>
+        <tr><td>MMLU</td><td>67.0</td><td class="q best">67.2</td><td>66.8</td></tr>
+        <tr><td>MMLU-Pro</td><td>38.5</td><td class="q">38.8</td><td class="best">39.1</td></tr>
+        <tr><td>BBH</td><td class="best">67.7</td><td class="q">66.6</td><td>66.1</td></tr>
+        <tr><td>GPQA Hard</td><td>25.9</td><td class="q best">26.3</td><td class="best">26.3</td></tr>
+        <tr><td>ARC Challenge</td><td>82.7</td><td class="q">82.5</td><td class="best">82.9</td></tr>
+        <tr><td>TriviaQA</td><td>66.0</td><td class="q">65.5</td><td class="best">67.7</td></tr>
+        <tr><td>WinoGrande</td><td>58.3</td><td class="q">60.9</td><td class="best">62.0</td></tr>
+        <tr class="grp"><td colspan="4">Math</td></tr>
+        <tr><td>GSM8K</td><td>76.2</td><td class="q best">77.7</td><td>73.7</td></tr>
+        <tr><td>MGSM</td><td>44.1</td><td class="q best">46.0</td><td>44.2</td></tr>
+        <tr><td>MathVista</td><td>43.8</td><td class="q best">46.8</td><td>44.5</td></tr>
+        <tr><td>OlymMATH Easy P@100</td><td>23.0</td><td class="q best">26.0</td><td>22.0</td></tr>
+        <tr class="grp"><td colspan="4">Code</td></tr>
+        <tr><td>HumanEval</td><td>61.0</td><td class="q best">64.0</td><td>57.9</td></tr>
+        <tr><td>EvalPlus</td><td>59.4</td><td class="q best">61.8</td><td>60.0</td></tr>
+        <tr><td>BigCodeBench</td><td>44.8</td><td class="q">44.0</td><td class="best">45.7</td></tr>
+        <tr><td>MultiPL-E MBPP P@10</td><td class="best">82.1</td><td class="q">81.6</td><td>81.1</td></tr>
+        <tr class="grp"><td colspan="4">Retrieval</td></tr>
+        <tr><td>RULER-8K</td><td>79.8</td><td class="q best">84.2</td><td>77.2</td></tr>
+        <tr><td>RULER-32K</td><td>75.0</td><td class="q best">77.5</td><td>75.7</td></tr>
+        <tr class="grp"><td colspan="4">Image</td></tr>
+        <tr><td>AI2D</td><td>68.3</td><td class="q best">70.6</td><td>67.3</td></tr>
+        <tr><td>ChartQA</td><td>75.0</td><td class="q best">75.4</td><td>71.4</td></tr>
+        <tr><td>MMMU</td><td class="best">46.8</td><td class="q">45.9</td><td>44.5</td></tr>
+        <tr><td>OCRBench v2</td><td>55.0</td><td class="q best">55.7</td><td>54.3</td></tr>
+        <tr><td>CharXiv</td><td>37.55</td><td class="q best">41.55</td><td>37.15</td></tr>
+        <tr><td>VisualWebBench</td><td>55.6</td><td class="q best">68.4</td><td>59.4</td></tr>
+        <tr><td>CVBench</td><td>57.0</td><td class="q best">59.7</td><td>58.8</td></tr>
+        <tr class="grp"><td colspan="4">Video</td></tr>
+        <tr><td>EgoSchema</td><td>29.6</td><td class="q best">37.6</td><td>25.8</td></tr>
+        <tr><td>LongVideoBench</td><td>38.5</td><td class="q best">41.8</td><td>38.9</td></tr>
+        <tr><td>MLVU</td><td>44.14</td><td class="q best">46.94</td><td>43.68</td></tr>
+        <tr><td>MMVU</td><td>45.8</td><td class="q best">47.5</td><td>45.8</td></tr>
+        <tr><td>VideoMME</td><td>41.11</td><td class="q best">45.48</td><td>39.65</td></tr>
+        <tr><td>TemporalBench</td><td>49.4</td><td class="q best">53.4</td><td>50.6</td></tr>
+        <tr class="grp"><td colspan="4">PPL ↓（下游 agent 任务困惑度，越低越好）</td></tr>
+        <tr><td>TAU2</td><td>1.155</td><td class="q best">1.148</td><td>1.150</td></tr>
+        <tr><td>AgentCompany</td><td>1.248</td><td class="q">1.249</td><td class="best">1.247</td></tr>
+        <tr><td>HLE</td><td class="best">1.275</td><td class="q">1.278</td><td class="best">1.275</td></tr>
+        <tr><td>SWE</td><td class="best">1.216</td><td class="q">1.218</td><td class="best">1.216</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">本行最优（原文加粗在纯文本中丢失，本页按数值重标；PPL 取最低）</span><span class="k-q">MSA-PT</span></div>
+  <p class="tbl-note wide">记号说明：<b>P@100 / P@10</b> 为 pass@100 / pass@10；<b>↓</b> 表示越低越好；HLE、SWE 在此是 Humanity's Last Exam 与 SWE-bench 上的 <b>PPL</b>，不是解题率。部分行保留两位小数（CharXiv、MLVU、VideoMME），沿用原表写法<span class="src">表 2</span>。</p>
+
+  <h3 class="prose">6.3 长上下文扩展：表 3（仅 MSA-CPT）</h3>
+  <p class="prose">在 CPT 检查点上再训约 140B 长上下文 token 后，与 Full 对比。Δ 为原文给出<span class="src">表 3</span>。</p>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准 · 子集</th><th>Full</th><th class="q">MSA-CPT</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">HELMET-128K</td></tr>
+        <tr class="hl"><td>Overall</td><td>46.53</td><td class="q">45.93</td><td>−0.60</td></tr>
+        <tr><td>ICL</td><td>70.40</td><td class="q">72.80</td><td>+2.40</td></tr>
+        <tr><td>Rerank/RAG</td><td>34.60</td><td class="q">32.50</td><td>−2.10</td></tr>
+        <tr class="grp"><td colspan="4">RULER-128K</td></tr>
+        <tr class="hl"><td>Overall</td><td>72.00</td><td class="q">72.12</td><td>+0.12</td></tr>
+        <tr><td>CWE/FWE</td><td>46.35</td><td class="q">45.00</td><td>−1.35</td></tr>
+        <tr><td>MK/MQ/MV</td><td>96.63</td><td class="q">98.87</td><td>+2.24</td></tr>
+        <tr><td>QA1/QA2</td><td>47.80</td><td class="q">46.80</td><td>−1.00</td></tr>
+        <tr><td>VT</td><td>97.80</td><td class="q">96.80</td><td>−1.00</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">Overall 是各细分子任务的平均。原文没说明 Full 基线是否也做了同样 140B 的长上下文扩展。结论里作者自己也把「缩小剩余的长上下文检索差距」列为下一步<span class="src">§7</span>。</p>
+
+  <h3 class="prose">6.4 训练动态</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>PT vs Full：loss 曲线几乎重合 <span class="tag">图 2</span></h4><p>3T token 全程 LM loss 几乎无法区分，最后 50B token 的放大图中两条线仍然重叠；梯度范数处于同一区间，没有异常波动<span class="src">§5.2</span>。</p></div>
+    <div class="card mod"><h4>CPT：KL 与召回 <span class="tag">图 3</span></h4><p>warmup 阶段 KL 快速下降，切到稀疏后保持低位。<b>Block recall</b> = 选中块与「Main Branch 分数 Top-k 块」的重合比例；<b>score recall</b> = 选中块覆盖的 Main Branch 注意力质量占比。后者更高，说明选中块拿走了大部分注意力质量<span class="src">§5.2</span>。图中两条召回线大致在 0.7–0.95 区间（读图，非原文数值）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">两段式稀疏注意力、可学习 indexer、块稀疏 kernel 都不是本文首创。可核对的新意在下面这些组合和工程细节。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>「每个 GQA 组独立 Top-k」+「块级选择」同时成立</h4><p>DSA 是 token 级、所有头共享一个 Top-k；MoBA 虽在 GQA 上，但块很大、用块均值打分。MSA 让 4 个 KV 组各选 16 个 128-token 块，选块器只多 2 个投影<span class="src">§3.1 · §6</span>。附录可视化显示不同组确实挑了不同的长程条纹，并没有塌缩成同一种全局模式<span class="src">附录 A · 图 5</span>。</p><p class="why">没有和 DSA / MoBA / NSA 在同底座、同预算下的质量对照。</p></div>
+    <div class="card nv"><h4>把辅助 KL 关在 Index Branch 里，并给出失败模式</h4><p>teacher 分布 detach 还不够，Index Branch 的输入 X 也要 stop-grad；否则会出现 loss 发散，以及主干「把注意力变简单来迎合 KL」导致的短上下文退化<span class="src">§3.2 · §B.3</span>。</p><p class="why">失败模式只在 pilot 上用图展示（图 8–9），没有数值表。</p></div>
+    <div class="card nv"><h4>同一配方覆盖「从头训」和「从 GQA 检查点转」</h4><p>同一套 warmup + KL 用在两条路线上，在 109B、3T 预算下给出 PT / CPT 与 Full 的逐项对照，并报告了 CPT 的选块召回曲线<span class="src">§5 · 表 2 · 图 3</span>。</p><p class="why">CPT 只做了一次（2.6T 起点）；不同转换起点、不同续训长度的影响没测。</p></div>
+    <div class="card nv"><h4>KV-outer + query 拼接 + 预调度切块的稀疏 prefill kernel</h4><p>算术强度从 ≈ G 提到 ≈ ⅔B<sub>k</sub>；热门块（如 sink）切成多 CTA，预分配槽位免 atomic；两阶段 combine 用 PDL 衔接<span class="src">§4.2</span>。训练侧把 KL 所需的 LSE 融进主前向<span class="src">§4.3</span>。</p><p class="why">只有端到端的注意力延迟（图 4），没有 kernel 级的分项耗时或 tensor core 利用率。</p></div>
+    <div class="card nv"><h4>小 k 专用的 exp-free TopK</h4><p>寄存器缓存堆顶 + 每 lane 固定 bank 的共享内存最小堆 + k 轮 shuffle 合并；在部署配置 k = 16 下比 torch.topk 快 5.1×（128K）/ 4.3×（512K）<span class="src">§4.1 · 表 1</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">MSA 是 LLM 注意力论文，<b>不涉及</b>图像数据构建或 caption 流水线。可借鉴的是它的方法论：用便宜的选择器去逼近昂贵的「老师」，并用召回去量化；把辅助目标关在自己的模块里；以及同预算、匹配检查点的对照实验。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据过滤与选择</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>便宜的选择器要报两种召回</h4><p class="paper">论文：用 block recall（选中块与 Main Branch Top-k 的重合率）和 score recall（选中块覆盖的注意力质量）衡量 indexer，两者都随训练跟踪<span class="src">§5.2 · 图 3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>用小 VLM 或规则给编辑对做初筛、大 VLM 当判官时，同时报「集合召回」（小模型保留的样本里有多少落在大模型 Top-k 中）和「分数加权召回」（被保留样本占大模型总分的比例）。后者能看出漏掉的是不是高分样本。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>选择器要先在「不过滤」状态下热身</h4><p class="paper">论文：训练初期注意力分布变化很快，直接稀疏选块近乎随机，会把主干带偏；先跑全注意力只训 indexer，再切到稀疏<span class="src">§B.4 · 图 10–11</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>新接一个数据源或新上一版质量打分器时，先让它<b>只打分不剔除</b>跑一轮（shadow mode），对照人工抽检校准阈值，再真正开始过滤。不要让刚上线的打分器直接决定哪些数据进训练集。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>过滤效果要和同预算的固定规则比</h4><p class="paper">论文：拿同 FLOPs、同 token 预算的「首块 + 滑窗」固定模式作为对照，证明动态选块确实有用，而不只是因为「看得少」<span class="src">§B.6 · 图 14</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>报告「模型筛过的 N 万对」的收益时，同时训一份「随机抽 N 万对」和「按简单规则（分辨率、长宽比、OCR 量）筛 N 万对」的对照；只和全量数据比，分不清收益来自筛选还是来自数据变少。</p></div>
+    </div>
+
+    <div class="impl-group">caption 与辅助目标</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>辅助损失别反传进主干</h4><p class="paper">论文：KL 若能传到主干，主干会「把注意力变简单」来降低 KL，短上下文能力因此退化；对 Index Branch 输入做 stop-grad 后问题消失<span class="src">§B.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑模型上挂「caption-图像一致性」或「编辑区域预测」之类的辅助头时，默认 detach 主干特征，先确认辅助头本身学得好。若要让辅助信号回流主干，单独做一组对照，看主任务指标会不会被「迎合辅助目标」拖低。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>硬编码的先验要定期拆掉重测</h4><p class="paper">论文：早期强制选首块和大局部窗作为稳定器；后来发现去掉后模型自己会学出 sink 和局部模式，最终只保留强制自身块；可学习 sink 也没带来一致收益<span class="src">§C.2 · §B.5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>结构化 caption 里那些「必填」字段（如固定的保持清单、固定的风格槽）往往是早期为了稳定加的。每个大版本做一次去掉字段的对照，看模型和判官是否已经能从自由文本里拿到同样的信息，避免模板越来越重。</p></div>
+    </div>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>同预算、匹配检查点、同一套评测</h4><p class="paper">论文：Full、MSA-PT、MSA-CPT 都在 3T 总预算下取匹配检查点，用同一套评测，覆盖文本、代码、图像、视频、长上下文和 agent PPL<span class="src">§5.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>比较两版编辑数据时，固定训练步数和样本数，取同一步的检查点，用同一份评测集。另外保留一组「与编辑无关」的回归项（文生图质量、人像保真、文字渲染），确认数据改动没有悄悄伤到别的能力。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>超大单项涨幅先怀疑噪声</h4><p class="paper">论文：同一套注意力改动下，PT 在 VisualWebBench 上 +12.8、EgoSchema 上 +8.0，而 MMMU 是 −0.9；作者只说差距「依基准而异」，没有报方差或多次运行<span class="src">表 2 · §5.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测按类别报分差时，先用同一模型不同 seed 重跑两次，测出每个类别的「自身波动」。超过这个波动的变化才算数；单项暴涨时先检查样本数、判官稳定性，再归因到数据改动。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>loss 类指标当早期信号，但要先知道噪声底</h4><p class="paper">论文：用下游 agent 任务上的 PPL 做廉价代理指标，三个模型的差异在千分位（如 TAU2 1.155 / 1.148 / 1.150）<span class="src">表 2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>按编辑类型（增、删、换、风格、文字）分桶留 held-out 集，训练过程中持续看各桶的验证 loss，比跑生成 + 判官便宜得多。但千分位级别的差异要先用重复训练确认不是噪声，并定期和真实生成评测对一次结论。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>109B 实验模型 ≠ MiniMax-M3：</b>论文只在摘要里说 M3「由 MSA 驱动」并给出 HF 链接；M3 的参数量、MSA 配置（B<sub>k</sub>、k）、训练数据与流程都不在论文里。本页所有质量和效率数字都只适用于 109B 实验模型<span class="src">摘要 · §5.1</span>。</li>
+    <li class="key"><b>1M 只有效率，没有质量：</b>质量评测最长到 128K（表 3）；28.4× / 14.2× / 7.6× 都在 1M 上测。1M 下检索与推理质量是否保持，原文没给数据<span class="src">表 3 · 图 4</span>。</li>
+    <li class="key"><b>数据完全未披露：</b>文本 / 图像 / 视频的来源、配比、清洗、caption 都没有；3T 阶段的训练长度与 140B 长上下文扩展的目标长度也没有<span class="src">§5 · §5.3</span>。</li>
+    <li class="key"><b>没有和同类方法同规模对比：</b>只与自家 GQA 比；NSA、DSA、MoBA、InfLLM-V2 只在相关工作里定性对比<span class="src">§6</span>。</li>
+    <li><b>效率口径不完整：</b>图 4 是注意力延迟，不是端到端吞吐；batch、精度、GQA 基线所用 kernel 没说明。d<sub>idx</sub> 未给，本页按式 12 反推约 128<span class="src calc">推算</span>。</li>
+    <li><b>Agent 只有 PPL：</b>TAU2、AgentCompany、HLE、SWE 四行都是困惑度，差异在千分位；没有任务成功率，也没说明 PPL 在什么文本上计算<span class="src">表 2</span>。</li>
+    <li><b>无方差、单次运行：</b>表 2 没有误差棒。PT 在 VisualWebBench +12.8、EgoSchema +8.0 这类大幅提升，单靠「改注意力」难以解释，原文没讨论<span class="src">表 2</span>。</li>
+    <li><b>消融的文字结论比数字乐观：</b>表 5 中去掉强制 sink / 局部窗后 RULER-32K 从 65.8 降到 61.5，正文称「comparable」；表 4 中块从 32 增到 128 时 RULER-32K 从 66.1 降到 64.6，正文称「无明显退化」<span class="src">§C.1 · §C.2</span>。</li>
+    <li><b>最终配方在从头训设定下没有直接消融：</b>§B.2 的 pilot 结果显示「仅 KL」会伤短上下文；去掉 value 头的依据是表 6（标为续训消融）加上 warmup。MSA-PT 用的「无 value 头 + warmup」组合没有单独的从头训对照<span class="src">§B.2 · §C.3</span>。</li>
+    <li><b>Full 基线是否做了长上下文扩展不明：</b>表 3 只说 MSA-CPT 做了约 140B 扩展，Full 列的训练状态没交代<span class="src">§5.3</span>。</li>
+    <li><b>没有后训练 / RL：</b>全是预训练阶段评测；RL 与 agent 部署只出现在展望里<span class="src">§7</span>。开源部分只说明了推理 kernel，训练 kernel 和许可证都未提及。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>MSA 总览：Index Branch / Main Branch / 分组选块掩码（<code>figures/fig1.jpg</code>，p.1）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 2</td><td>Full vs MSA-PT 的 LM loss 与梯度范数（未裁图，仅文字引用）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>图 3</td><td>MSA-CPT 的 KL loss 与选块召回（未裁图，仅文字引用）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>图 4</td><td>GQA vs MSA：FLOPs、prefill、decode（<code>figures/fig4.jpg</code>，p.12）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>图 5 / 6</td><td>Index 选块概率可视化；各头首 token 注意力（sink）（未裁图）</td><td><a href="#novel">§07</a></td></tr>
+        <tr><td>图 7–14</td><td>附录消融：梯度来源、KL detach、warmup、可学习 sink、滑窗对照（未裁图）</td><td><a href="#train">§05.2</a></td></tr>
+        <tr><td>算法 1</td><td>单层 MSA 训练前向与 KL loss</td><td><a href="#arch">§03.1</a> · <a href="#train">§05.1</a></td></tr>
+        <tr><td>表 1</td><td>TopK kernel 延迟</td><td><a href="#arch">§03.3（折叠）</a></td></tr>
+        <tr><td>表 2</td><td>Full / MSA-PT / MSA-CPT 主结果</td><td><a href="#eval">§06.2</a></td></tr>
+        <tr><td>表 3</td><td>MSA-CPT 长上下文扩展：HELMET / RULER 128K</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>表 4–6</td><td>块大小；强制 sink / 局部窗；Index value 头</td><td><a href="#train">§05.2</a></td></tr>
+        <tr><td>示意图</td><td>MSA 单层示意（本页据 §3 绘制）；效率柱状图（据图 4 标注）；表 2 分差图（本页计算）；token 时间线（据 §5.1）</td><td><a href="#arch">§03</a> · <a href="#eval">§06</a> · <a href="#train">§05</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 MiniMax《MiniMax Sparse Attention》（<a href="https://arxiv.org/abs/2606.13392" target="_blank" rel="noopener">arXiv:2606.13392</a>；v1 发布于 2026-06-11，本页依据 v2，2026-06-12）撰写。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

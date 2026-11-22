@@ -480,6 +480,22 @@
       "one_liner": "旗舰 M2 为 229.9B 总参 / 9.8B 激活、62 层、256 专家、预训练 29.2T token、192K 上下文；系列从 M2 到 M2.7。后训练重点是可执行环境绑定的 Agent 数据管线与 Forge RL。正文未给出权重仓库或许可证。图 1 柱状图数字为读图。",
       "path": "reports/llm/minimax-m2/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "minimax-msa-m3",
+      "title": "MiniMax Sparse Attention (M3)",
+      "subtitle": "MiniMax Sparse Attention",
+      "vendor": "MiniMax",
+      "vendor_key": "minimax",
+      "category": "llm",
+      "date": "2026-06-11",
+      "paper": "https://arxiv.org/abs/2606.13392",
+      "arxiv": "2606.13392",
+      "open_weights": false,
+      "params": "实验模型 109B / 6B 激活；MiniMax-M3 规模原文未披露",
+      "one_liner": "方法论文，不是完整模型卡。MSA 在 GQA 上加轻量 Index Branch，Main Branch 只在选出的 KV 块上做精确注意力。109B/6B 激活的多模态 MoE 实验模型、3T token：下游与 GQA 基本持平；1M 上下文注意力 FLOPs 降 28.4×，H800 上 prefill 14.2×、decode 7.6×。生产模型 MiniMax-M3 已在 HF 发布，但规模与训练细节原文未写。推理 kernel 开源。",
+      "path": "reports/llm/minimax-msa-m3/",
+      "added": "2026-11-22"
     }
   ]
 }

@@ -34,4 +34,5 @@
   - [DeepSeek-V4](./reports/llm/deepseek-v4/)（LLM）
   - [DeepSeek-V4.1-Flash](./reports/llm/deepseek-v4.1-flash/)（LLM）
   - [MiniMax-M2 Series](./reports/llm/minimax-m2/)（LLM）
+  - [MiniMax Sparse Attention (M3)](./reports/llm/minimax-msa-m3/)（LLM · 方法）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。
