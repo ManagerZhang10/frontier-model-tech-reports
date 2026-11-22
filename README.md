@@ -24,6 +24,7 @@
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |
+| 图像生成 / 编辑 | [Wan-Image](./reports/image/wan-image/) | Wan Team, Alibaba Group | 2026-04-21 | [arXiv:2604.19858](https://arxiv.org/abs/2604.19858) |
 | 视频生成 | [HunyuanVideo 1.5](./reports/video/hunyuanvideo-1.5/) | Tencent Hunyuan Foundation Model Team | 2025-11-24 | [arXiv:2511.18870](https://arxiv.org/abs/2511.18870) |
 | 视频生成 | [Kling-Omni](./reports/video/kling-omni/) | Kling Team, Kuaishou Technology | 2025-12-18 | [arXiv:2512.16776](https://arxiv.org/abs/2512.16776) |
 | 视频生成 | [Seedance 2.0](./reports/video/seedance-2.0/) | ByteDance Seed | 2026-04-15 | [arXiv:2604.14148](https://arxiv.org/abs/2604.14148) |

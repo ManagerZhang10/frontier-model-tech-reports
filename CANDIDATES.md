@@ -34,7 +34,7 @@
 | Image | 2025-11 | Alibaba Tongyi | Z-Image | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) | 已发布 |
 | Image | 2025-12 | Meituan | LongCat-Image | [arXiv:2512.07584](https://arxiv.org/abs/2512.07584) | 待写 |
 | Image | 2026-02 | FireRed | FireRed-Image-Edit-1.0 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) | 已发布 |
-| Image | 2026-04 | Alibaba Wan | Wan-Image | [arXiv:2604.19858](https://arxiv.org/abs/2604.19858) | 待写 |
+| Image | 2026-04 | Alibaba Wan | Wan-Image | [arXiv:2604.19858](https://arxiv.org/abs/2604.19858) | 已发布 |
 | Image | 2026-05 | Qwen | Qwen-Image-2.0 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) | 已发布 |
 | Image | 2026-06 | Qwen | Qwen-Image-2.0-RL | [arXiv:2606.27608](https://arxiv.org/abs/2606.27608) | 待写 |
 | Image | 2026-05 | Baidu | ERNIE-Image | [arXiv:2605.25347](https://arxiv.org/abs/2605.25347) | 待写 |

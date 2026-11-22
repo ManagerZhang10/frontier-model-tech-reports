@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wan-Image 中文深读 · 理解-生成统一架构、结构化 JSON caption、RGBA VAE 与 Cascade RL | 前沿模型技术报告</title>
+<meta name="description" content="Wan-Image（Wan Team, Alibaba Group, arXiv 2604.19858）中文深读：MLLM Planner + DiT Visualizer 统一架构、四通道 VAE、多模态检索与多维算子的数据引擎、五类路由 25 属性的结构化 JSON caption、训练配方、Cascade RL、评测，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: hero figure, MoT 架构示意, 双行训练流程, 图 8 图例 */
+.hero-one { margin-top: 28px; max-width: 1080px; }
+.hero-one .img-pad { max-height: 470px; overflow: hidden; }
+.hero-one .img-pad img { object-fit: cover; object-position: top; max-height: 450px; width: 100%; }
+.arch .dg-und { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.2; }
+.arch .dg-gen { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.arch .dg-att { fill: color-mix(in srgb, var(--accent) 14%, var(--card)); stroke: var(--accent); stroke-width: 1.5; }
+.arch .dg-frame { fill: none; stroke: var(--line); stroke-width: 1.4; }
+.arch .dg-dash { stroke: var(--muted); stroke-width: 1.3; stroke-dasharray: 5 4; fill: none; }
+.arch .dg-ext { fill: var(--card); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.arch .dg-tk { font: 600 10.5px var(--f-mono); fill: var(--muted); }
+.arch .dg-hl { font: 700 11px var(--f-mono); fill: var(--accent-ink); }
+.arch .dg-hw { font: 700 11px var(--f-mono); fill: var(--warm); }
+.flow-u { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.flow-g { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.stage.u { border-top: 3px solid var(--accent); }
+.stage.g { border-top: 3px solid var(--warm); }
+.stage.p { border-top: 3px solid var(--good); }
+.row-lbl { font: 600 .76rem/1 var(--f-mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; margin: 18px 0 0; }
+.f8-legend span.e::before { background: var(--accent); }
+.f8-legend span.r::before { background: var(--bar-other2); }
+.f8-legend span.x::before { background: var(--bar-other); }
+.cap-tri { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.cap-tri .card { padding: 14px 16px; }
+.cap-tri h4 { margin: 0 0 4px; font-size: .98rem; }
+.cap-tri p { margin: 0; font-size: .9rem; color: var(--ink-2); }
+.json-demo { font: 500 .8rem/1.55 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0 4px; }
+table.txt th, table.txt td { white-space: normal; text-align: left; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; }
+@media (max-width: 960px) {
+  .flow-g { grid-template-columns: 1fr 1fr; }
+  .flow-u { grid-template-columns: 1fr; }
+  .flow .stage::after { display: none; }
+  .cap-tri { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) { .flow-g { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成 / 图像编辑</div>
+    <h1>Wan-Image<span class="sub">Pushing the Boundaries of Generative Visual Intelligence</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Wan Team, Alibaba Group</b></span>
+      <span>发布 <b>2026-04-21</b>（arXiv v1）</span>
+      <span>arXiv <b>2604.19858</b></span>
+      <span>Model Card <b>Wan2.7-Image</b></span>
+      <span>本页依据 <b>v2（2026-04-23）</b>全文</span>
+    </div>
+    <p class="lede">一个 MLLM（Planner）+ DiT（Visualizer）共享注意力的理解-生成统一模型，最多吃 <b>9 张</b>输入、一次出 <b>12 张</b>组图、支持 <b>1:8</b> 极端比例<span class="src">§2.2</span>，配四通道 RGBA VAE、Prompt Enhancer 和 2K–4K Image Refiner。对编辑方向的读者，最值钱的是 §2.2 的数据引擎：多种子图检索、多维图像算子、<b>五类路由 + 25 个属性</b>的结构化 JSON caption<span class="src">§2.2.2</span>，以及按「参考/编辑范式 · 编辑目标 · 编辑类型」分层的编辑任务标签。</p>
+    <div class="badges">
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>开源：原文未声明（仅给 Model Card 与在线体验页）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>参数规模：原文未披露</span>
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>图像生成 · 图像编辑 · 组图 · 图文交错</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>原生 RGBA（透明通道）</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2604.19858" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2604.19858</a>
+      <a href="https://create.wan.video/generate/image/generate?model=wan2.7-pro" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>在线体验页（原文所附）</a>
+    </div>
+    <figure class="fig card hero-one">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="Wan-Image 文生图能力示例拼图：海报、信息图、写实场景与人像" loading="eager"></div>
+      <figcaption><b>文生图能力示例</b>（截取上部）：信息图、长文本海报、中英混排、写实人像与场景。挑选的展示样例，不代表统计结论。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v2；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只说「moderate parameter scale」；理解分支初始化自 Qwen-VL base，与 7–8B 级理解模型对比</span><span class="src">§4.1 · §4.4 · 表 4</span></div>
+    <div class="card stat"><span class="stat-k">架构</span><span class="stat-num sm">MLLM 专家 + DiT 专家，块内共享注意力</span><span class="stat-sub">理解：decoder-only；生成：Rectified Flow DiT</span><span class="src">§3.1</span></div>
+    <div class="card stat"><span class="stat-k">VAE</span><span class="stat-num sm">4 通道 · 16×16 · 48 维</span><span class="stat-sub">2×2 patchify + 8×8 下采样；RGB+Alpha 联合建模</span><span class="src">§3.2 · 表 1</span></div>
+    <div class="card stat"><span class="stat-k">输入 / 输出图数</span><span class="stat-num">9 / 12</span><span class="stat-sub">I2I 最多 9 张参考图；T2S / TI2S 最多 12 张组图</span><span class="src">§2.2 · §3.5</span></div>
+    <div class="card stat"><span class="stat-k">极端比例 / 分辨率</span><span class="stat-num sm">1:8 · Refiner 2K–4K</span><span class="stat-sub">DiT 训练分辨率最高 2048</span><span class="src">§2.2 · §3.5 · 表 3</span></div>
+    <div class="card stat"><span class="stat-k">生成训练 token</span><span class="stat-num">22.74T</span><span class="stat-sub">PT 13.27T + CT 8.85T + SFT 0.62T</span><span class="src calc">推算</span><span class="src">表 3</span></div>
+    <div class="card stat"><span class="stat-k">结构化 caption</span><span class="stat-num sm">5 类路由 · 25 属性</span><span class="stat-sub">每类映射不同的属性子集；再由微调 MLLM 改写成自然语言</span><span class="src">§2.2.2</span></div>
+    <div class="card stat"><span class="stat-k">Cascade RL 增益</span><span class="stat-num">+15%–50%</span><span class="stat-sub">相对 SFT 基线的 Win Score 提升（分场景）</span><span class="src">§4.3.4 · 图 16</span></div>
+    <div class="card stat"><span class="stat-k">蒸馏加速</span><span class="stat-num">&gt;8×</span><span class="stat-sub">轨迹蒸馏 + 分布匹配蒸馏，多阶段渐进；NFE 未给</span><span class="src">§4.4</span></div>
+    <div class="card stat"><span class="stat-k">交互编辑 / 组图</span><span class="stat-num sm">Pass Rate ≈80%</span><span class="stat-sub">内部人评；无对比模型</span><span class="src">§1 · 图 1</span></div>
+    <div class="card stat"><span class="stat-k">训练数据量（图像数）</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只给 token 数和图 8 的任务内类别占比</span><span class="src">表 3 · 图 8</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 2026-04-21</span><span class="stat-sub">本页对照的 PDF 为 v2（arXiv 戳 2026-04-23，正文 Date 写 2026-04-27）</span><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>理解与生成是一个模型</h3><p>MLLM 专家与 DiT 专家在每个块内共享注意力；先训理解分支，再用它的注意力权重初始化生成分支<span class="src">§3.1</span>。Planner 用 <code>&lt;imagine&gt;</code> 写稠密描述、用 <code>&lt;size&gt;</code> 推断输出分辨率，交给 Visualizer 出图<span class="src">§3.3</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>数据引擎是重头</h3><p>多种子图检索 + 聚类多样性重排；五类图像算子（特征、美学、AIGC 检测、低层信息、整体画质）；每条样本打分超过 20 个维度，阈值随阶段收紧，最后人工抽检<span class="src">§2.2.1 · §2.2.3</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>caption 三种并用</h3><p>原始网页文本（保留噪声）、多粒度自然语言 caption、按 5 类图像路由到 25 个属性的结构化 JSON caption，并支持按维度增量更新<span class="src">§2.2.2</span>。I2I 的 PE 输出拆成 <code>common</code> / <code>difference</code> 两个字段<span class="src">§3.4</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>训练账本公开到超参</h3><p>生成 PT 713K 步 / 13.27T token，CT 223K 步 / 8.85T，SFT 13K 步 / 0.62T；T2I:I2I 从 7:3 调到 7:2:0.5:0.5（含 T2S/TI2S）<span class="src">表 3</span>。之后 Cascade RL（DPO、ReFL、DenseGRPO、自研 ReFMA）相对 SFT 提升 15%–50%<span class="src">§4.3</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>生成评测只有内部人评</h3><p>作者称整体超过 Seedream 5.0 Lite 与 GPT Image 1.5，落后 Nano Banana Pro，但文字渲染、写实等难项接近；交互编辑和组图 Pass Rate 约 80%<span class="src">§1 · 图 1</span>。没有任何公开生成/编辑基准的数字，样本量与评审人数也未给。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：Planner + Visualizer 的统一 Transformer</h2>
+  <p class="sec-intro">论文架构图（图 12）不在本页裁图中，下面按 §3.1–3.5 与图 12 的文字层复原，只画原文写明的部分。</p></div>
+
+  <div class="card diagram wide arch">
+    <svg viewBox="0 0 980 430" role="img" aria-label="Wan-Image 统一架构示意">
+      <!-- inputs -->
+      <rect class="dg-und" x="150" y="350" width="250" height="44" rx="8"/><text class="dg-t" x="275" y="369" text-anchor="middle">Text Tokenizers &amp; ViT Encoder</text><text class="dg-s" x="275" y="385" text-anchor="middle">文本 + 输入图语义 token · MRoPE</text>
+      <rect class="dg-gen" x="440" y="350" width="250" height="44" rx="8"/><text class="dg-t" x="565" y="369" text-anchor="middle">4 通道 VAE Encoder（RGBA）</text><text class="dg-s" x="565" y="385" text-anchor="middle">加噪目标 latent + 干净输入图 latent</text>
+      <!-- block frame -->
+      <rect class="dg-frame" x="130" y="86" width="580" height="236" rx="14"/>
+      <text class="dg-tk" x="144" y="106">每个 Transformer 块（层数原文未披露）</text>
+      <!-- QKV -->
+      <rect class="dg-und" x="150" y="252" width="250" height="40" rx="8"/><text class="dg-t" x="275" y="277" text-anchor="middle">QKV Projection · 理解专家</text>
+      <rect class="dg-gen" x="440" y="252" width="250" height="40" rx="8"/><text class="dg-t" x="565" y="277" text-anchor="middle">QKV Projection · 生成专家</text>
+      <path class="dg-line-main" d="M275 350V292"/><path class="dg-line" d="M565 350V292"/>
+      <!-- shared attention -->
+      <rect class="dg-att" x="150" y="180" width="540" height="48" rx="10"/>
+      <text class="dg-t" x="420" y="200" text-anchor="middle">共享注意力（结构化 mask）</text>
+      <text class="dg-s" x="420" y="217" text-anchor="middle">text / ViT / VAE token 之间 causal · 单张图内部 bidirectional · 同一组图跨图 bidirectional</text>
+      <path class="dg-line-main" d="M275 252V228"/><path class="dg-line" d="M565 252V228"/>
+      <!-- FFN -->
+      <rect class="dg-und" x="150" y="118" width="250" height="40" rx="8"/><text class="dg-t" x="275" y="143" text-anchor="middle">FFN · 理解专家</text>
+      <rect class="dg-gen" x="440" y="118" width="250" height="40" rx="8"/><text class="dg-t" x="565" y="137" text-anchor="middle">FFN · 生成专家</text><text class="dg-s" x="565" y="151" text-anchor="middle">AdaLN 时间步调制 · QK-Norm</text>
+      <path class="dg-line-main" d="M275 180V158"/><path class="dg-line" d="M565 180V158"/>
+      <!-- outputs -->
+      <rect class="dg-box" x="150" y="22" width="250" height="44" rx="8"/><text class="dg-t" x="275" y="41" text-anchor="middle">Next Token Prediction</text><text class="dg-s" x="275" y="57" text-anchor="middle">文本 / &lt;imagine&gt; / &lt;size&gt; / &lt;BOI&gt;</text>
+      <rect class="dg-box" x="440" y="22" width="250" height="44" rx="8"/><text class="dg-t" x="565" y="41" text-anchor="middle">Velocity Prediction → VAE Decoder</text><text class="dg-s" x="565" y="57" text-anchor="middle">Rectified Flow · 3D-RoPE</text>
+      <path class="dg-line-main" d="M275 118V66"/><path class="dg-line" d="M565 118V66"/>
+      <text class="dg-hl" x="150" y="80">Planner（MLLM）</text>
+      <text class="dg-hw" x="690" y="80" text-anchor="end">Visualizer（DiT）</text>
+      <!-- external modules -->
+      <rect class="dg-ext" x="10" y="350" width="120" height="44" rx="8"/><text class="dg-t" x="70" y="369" text-anchor="middle">Prompt Enhancer</text><text class="dg-s" x="70" y="385" text-anchor="middle">独立模型 · 可选</text>
+      <path class="dg-dash" d="M130 372H150"/>
+      <rect class="dg-ext" x="730" y="22" width="230" height="44" rx="8"/><text class="dg-t" x="845" y="41" text-anchor="middle">Image Refiner</text><text class="dg-s" x="845" y="57" text-anchor="middle">修复 / 高保真两模式 · 2K–4K</text>
+      <path class="dg-dash" d="M690 44H730"/>
+      <!-- annotations -->
+      <text class="dg-tk" x="730" y="140">编辑条件：干净输入图 VAE token</text>
+      <text class="dg-tk" x="730" y="156">与加噪 token 一起送入 DiT，</text>
+      <text class="dg-tk" x="730" y="172">其时间步固定为 0（类 Teacher Forcing）</text>
+      <text class="dg-tk" x="730" y="212">位置编码：理解侧 MRoPE；</text>
+      <text class="dg-tk" x="730" y="228">生成侧 3D-RoPE，T 轴在文本与</text>
+      <text class="dg-tk" x="730" y="244">图像段之间插固定偏移作语义边界</text>
+      <text class="dg-tk" x="730" y="284">初始化：先训理解分支，生成分支</text>
+      <text class="dg-tk" x="730" y="300">注意力权重从理解分支拷贝，新模块随机</text>
+    </svg>
+    <div class="cap">示意，非论文原图。依据 §3.1–3.5 与图 12 文字层绘制。图 12 中两支各画了一个 Attention 框，这里合并成一个框表达正文「share attention within each block」；PE 与 Refiner 是独立模型，与主干的具体接口原文未画，用虚线表示。</div>
+  </div>
+
+  <div class="prose">
+    <h3>相对同类的改动</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>专家分离 + 共享注意力 <span class="tag">§3.1</span></h4><p>理解（decoder-only）与生成（DiT）各有专属权重，块内共享注意力做特征对齐；引文指向 Mixture-of-Transformers 与 BAGEL 一路的设计。两支分阶段解耦训练，推理时统一。</p></div>
+      <div class="card mod"><h4>编辑条件走「干净 VAE token」 <span class="tag">§3.1</span></h4><p>输入图除了经 ViT 进理解侧，还以干净 VAE token 进 DiT，时间步设 0 当确定性条件，用来保留结构和细节。</p></div>
+      <div class="card mod"><h4>组图跨图双向注意力 <span class="tag">§3.1</span></h4><p>同一组图的所有视觉 token 之间开 bidirectional attention，作者称用于身份一致和风格连贯（无消融）。</p></div>
+      <div class="card mod"><h4>Planner 推断分辨率 <span class="tag">§3.3</span></h4><p>从 prompt 里的比例、横竖构图、场景描述推断输出尺寸，写成 <code>&lt;size&gt;grid_h*grid_w&lt;/size&gt;</code>；多图 I2I 还参考输入图尺寸。所有任务都支持 Think Mode。</p></div>
+    </div>
+
+    <h3>三个外围模块</h3>
+    <div class="card mod"><h4>四通道 VAE <span class="tag">§3.2</span></h4>
+      <ul><li>2×2 patchify + 8×8 下采样，总压缩 16×16；latent 48 维<span class="src">表 1</span>。编解码器多级残差块堆叠。</li>
+      <li>混合重建损失同时约束可见内容、alpha 结构、透明边界（各项权重<span class="nd">原文未披露</span>）。</li>
+      <li>三段训练：256² → 混合分辨率 → 加 4 通道 GAN 判别器，最终适配到 2K；参照 VA-VAE 加语义蒸馏。CT 数据含多语种场景文字、文档、合成排版文字、密集人脸、复杂纹理，作者观察到小字重建能力随之「涌现」。</li></ul></div>
+    <div class="card mod"><h4>Prompt Enhancer（PE） <span class="tag">§3.4</span></h4>
+      <ul><li><b>非 CoT 版</b>：基于 Qwen3-VL-2B，约 1 秒，输出 400–600 token；训练数据构造时用过推理，但只学改写结果。</li>
+      <li><b>CoT 版</b>：基于 Qwen3-VL-30B-A3B，先推理再改写，输出约 1,500–2,000 token。</li>
+      <li>一个模型联合覆盖 T2I / I2I / T2S / TI2S：T2S 输出按张数展开的列表；I2I 与 TI2S 输出 <code>common</code>（应保持）与 <code>difference</code>（应修改）两字段。</li>
+      <li>T2I 下 PE 兼做分类器，只对 7 类 prompt 改写：文字排版、海报与平面设计、信息图与数据可视化、界面/UI、叙事与多格分镜、技术图解、逻辑推理与知识展示。</li>
+      <li>两阶段训练：SFT（T2I 最多，T2S 与 TI2S 相当，I2I 较少）→ GRPO（T2I 最多，其余三类较少且相当）；reward 维度为意图忠实度、描述丰富度、语言准确性。具体条数<span class="nd">原文未披露</span>。</li></ul></div>
+    <div class="card mod"><h4>Image Refiner <span class="tag">§3.5</span></h4>
+      <p>多图输入/输出时序列长度固定，单图分辨率被压低，所以在 DiT 输出后接 Refiner 提到 2K–4K。<b>修复模式</b>接收图 + 详细 prompt，可修错字、去伪影；<b>高保真模式</b>只改低层细节、不动结构，用于身份敏感场景。训练退化：模糊、噪声、有损压缩，以及「扩散模型前向加噪再去噪」抹细节；再做蒸馏与 RL。</p></div>
+  </div>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：检索 → 算子过滤 → 分类路由 → 结构化 caption → 分阶段调度</h2>
+  <p class="sec-intro">原文没有给出图像/样本总数，也没给任何过滤阈值和剔除率。能核对的量化信息只有：表 3 的 token 数与任务配比、图 8 的任务内类别占比、几处上限（9 输入 / 12 输出 / 1:8 / 25 属性 / 20+ 打分维度）。</p></div>
+
+  <div class="wide">
+    <h3 style="margin-top:0">4.1 生成数据流水线 <span class="src">§2.2.1–2.2.3 · 图 9</span></h3>
+    <div class="pipe">
+      <div class="pipe-head"><span>环节</span><span>做什么</span><span>关键手段</span><span>产出</span></div>
+      <div class="pipe-row"><div class="lbl">① 多模态检索</div><div class="chip">按目标类别捞数据</div><div class="chip m">SigLIP 特征 + 「百万级」聚类中心建类别特征库；以图搜图、多图搜图、文搜图、图文混合、批量检索；聚类多样性重排</div><div class="chip o">候选集</div></div>
+      <div class="pipe-row"><div class="lbl">② 美学专家闭环</div><div class="chip">定义「好」的样子</div><div class="chip m">专家给种子图 + 文本描述；对候选集标正/负样本，训练<b>类别专属</b>美学打分器做大规模过滤</div><div class="chip o">检索 → 标注 → 再检索 → 清洗的正反馈</div></div>
+      <div class="pipe-row"><div class="lbl">③ 多维算子</div><div class="chip">逐张量化质量</div><div class="chip m">特征提取、多级美学、多级 AIGC 检测、低层信息（熵 + 压缩伪影）、整体画质（水印、油腻纹理）</div><div class="chip o">20+ 维度打分</div></div>
+      <div class="pipe-row"><div class="lbl">④ 去重 + 阈值</div><div class="chip">按阶段筛</div><div class="chip m">SigLIP-2 语义 embedding + 低层元数据做同源去重；PT 重规模、CT/SFT 显著收紧美学与清晰度阈值</div><div class="chip o">人工随机抽检后入训</div></div>
+    </div>
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig9.jpg" alt="多模态检索系统流程（下半部分）：SigLIP 图文特征、去重与多样性排序、美学专家正负集、类别美学打分器" loading="lazy"></div>
+      <figcaption><b>多模态检索系统</b>（本页裁图只含下半部分）：美学专家种子图与文本描述经 SigLIP 编码 → 去重与多样性排序 → 候选集 → 专家标正/负集 → 训练类别美学打分器做大规模过滤。上半部分「建库：SigLIP 特征 → 百万级聚类中心 → 类别特征库 → Top-K 中心检索」见原文。<span class="from">来源：论文图 9</span></figcaption>
+    </figure>
+
+    <h3>4.2 四个有定义的低成本算子 <span class="src">§2.2.1 · 图 10</span></h3>
+    <div class="tbl-wrap"><table class="txt">
+      <thead><tr><th>算子</th><th>怎么算</th><th>剔除什么</th><th>阈值</th></tr></thead>
+      <tbody>
+        <tr><td>Compression ratio</td><td>理论未压缩大小（分辨率 × 位深）÷ 实际文件大小</td><td>原文：比值越低压缩越重 → 细节损失风险</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>Edge pixel variance</td><td>边缘像素方差（熵启发）</td><td>大面积纯色背景、纯色边框</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>bpp</td><td>重编码为 JPEG 后的 bits-per-pixel，作结构复杂度代理</td><td>低 bpp = 纹理信息少</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>AI score</td><td>专用 AIGC 检测分类器，分数越高越「真实」</td><td>疑似 AI 生成图</td><td><span class="nd">原文未披露</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">注意「compression ratio」的方向：原文定义为未压缩大小 / 实际大小，又说「比值越低压缩越重」，两者方向相反（按定义，压缩越重比值应越高）。图 10 只给了各算子的分布刻度与示例图，不是阈值。</p>
+
+    <h3>4.3 已披露的数据分布 <span class="src">图 8</span></h3>
+    <p>图 8 是<b>各任务内部</b>的类别占比；跨任务配比见 §5 的表 3。条形数值读自原图标签。</p>
+    <div class="chart-grid">
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 164" role="img" aria-label="T2I 数据类别占比">
+<text class="ch-t" x="0" y="14">T2I 数据类别占比</text><text class="ch-src" x="340" y="14" text-anchor="end">图 8 左</text>
+<line x1="118.0" y1="28" x2="118.0" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="152" text-anchor="middle">0</text>
+<line x1="168.9" y1="28" x2="168.9" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="168.9" y="152" text-anchor="middle">20</text>
+<line x1="219.7" y1="28" x2="219.7" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="219.7" y="152" text-anchor="middle">40</text>
+<line x1="270.6" y1="28" x2="270.6" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="270.6" y="152" text-anchor="middle">60</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Photorealistic</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="167.3" height="14" rx="3"/>
+<text class="ch-val" x="289.3" y="45">65.8%</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Text-Centric</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="56" width="55.2" height="14" rx="3"/>
+<text class="ch-val" x="177.2" y="67">21.7%</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Chart-Centric</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="78" width="14.7" height="14" rx="3"/>
+<text class="ch-val" x="136.7" y="89">5.8%</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Non-Photorealistic</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="100" width="13.0" height="14" rx="3"/>
+<text class="ch-val" x="135.0" y="111">5.1%</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Multi-Image Comp.</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="122" width="4.1" height="14" rx="3"/>
+<text class="ch-val" x="126.1" y="133">1.6%</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="138"/>
+</svg></div>
+      <div class="chart-cell span2"><svg class="chart" viewBox="0 0 700 314" role="img" aria-label="I2I 数据类别占比">
+<text class="ch-t" x="0" y="14">I2I 数据类别占比</text><text class="ch-src" x="700" y="14" text-anchor="end">图 8 中</text>
+<line x1="160.0" y1="28" x2="160.0" y2="288" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="160.0" y="302" text-anchor="middle">0</text>
+<line x1="284.0" y1="28" x2="284.0" y2="288" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="284.0" y="302" text-anchor="middle">10</text>
+<line x1="408.0" y1="28" x2="408.0" y2="288" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="408.0" y="302" text-anchor="middle">20</text>
+<line x1="532.0" y1="28" x2="532.0" y2="288" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="532.0" y="302" text-anchor="middle">30</text>
+<line x1="656.0" y1="28" x2="656.0" y2="288" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="656.0" y="302" text-anchor="middle">40</text>
+<text class="ch-lbl" x="154" y="45" text-anchor="end">Face Consistency</text>
+<rect class="bar-bg" x="160" y="34" width="496" height="14" rx="3"/>
+<rect class="bar-o2" x="160" y="34" width="435.2" height="14" rx="3"/>
+<text class="ch-val" x="599.2" y="45">35.1%</text>
+<text class="ch-lbl" x="154" y="65" text-anchor="end">Multi-Face Consistency</text>
+<rect class="bar-bg" x="160" y="54" width="496" height="14" rx="3"/>
+<rect class="bar-o2" x="160" y="54" width="290.2" height="14" rx="3"/>
+<text class="ch-val" x="454.2" y="65">23.4%</text>
+<text class="ch-lbl" x="154" y="85" text-anchor="end">Object Consistency</text>
+<rect class="bar-bg" x="160" y="74" width="496" height="14" rx="3"/>
+<rect class="bar-o2" x="160" y="74" width="218.2" height="14" rx="3"/>
+<text class="ch-val" x="382.2" y="85">17.6%</text>
+<text class="ch-lbl" x="154" y="105" text-anchor="end">Basic Editing</text>
+<rect class="bar-bg" x="160" y="94" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="94" width="93.0" height="14" rx="3"/>
+<text class="ch-val" x="257.0" y="105">7.5%</text>
+<text class="ch-lbl" x="154" y="125" text-anchor="end">Human Editing</text>
+<rect class="bar-bg" x="160" y="114" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="114" width="50.8" height="14" rx="3"/>
+<text class="ch-val" x="214.8" y="125">4.1%</text>
+<text class="ch-lbl" x="154" y="145" text-anchor="end">General Editing</text>
+<rect class="bar-bg" x="160" y="134" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="134" width="48.4" height="14" rx="3"/>
+<text class="ch-val" x="212.4" y="145">3.9%</text>
+<text class="ch-lbl" x="154" y="165" text-anchor="end">Text Editing</text>
+<rect class="bar-bg" x="160" y="154" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="154" width="31.0" height="14" rx="3"/>
+<text class="ch-val" x="195.0" y="165">2.5%</text>
+<text class="ch-lbl" x="154" y="185" text-anchor="end">Advertising</text>
+<rect class="bar-bg" x="160" y="174" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="174" width="19.8" height="14" rx="3"/>
+<text class="ch-val" x="183.8" y="185">1.6%</text>
+<text class="ch-lbl" x="154" y="205" text-anchor="end">Subject-Driven Editing</text>
+<rect class="bar-bg" x="160" y="194" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="194" width="12.4" height="14" rx="3"/>
+<text class="ch-val" x="176.4" y="205">1.0%</text>
+<text class="ch-lbl" x="154" y="225" text-anchor="end">Animate</text>
+<rect class="bar-bg" x="160" y="214" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="214" width="12.4" height="14" rx="3"/>
+<text class="ch-val" x="176.4" y="225">1.0%</text>
+<text class="ch-lbl" x="154" y="245" text-anchor="end">Action Ref</text>
+<rect class="bar-bg" x="160" y="234" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="234" width="11.2" height="14" rx="3"/>
+<text class="ch-val" x="175.2" y="245">0.9%</text>
+<text class="ch-lbl" x="154" y="265" text-anchor="end">Style Editing</text>
+<rect class="bar-bg" x="160" y="254" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="254" width="11.2" height="14" rx="3"/>
+<text class="ch-val" x="175.2" y="265">0.9%</text>
+<text class="ch-lbl" x="154" y="285" text-anchor="end">Controllable Generation</text>
+<rect class="bar-bg" x="160" y="274" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="274" width="5.0" height="14" rx="3"/>
+<text class="ch-val" x="169.0" y="285">0.4%</text>
+<line class="axis" x1="160" y1="28" x2="160" y2="288"/>
+</svg></div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 164" role="img" aria-label="组图（T2S + TI2S）类别占比">
+<text class="ch-t" x="0" y="14">组图（T2S + TI2S）类别占比</text><text class="ch-src" x="340" y="14" text-anchor="end">图 8 右</text>
+<line x1="138.0" y1="28" x2="138.0" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="138.0" y="152" text-anchor="middle">0</text>
+<line x1="177.5" y1="28" x2="177.5" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="177.5" y="152" text-anchor="middle">10</text>
+<line x1="217.0" y1="28" x2="217.0" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="217.0" y="152" text-anchor="middle">20</text>
+<line x1="256.5" y1="28" x2="256.5" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="256.5" y="152" text-anchor="middle">30</text>
+<line x1="296.0" y1="28" x2="296.0" y2="138" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="152" text-anchor="middle">40</text>
+<text class="ch-lbl" x="132" y="45" text-anchor="end">Face Consistency</text>
+<rect class="bar-bg" x="138" y="34" width="158" height="14" rx="3"/>
+<rect class="bar-o2" x="138" y="34" width="126.4" height="14" rx="3"/>
+<text class="ch-val" x="268.4" y="45">32.0%</text>
+<text class="ch-lbl" x="132" y="67" text-anchor="end">Multi-Shot Consistency</text>
+<rect class="bar-bg" x="138" y="56" width="158" height="14" rx="3"/>
+<rect class="bar-o2" x="138" y="56" width="114.6" height="14" rx="3"/>
+<text class="ch-val" x="256.6" y="67">29.0%</text>
+<text class="ch-lbl" x="132" y="89" text-anchor="end">Object Consistency</text>
+<rect class="bar-bg" x="138" y="78" width="158" height="14" rx="3"/>
+<rect class="bar-o2" x="138" y="78" width="102.7" height="14" rx="3"/>
+<text class="ch-val" x="244.7" y="89">26.0%</text>
+<text class="ch-lbl" x="132" y="111" text-anchor="end">Long Text</text>
+<rect class="bar-bg" x="138" y="100" width="158" height="14" rx="3"/>
+<rect class="bar-o" x="138" y="100" width="31.6" height="14" rx="3"/>
+<text class="ch-val" x="173.6" y="111">8.0%</text>
+<text class="ch-lbl" x="132" y="133" text-anchor="end">Long Picture</text>
+<rect class="bar-bg" x="138" y="122" width="158" height="14" rx="3"/>
+<rect class="bar-o" x="138" y="122" width="19.8" height="14" rx="3"/>
+<text class="ch-val" x="161.8" y="133">5.0%</text>
+<line class="axis" x1="138" y1="28" x2="138" y2="138"/>
+</svg></div>
+      <div class="chart-cell span2">
+        <div class="kv" style="margin-top:2px">
+          <dt>组图内环</dt><dd>TI2S 57.0% · T2S 43.0%<span class="src">图 8 右</span></dd>
+          <dt>I2I 一致性类</dt><dd>Face 35.1 + Multi-Face 23.4 + Object 17.6 = <b>76.1%</b><span class="src calc">推算</span></dd>
+          <dt>I2I 显式编辑类</dt><dd>Basic 7.5 + Human 4.1 + General 3.9 + Text 2.5 + Subject-Driven 1.0 + Style 0.9 = <b>19.9%</b><span class="src calc">推算</span></dd>
+          <dt>T2I 文字/图表类</dt><dd>Text-Centric 21.7 + Chart-Centric 5.8 = <b>27.5%</b><span class="src calc">推算</span></dd>
+        </div>
+        <p class="tbl-note">「一致性类 / 显式编辑类」是本页按类名做的分组，不是论文的划分。组图外环 5 类与内环 T2S/TI2S 的对应关系原图未标明，此处不拆。</p>
+        <div class="bar-legend f8-legend"><span class="r">参考/一致性类（本页分组）</span><span class="e">显式编辑类（本页分组）</span><span class="x">其他</span></div>
+      </div>
+    </div>
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig8.jpg" alt="T2I、I2I、组图三个饼图的数据类别占比" loading="lazy"></div>
+      <figcaption><b>T2I / I2I / 组图数据类别占比（%）</b>。读法：I2I 里四分之三是人脸、多人脸与物体一致性（参考生成）数据，常规编辑类加起来约两成。<span class="from">来源：论文图 8</span></figcaption>
+    </figure>
+
+    <h3>4.4 已披露的规模</h3>
+    <div class="tbl-wrap"><table class="txt">
+      <thead><tr><th>项</th><th>数值</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>生成 PT / CT / SFT token</td><td>13.27T / 8.85T / 0.62T</td><td><span class="src">表 3</span></td></tr>
+        <tr><td>理解 U-CT / U&amp;M SFT / OPD token</td><td>0.1T / 0.033T / 0.0016T</td><td><span class="src">表 3</span></td></tr>
+        <tr><td>检索系统聚类中心</td><td>「Millions」（百万级）</td><td><span class="src">图 9</span></td></tr>
+        <tr><td>质量打分维度</td><td>超过 20 个</td><td><span class="src">§2.2.3</span></td></tr>
+        <tr><td>结构化 caption 属性池</td><td>25 个独立属性，5 个一级类</td><td><span class="src">§2.2.2</span></td></tr>
+        <tr><td>任务上限</td><td>I2I ≤ 9 张输入；T2S/TI2S ≤ 12 张输出；比例至 1:8</td><td><span class="src">§2.2</span></td></tr>
+        <tr><td>图像 / 编辑对 / 组图样本条数</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>数据来源（网页 / 自有 / 合成占比）</td><td><span class="nd">原文未披露</span>（仅提到 raw caption 来自网页元数据）</td><td><span class="src">§2.2.2</span></td></tr>
+        <tr><td>编辑对的构造方式（专家模型合成、真实对等）</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>4.5 分类体系与 caption <span class="src">§2.2.2 · 图 11</span></h3>
+    <p><b>两层分类。</b>所有训练图先按语义主题、图像属性、风格、构图模式、生成难度做结构化分类以控制采样；I2I 与 TI2S 再加一层编辑任务分层标签：<b>参考/编辑范式 → 编辑目标 → 编辑类型</b>，用于组织复杂编辑任务、缓解长尾不平衡。</p>
+    <div class="cap-tri">
+      <div class="card"><h4>① Raw caption</h4><p>来源环境自带的元数据：用户标签、HTML alt、网页标题、周边锚文本或正文片段。刻意保留网页噪声和弱监督信号。</p></div>
+      <div class="card"><h4>② 自然语言 caption</h4><p>多套提示模板 + 先进 MLLM，从一句话到多句长段落的多粒度描述。</p></div>
+      <div class="card"><h4>③ 结构化 JSON caption</h4><p>先把图严格分到 5 类，再按类映射属性子集；属性池共 25 个；按维度增量更新；最后由微调过的 MLLM 改写成自然语言。</p></div>
+    </div>
+    <div class="tbl-wrap"><table class="txt">
+      <thead><tr><th>一级类（图 11）</th><th>类专属属性（图 11 列出）</th></tr></thead>
+      <tbody>
+        <tr><td>Photorealistic</td><td>Overall · People · Objects · Background · Layout · Composition · Perspective · Color · Lighting · IP · Artist · Application · Shot Type · Depth of Field</td></tr>
+        <tr><td>Non-Photorealistic</td><td>Overall · People · Objects · Background · Layout · Composition · Perspective · Color · Style · IP · Artist</td></tr>
+        <tr><td>Text-Centric</td><td>Overall · People · Objects · Background · Layout · Composition · Color · Style · Application · Text · IP</td></tr>
+        <tr><td>Chart-Centric</td><td>Overall · Layout · Text · Chart Type · Axis · Data Series Style · Trends and Patterns · Legend · Comments · Data Point Values</td></tr>
+        <tr><td>Multi-Image Composition</td><td>Overall · Composition · Style · Application · Clarity · Number of Sub-Images · Sub-Image Content</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">按图 11 文字层去重得到 26 个属性名<span class="src calc">推算</span>，正文写 25 个；差异可能来自文字层切分（如 Data Series Style），原文未说明。每个属性的取值格式与 JSON schema 原文未给。</p>
+    <div class="json-demo">// 结构示意（本页按图 11 的类名与属性名组织，字段格式为本页假设，非论文原文）
+{ "category": "Chart-Centric",
+  "Overall": "…", "Layout": "…", "Text": "…", "Chart Type": "…", "Axis": "…",
+  "Data Series Style": "…", "Trends and Patterns": "…", "Legend": "…",
+  "Comments": "…", "Data Point Values": "…" }</div>
+
+    <h3>4.6 阶段化数据调度 <span class="src">§2.2.3</span></h3>
+    <div class="grid2">
+      <div class="card mod"><h4>全程</h4><ul><li>适度上调「需要更久训练」的任务采样，如文字生成、身份保持。</li><li>构造多套详细 prompt 加强图文对齐。</li></ul></div>
+      <div class="card mod"><h4>PT</h4><ul><li>用检索系统拉大规模数据，求语义覆盖。</li><li>只用基线质量过滤。</li></ul></div>
+      <div class="card mod"><h4>CT / SFT</h4><ul><li>MLLM 高精度打标，针对风格多样性、概念渲染、场景文字、视觉美学。</li><li>长尾类别再平衡；美学与清晰度阈值显著收紧。</li></ul></div>
+      <div class="card mod"><h4>SFT 收尾</h4><ul><li>只留通过严格质量与美学过滤的样本。</li><li>更侧重人工过滤或高质量模型挑选的精选子集<span class="src">§4.2.3</span>。</li></ul></div>
+    </div>
+
+    <h3>4.7 理解侧数据 <span class="src">§2.1 · 图 7</span></h3>
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig7.jpg" alt="理解数据构建流程：通用理解数据、text-proxy 数据、用户对齐 query 集" loading="lazy"></div>
+      <figcaption><b>理解数据三条线</b>：左，开源 + 内部采购的原始 SFT 数据经模型打分、消融、类别平衡后，对「好问题差答案」重新生成答案，再构造只保留答对的 <code>&lt;think&gt;</code> 推理数据；中，按纯文本 / 单图 / 多图三种输入构造 text-proxy（<code>&lt;BOI&gt;</code> 占位 + <code>&lt;imagine&gt;</code> 详细视觉描述）；右，MLLM 给真实 query 标任务类别、难度、是否需推理、是否纯视觉问答，再按人工规则均衡采样。<span class="from">来源：论文图 7</span></figcaption>
+    </figure>
+    <details class="more"><summary>text-proxy 三类构造细节 <span class="hint">§2.1</span></summary><div class="body">
+      <ul>
+        <li><b>纯文本输入</b>（类别标签、关键词）：直接当 user query，由高质量 LLM 写 text proxy。</li>
+        <li><b>单图输入</b>：图喂给 MLLM，同时生成 user query 与 text proxy。</li>
+        <li><b>多张相关图</b>：先逐张写描述，再把图 + 描述一起喂回 MLLM 组织成连贯的图文交错叙事，最后做逻辑与风格一致性精修。</li>
+      </ul>
+    </div></details>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">两条线：先训理解分支（起点为 post-training 之前的 Qwen-VL base），再训生成分支，最后 RLHF 与步数蒸馏<span class="src">§4</span>。表 3 给全了步数、token、分辨率、batch、配比与主要超参。</p></div>
+
+  <div class="wide">
+    <div class="row-lbl">理解分支 · §4.1</div>
+    <div class="flow flow-u">
+      <div class="card stage u"><span class="sid">U1</span><h4>Understanding CT</h4><dl><dt>步数</dt><dd>46K</dd><dt>token</dt><dd>0.1T</dd><dt>LR</dt><dd>1×10⁻⁵</dd><dt>配比</dt><dd>T2T : I2T = 2 : 7</dd></dl><p>instruct + thinking 样本混训，纯文本数据防退化，并为 thinking 模式冷启动。</p></div>
+      <div class="card stage u"><span class="sid">U2</span><h4>Understanding &amp; Multi-task SFT</h4><dl><dt>步数</dt><dd>10K</dd><dt>token</dt><dd>0.033T</dd><dt>LR</dt><dd>7×10⁻⁶</dd><dt>配比</dt><dd>1 : 1 : 2 : 2 : 4</dd></dl><p>T2T / I2T / T2I / I2I / 交错生成。用 text-proxy 让 MLLM 学会写 DiT 能吃的稠密 prompt；加 item-level loss 区分任务类型。</p></div>
+      <div class="card stage u"><span class="sid">U3</span><h4>On-policy 多教师蒸馏</h4><dl><dt>步数</dt><dd>0.4K</dd><dt>token</dt><dd>0.0016T</dd><dt>LR</dt><dd>1×10⁻⁶</dd><dt>批量</dt><dd>0.256K</dd></dl><p>MLLM 多维分类真实 query 以模拟用户意图；按输入类别挑专长教师，减少意图混淆与生成类任务的无谓拒答。</p></div>
+    </div>
+
+    <div class="row-lbl">生成分支 + 后训练 · §4.2–4.4</div>
+    <div class="flow flow-g">
+      <div class="card stage g"><span class="sid">G1</span><h4>Pre-training</h4><dl><dt>步数</dt><dd>713K</dd><dt>token</dt><dd>13.27T</dd><dt>分辨率</dt><dd>192/320/640</dd><dt>配比</dt><dd>T2I : I2I = 7 : 3</dd></dl><div class="tokbar"><i style="width:58.4%"></i></div></div>
+      <div class="card stage g"><span class="sid">G2</span><h4>Continual PT</h4><dl><dt>步数</dt><dd>223K</dd><dt>token</dt><dd>8.85T</dd><dt>分辨率</dt><dd>512–2048</dd><dt>配比</dt><dd>7 : 2 : 0.5 : 0.5</dd></dl><div class="tokbar"><i style="width:38.9%"></i></div></div>
+      <div class="card stage g"><span class="sid">G3</span><h4>SFT</h4><dl><dt>步数</dt><dd>13K</dd><dt>token</dt><dd>0.62T</dd><dt>分辨率</dt><dd>512–2048</dd><dt>LR</dt><dd>3×10⁻⁵</dd></dl><div class="tokbar"><i style="width:2.7%"></i></div></div>
+      <div class="card stage p"><span class="sid">R</span><h4>Cascade RL</h4><p>DPO → ReFL → DenseGRPO → ReFMA 等按维度级联；RL prompt 与 SFT prompt 互斥。各算法顺序与步数<span class="nd">原文未披露</span>。</p></div>
+      <div class="card stage p"><span class="sid">D</span><h4>步数蒸馏</h4><p>轨迹蒸馏 + 分布匹配蒸馏，多阶段渐进；加速 &gt;8×。目标步数<span class="nd">原文未披露</span>。</p></div>
+    </div>
+    <p class="tbl-note">G1–G3 下方细条为该阶段 token 占生成总 token（22.74T）的比例：58.4% / 38.9% / 2.7%<span class="src calc">推算</span>。CT 配比为 T2I : I2I : T2S : TI2S。Cascade RL 中列出的算法顺序只是原文列举顺序，不代表执行顺序。</p>
+
+    <details class="more"><summary>表 3 全部配置 <span class="hint">表 3</span></summary><div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>配置</th><th>U-CT</th><th>U&amp;M SFT</th><th>OPD</th><th>PT</th><th>CT</th><th>SFT</th></tr></thead>
+        <tbody>
+          <tr><td>Steps (K)</td><td>46</td><td>10</td><td>0.4</td><td>713</td><td>223</td><td>13</td></tr>
+          <tr><td>Tokens (T)</td><td>0.1</td><td>0.033</td><td>0.0016</td><td>13.27</td><td>8.85</td><td>0.62</td></tr>
+          <tr><td>Resolution</td><td>-</td><td>-</td><td>-</td><td>192/320/640</td><td>512–2048</td><td>512–2048</td></tr>
+          <tr><td>Batch Size (K)</td><td>1</td><td>1.6</td><td>0.256</td><td>50/23/12</td><td>5</td><td>4</td></tr>
+          <tr><td>数据类型</td><td>T2T/I2T</td><td>Multi-task*</td><td>-</td><td>T2I/I2I</td><td colspan="2">T2I/I2I/T2S/TI2S</td></tr>
+          <tr><td>配比</td><td>2:7</td><td>1:1:2:2:4</td><td>-</td><td>7:3</td><td colspan="2">7:2:0.5:0.5</td></tr>
+          <tr><td>Optimizer</td><td>AdamW</td><td>AdamW</td><td>AdamW</td><td colspan="3">AdamW</td></tr>
+          <tr><td>Weight Decay</td><td>0.05</td><td>0.1</td><td>0.01</td><td colspan="3">0.02</td></tr>
+          <tr><td>Grad. Norm Clip</td><td>1.0</td><td>1.0</td><td>0.2</td><td colspan="3">0.5</td></tr>
+          <tr><td>Uncond. Dropout</td><td>-</td><td>-</td><td>-</td><td colspan="3">0.05</td></tr>
+          <tr><td>Learning Rate</td><td>1×10⁻⁵</td><td>7×10⁻⁶</td><td>1×10⁻⁶</td><td>5×10⁻⁵</td><td>5×10⁻⁵</td><td>3×10⁻⁵</td></tr>
+          <tr><td>EMA Ratio</td><td>-</td><td>0.9998</td><td>-</td><td>0.9999</td><td>0.9999</td><td>0.9998</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">* Multi-task = T2T / I2T / T2I / I2I / Interleaved generation。PT 的 batch 50/23/12K 对应 192/320/640 三档分辨率（按列序对应，原文未逐一说明）。调度器、warmup、时间步采样分布、CFG scale、GPU 类型与时长<span class="nd">原文未披露</span>。</p>
+    </div></details>
+  </div>
+
+  <div class="prose">
+    <h3>RLHF：Cascade RL <span class="src">§4.3 · 图 16</span></h3>
+    <div class="post-flow">
+      <div class="card stage"><span class="sid">数据</span><h4>RL 数据</h4><ul><li>RL prompt 与 SFT prompt 互斥，防止靠记忆拿高 reward。</li><li>MLLM 过滤并分类，便于按领域建集。</li><li>流水线：配对构造 → 美学专家训练与标注 → 质量监控 → 数据检索。</li></ul></div>
+      <div class="card stage"><span class="sid">RM</span><h4>Reward 模型</h4><ul><li>发现留出验证集会「偏好过拟合」，不能可靠反映 RM 对 RL 的指导效果。</li><li>改用来源更多样的 reward benchmark 选 RM，并在其上消融骨干结构、规模、数据量、损失函数（结果未给）。</li></ul></div>
+      <div class="card stage"><span class="sid">算法</span><h4>Cascade RL</h4><ul><li>集成 DPO、ReFL、DenseGRPO 与自研 ReFMA（flow matching anchor，平衡不同噪声水平的优化目标并利用 RM 梯度）。</li><li>级联逐维提升：写实、结构、文字、美学；编辑侧提升一致性与和谐度（图 16 列出 Realism、Structure、Text、Aesthetics、Consistency、Harmony）。</li><li>相对 SFT 的 Win Score 提升 15%–50%<span class="src">§4.3.4</span>。</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">三块：生成与编辑只有图 1 的内部人评雷达图（无数值表）；VAE 重建（表 1–2）；理解基准（表 4）。没有 GenEval、DPG、GEdit、ImgEdit 等公开生成/编辑基准。</p></div>
+
+  <div class="wide">
+    <h3 style="margin-top:0">6.1 生成与编辑人评 <span class="src">图 1 · §1 · §5.2.1</span></h3>
+    <div class="tbl-wrap"><table class="txt">
+      <thead><tr><th>任务</th><th>指标</th><th>对比对象（据图 1 文字层）</th><th>原文结论</th></tr></thead>
+      <tbody>
+        <tr><td>Text-to-Image</td><td>Win Score</td><td>Nano Banana Pro、GPT Image 1.5、Seedream 4.5、Seedream 5.0 Lite、Qwen-Image-2.0-Pro、Kling Image 3.0 Omni、Z-Image Turbo（多数标 2K）</td><td>整体超过 Seedream 5.0 Lite 与 GPT Image 1.5；落后 Nano Banana Pro，但文字渲染、写实接近</td></tr>
+        <tr><td>General Image Editing</td><td>Win Score</td><td>Nano Banana Pro、Seedream 5.0 Lite、Qwen-Image-2.0-Pro</td><td>同上（未分任务单独陈述）</td></tr>
+        <tr><td>Interactive Image Editing</td><td>Pass Rate</td><td>仅 Wan2.7-Image</td><td>约 80%</td></tr>
+        <tr><td>Image Series Generation</td><td>Pass Rate</td><td>仅 Wan2.7-Image</td><td>约 80%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note"><b>Win Score = (Wins + 0.5 × BothGood) / Total</b><span class="src">图 1 题注</span>。雷达图各轴数值、prompt 数、评审人数、是否盲评、平局/双差的处理<span class="nd">原文未披露</span>。对比对象按图 1 抽取文本归属，以原图为准；GPT Image 1.5 只出现在 T2I 图例，因此「超过 GPT Image 1.5」只能对应 T2I。</p>
+    <div class="grid2">
+      <div class="card mod"><h4>图 1 各雷达轴（文字层可辨认） <span class="tag">图 1</span></h4>
+        <ul><li><b>T2I</b>：Text Rendering · Art &amp; Design · Photorealistic Imaging · Complex Semantics &amp; Reasoning · World Knowledge · Layout &amp; Info Visualization</li>
+        <li><b>通用编辑</b>：Local Editing · Advanced Editing · Multi-image Editing · Identity &amp; Reference · Object &amp; Scene Editing · Style &amp; Lighting Editing · Text Editing</li>
+        <li><b>交互编辑</b>：Content Generation &amp; Replacement · Spatial Transformation · Text Editing · Shape Operations · Advanced &amp; General</li>
+        <li><b>组图</b>：13 个场景，如 E-commerce Design、Film Storyboarding、PPT Presentations、Education &amp; Academia 等</li></ul></div>
+      <figure class="fig card" style="margin:14px 0">
+        <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="图 1 人评雷达图的局部截取：T2I 与通用编辑两张雷达" loading="lazy"></div>
+        <figcaption><b>人评雷达局部</b>：左为 T2I（Layout &amp; Info Visualization、Photorealistic Imaging 两轴可见），右为通用编辑（Local Editing、Text Editing、Identity &amp; Reference 可见）。裁图不完整，读不出数值。<span class="from">来源：论文图 1（首页）</span></figcaption>
+      </figure>
+    </div>
+
+    <h3>6.2 VAE 重建 <span class="src">表 1 · 表 2</span></h3>
+    <div class="chart-grid">
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 198" role="img" aria-label="RGB 重建 PSNR（5,000 张 · 512p）">
+<text class="ch-t" x="0" y="14">RGB 重建 PSNR（5,000 张 · 512p）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 1</text>
+<line x1="118.0" y1="28" x2="118.0" y2="160" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="174" text-anchor="middle">32</text>
+<line x1="162.5" y1="28" x2="162.5" y2="160" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="162.5" y="174" text-anchor="middle">33</text>
+<line x1="207.0" y1="28" x2="207.0" y2="160" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="207.0" y="174" text-anchor="middle">34</text>
+<line x1="251.5" y1="28" x2="251.5" y2="160" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="251.5" y="174" text-anchor="middle">35</text>
+<line x1="296.0" y1="28" x2="296.0" y2="160" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="174" text-anchor="middle">36</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Wan-Image VAE</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="152.6" height="14" rx="3"/>
+<text class="ch-val" x="274.6" y="45">35.429</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">FLUX.1 VAE</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="56" width="123.2" height="14" rx="3"/>
+<text class="ch-val" x="245.2" y="67">34.769</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">HunyuanImage-3.0</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="77.2" height="14" rx="3"/>
+<text class="ch-val" x="199.2" y="89">33.735</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Wan2.2 VAE</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="76.0" height="14" rx="3"/>
+<text class="ch-val" x="198.0" y="111">33.708</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Qwen-Image-Layered</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="64.4" height="14" rx="3"/>
+<text class="ch-val" x="186.4" y="133">33.447</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">SD3.5 VAE</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="44.5" height="14" rx="3"/>
+<text class="ch-val" x="166.5" y="155">33.000</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="160"/>
+<text class="ch-ax" x="0" y="196">⚠ 横轴从 32 dB 起，非 0；放大差异</text>
+</svg></div>
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 132" role="img" aria-label="RGBA 重建 PSNR（500 张 · 1080p）">
+<text class="ch-t" x="0" y="14">RGBA 重建 PSNR（500 张 · 1080p）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 2</text>
+<line x1="118.0" y1="28" x2="118.0" y2="94" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="108" text-anchor="middle">36</text>
+<line x1="177.3" y1="28" x2="177.3" y2="94" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="177.3" y="108" text-anchor="middle">37</text>
+<line x1="236.7" y1="28" x2="236.7" y2="94" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="236.7" y="108" text-anchor="middle">38</text>
+<line x1="296.0" y1="28" x2="296.0" y2="94" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="108" text-anchor="middle">39</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Wan-Image VAE</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="134.9" height="14" rx="3"/>
+<text class="ch-val" x="256.9" y="45">38.274</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Qwen-Image-Layered</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="56" width="111.8" height="14" rx="3"/>
+<text class="ch-val" x="233.8" y="67">37.884</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">AlphaVAE (FLUX.1)</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="47.3" height="14" rx="3"/>
+<text class="ch-val" x="169.3" y="89">36.797</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="94"/>
+<text class="ch-ax" x="0" y="130">⚠ 横轴从 36 dB 起，非 0；放大差异</text>
+</svg></div>
+      <div class="chart-cell">
+        <div class="kv" style="margin-top:4px">
+          <dt>RGB SSIM</dt><dd>0.958，与 FLUX.1 VAE 并列<span class="src">表 1</span></dd>
+          <dt>RGB LPIPS</dt><dd>0.010，<b>FLUX.1 VAE 0.009 更低</b><span class="src">表 1</span></dd>
+          <dt>RGBA SSIM</dt><dd>0.970，<b>Qwen-Image-Layered 0.971 更高</b><span class="src">表 2</span></dd>
+          <dt>RGBA LPIPS</dt><dd>0.018，与 Qwen-Image-Layered 并列<span class="src">表 2</span></dd>
+          <dt>压缩口径</dt><dd>Wan-Image 16×16 / 48 维；FLUX.1、SD3.5 为 8×8 / 16 维</dd>
+        </div>
+      </div>
+    </div>
+    <div class="chart-legend"><span class="l1">Wan-Image VAE</span><span class="l3">对比 VAE</span></div>
+    <details class="more"><summary>表 1、表 2 全表 <span class="hint">5,000 张 RGB @512p · 500 张 RGBA @1080p</span></summary><div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Method（RGB）</th><th>下采样</th><th>Latent</th><th>PSNR↑</th><th>SSIM↑</th><th>LPIPS↓</th></tr></thead>
+        <tbody>
+          <tr><td>FLUX.1 VAE</td><td>8×8</td><td>16</td><td>34.769</td><td class="best">0.958</td><td class="best">0.009</td></tr>
+          <tr><td>SD3.5 VAE</td><td>8×8</td><td>16</td><td>33.000</td><td>0.942</td><td>0.012</td></tr>
+          <tr><td>Qwen-Image-Layered VAE</td><td>8×8</td><td>16</td><td>33.447</td><td>0.946</td><td>0.020</td></tr>
+          <tr><td>HunyuanImage-3.0 VAE</td><td>16×16</td><td>32</td><td>33.735</td><td>0.939</td><td>0.022</td></tr>
+          <tr><td>Wan2.2 VAE</td><td>16×16</td><td>48</td><td>33.708</td><td>0.946</td><td>0.014</td></tr>
+          <tr class="hl"><td>Wan-Image VAE</td><td>16×16</td><td>48</td><td class="best">35.429</td><td class="best">0.958</td><td>0.010</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Method（RGBA）</th><th>下采样</th><th>Latent</th><th>PSNR↑</th><th>SSIM↑</th><th>LPIPS↓</th></tr></thead>
+        <tbody>
+          <tr><td>AlphaVAE (FLUX.1)</td><td>8×8</td><td>16</td><td>36.797</td><td>0.970</td><td>0.035</td></tr>
+          <tr><td>Qwen-Image-Layered VAE</td><td>8×8</td><td>16</td><td>37.884</td><td class="best">0.971</td><td class="best">0.018</td></tr>
+          <tr class="hl"><td>Wan-Image VAE</td><td>16×16</td><td>48</td><td class="best">38.274</td><td>0.970</td><td class="best">0.018</td></tr>
+        </tbody>
+      </table></div>
+      <div class="keybox"><span class="k-best">该列最佳（本页按数值标注）</span><span class="k-q">Wan-Image</span></div>
+      <p class="tbl-note">测试集来源<span class="nd">原文未披露</span>。原文说表中最佳加粗，纯文本无法还原加粗位置，这里按数值重新标注。</p>
+    </div></details>
+
+    <h3>6.3 理解基准 <span class="src">表 4 · §5.1</span></h3>
+    <div class="chart-grid">
+      <div class="chart-cell span2"><svg class="chart" viewBox="0 0 700 230" role="img" aria-label="图像理解 7 项平均（Avg）">
+<text class="ch-t" x="0" y="14">图像理解 7 项平均（Avg）</text><text class="ch-src" x="700" y="14" text-anchor="end">表 4</text>
+<line x1="160.0" y1="28" x2="160.0" y2="204" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="160.0" y="218" text-anchor="middle">0</text>
+<line x1="284.0" y1="28" x2="284.0" y2="204" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="284.0" y="218" text-anchor="middle">20</text>
+<line x1="408.0" y1="28" x2="408.0" y2="204" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="408.0" y="218" text-anchor="middle">40</text>
+<line x1="532.0" y1="28" x2="532.0" y2="204" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="532.0" y="218" text-anchor="middle">60</text>
+<line x1="656.0" y1="28" x2="656.0" y2="204" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="656.0" y="218" text-anchor="middle">80</text>
+<text class="ch-lbl" x="154" y="45" text-anchor="end">Ours Thinking</text>
+<rect class="bar-bg" x="160" y="34" width="496" height="14" rx="3"/>
+<rect class="bar-q" x="160" y="34" width="473.1" height="14" rx="3"/>
+<text class="ch-val" x="637.1" y="45">76.3</text>
+<text class="ch-lbl" x="154" y="67" text-anchor="end">Kimi-VL-2506 (Thinking)</text>
+<rect class="bar-bg" x="160" y="56" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="56" width="467.5" height="14" rx="3"/>
+<text class="ch-val" x="631.5" y="67">75.4</text>
+<text class="ch-lbl" x="154" y="89" text-anchor="end">Ovis2-8B</text>
+<rect class="bar-bg" x="160" y="78" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="78" width="451.4" height="14" rx="3"/>
+<text class="ch-val" x="615.4" y="89">72.8</text>
+<text class="ch-lbl" x="154" y="111" text-anchor="end">Ours Instruct</text>
+<rect class="bar-bg" x="160" y="100" width="496" height="14" rx="3"/>
+<rect class="bar-qi" x="160" y="100" width="449.5" height="14" rx="3"/>
+<text class="ch-val" x="613.5" y="111">72.5</text>
+<text class="ch-lbl" x="154" y="133" text-anchor="end">InternVL3-8B</text>
+<rect class="bar-bg" x="160" y="122" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="122" width="449.5" height="14" rx="3"/>
+<text class="ch-val" x="613.5" y="133">72.5</text>
+<text class="ch-lbl" x="154" y="155" text-anchor="end">Qwen2.5-VL-7B</text>
+<rect class="bar-bg" x="160" y="144" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="144" width="439.6" height="14" rx="3"/>
+<text class="ch-val" x="603.6" y="155">70.9</text>
+<text class="ch-lbl" x="154" y="177" text-anchor="end">InternVL2.5-8B</text>
+<rect class="bar-bg" x="160" y="166" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="166" width="428.4" height="14" rx="3"/>
+<text class="ch-val" x="592.4" y="177">69.1</text>
+<text class="ch-lbl" x="154" y="199" text-anchor="end">Qwen2-VL-7B</text>
+<rect class="bar-bg" x="160" y="188" width="496" height="14" rx="3"/>
+<rect class="bar-o" x="160" y="188" width="419.7" height="14" rx="3"/>
+<text class="ch-val" x="583.7" y="199">67.7</text>
+<line class="axis" x1="160" y1="28" x2="160" y2="204"/>
+</svg></div>
+      <div class="chart-cell">
+        <div class="kv" style="margin-top:4px">
+          <dt>Instruct</dt><dd>Avg 72.5，比基线 +1.6<span class="src">§5.1</span></dd>
+          <dt>Thinking</dt><dd>Avg 76.3，比基线 +5.4<span class="src">§5.1</span></dd>
+          <dt>基线</dt><dd>与 Qwen2.5-VL-7B 的 70.9 吻合<span class="src calc">推算</span></dd>
+          <dt>统一模型</dt><dd>BAGEL-7B、BLIP3-o 8B 等只有 2–3 项分数，无 Avg</dd>
+        </div>
+      </div>
+    </div>
+    <div class="chart-legend"><span class="l1">Ours Thinking</span><span class="l2">Ours Instruct</span><span class="l3">理解专用模型</span></div>
+    <details class="more"><summary>表 4 节选（理解专用模型 + Ours） <span class="hint">“–” 为相应报告缺失</span></summary><div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Model</th><th>MMMU</th><th>MMStar</th><th>MathVista</th><th>HalluBench</th><th>MMBench</th><th>OCRBench</th><th>AI2D</th><th>Avg</th><th>AIME</th><th>GPQA</th><th>HLE</th><th>LCBv6</th><th>Avg</th></tr></thead>
+        <tbody>
+          <tr><td>Qwen2-VL-7B</td><td>54.1</td><td>60.7</td><td>58.2</td><td>50.6</td><td>80.7</td><td>86.6</td><td>83.0</td><td>67.7</td><td>–</td><td>30.3</td><td>2.8</td><td>9.7</td><td>10.7</td></tr>
+          <tr><td>Qwen2.5-VL-7B</td><td>58.6</td><td>63.9</td><td>68.2</td><td>52.9</td><td>82.6</td><td>86.4</td><td>83.9</td><td>70.9</td><td>–</td><td>34.3</td><td>2.7</td><td>14.9</td><td>13.0</td></tr>
+          <tr><td>Ovis2-8B</td><td>57.4</td><td>64.6</td><td>71.8</td><td>56.3</td><td>83.6</td><td>89.1</td><td>86.6</td><td>72.8</td><td>–</td><td>35.9</td><td>4.2</td><td>20.0</td><td>15.0</td></tr>
+          <tr><td>InternVL3-8B</td><td>62.7</td><td>68.2</td><td>71.6</td><td>49.9</td><td>81.7</td><td>88.0</td><td>85.2</td><td>72.5</td><td>–</td><td>36.4</td><td>4.4</td><td>16.5</td><td>14.3</td></tr>
+          <tr><td>InternVL2.5-8B</td><td>56.2</td><td>62.8</td><td>64.5</td><td>50.1</td><td>83.2</td><td>82.2</td><td>84.5</td><td>69.1</td><td>3.3</td><td>28.3</td><td>3.3</td><td>10.3</td><td>11.3</td></tr>
+          <tr><td>Kimi-VL-2506 (Thinking)</td><td>64.0</td><td>70.4</td><td>80.1</td><td>59.8</td><td>84.4</td><td>86.9</td><td>81.9</td><td>75.4</td><td>33.3</td><td>45.5</td><td>2.3</td><td>29.7</td><td>27.7</td></tr>
+          <tr class="hl"><td>Ours Instruct</td><td>58.0</td><td>68.0</td><td>73.5</td><td>55.4</td><td>82.7</td><td>84.8</td><td>85.1</td><td>72.5</td><td>30.0</td><td>44.8</td><td>3.4</td><td>32.6</td><td>27.7</td></tr>
+          <tr class="hl"><td>Ours Thinking</td><td>67.4</td><td>72.8</td><td>82.3</td><td>57.7</td><td>83.5</td><td>84.1</td><td>86.1</td><td>76.3</td><td>33.3</td><td>47.0</td><td>3.9</td><td>31.4</td><td>28.9</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">表头在 PDF 中为竖排乱码；列序按正文列举顺序，并用 Qwen2.5-VL-7B 七项均值 = 70.9 等行内平均反推核对<span class="src calc">推算</span>。文本理解 Avg 对缺失的 AIME 按 0 计入（如 Qwen2.5-VL-7B：(34.3+2.7+14.9)/4 = 13.0）<span class="src calc">推算</span>。</p>
+    </div></details>
+
+    <h3>6.4 其他结果</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>Cascade RL vs SFT <span class="tag">§4.3.4 · 图 16 右</span></h4><p>各场景 Win Score 相对提升 15%–50%。按场景的具体数值只在图中，本页未取得。</p></div>
+      <div class="card mod"><h4>蒸馏 <span class="tag">§4.4 · 图 19</span></h4><p>推理加速 &gt;8×，「保持生成保真度」只有图 19 的定性对比。</p></div>
+      <div class="card mod"><h4>PE / Refiner / 阶段演进 <span class="tag">图 14 · 15 · 29 · 31</span></h4><p>都只有定性对比图：非 CoT PE vs CoT PE、有无 Refiner、PT→CT→SFT、有无 PE。</p></div>
+      <div class="card mod"><h4>竞品定性对比 <span class="tag">图 27 · 28</span></h4><p>T2I / I2I 对 GPT Image 1.5、Qwen-Image-2.0-Pro、Seedream 5.0 Lite、Nano Banana Pro；TI2S 对 Doubao、Gemini。单例展示。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">MoT 式专家分离、Rectified Flow、QK-Norm、AdaLN、DPO/ReFL/GRPO、DMD 类蒸馏都是已有做法，不算在内。</p></div>
+  <div class="novel prose">
+    <div class="card nv"><h4>原生 RGBA 的 16×16 高压缩 VAE</h4><p>同一个 4 通道 VAE 同时服务 RGB 生成与透明图生成，16×16 / 48 维下 RGB PSNR 35.429、RGBA PSNR 38.274，均为表内最高。</p><p class="why">可核对：§3.2、表 1–2、图 13。LPIPS / SSIM 并非全部最佳。</p></div>
+    <div class="card nv"><h4>结构化 JSON caption：先路由再按类取属性</h4><p>不是一个通用 schema 套所有图，而是 5 个一级类各自映射属性子集（如图表类有 Axis、Legend、Data Point Values），并支持按维度增量修订，最后用微调 MLLM 改写成自然语言。</p><p class="why">可核对：§2.2.2、图 11。无「有/无结构化 caption」的对照。</p></div>
+    <div class="card nv"><h4>Planner 端的 <code>&lt;size&gt;</code> 与 <code>&lt;imagine&gt;</code></h4><p>统一模型自己推断输出分辨率并写稠密视觉描述，交错生成时以 <code>&lt;BOI&gt;</code> 触发 Visualizer，Planner 再接着写文。</p><p class="why">可核对：§3.3；与团队的 Wan-Weaver 一脉相承。</p></div>
+    <div class="card nv"><h4>PE 输出 common / difference，并兼做路由</h4><p>I2I 与 TI2S 的改写显式拆分「保持什么」与「改什么」；T2I 下只对 7 类 prompt 启用改写。</p><p class="why">可核对：§3.4。没有字段拆分的消融。</p></div>
+    <div class="card nv"><h4>用 reward benchmark 而不是留出集选 RM，及自研 ReFMA</h4><p>作者明确指出留出验证集会让 RM「偏好过拟合」，改用多源 benchmark 选型；ReFMA 用 flow matching anchor 平衡不同噪声水平的优化。</p><p class="why">可核对：§4.3.2–4.3.3。benchmark 组成、消融结果、ReFMA 公式都未给。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">每条先写论文怎么做（带出处），再写一条可迁移做法。<b>「迁移」都是本页的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>先分类、再按类填属性</h4>
+        <p class="paper">论文：图先路由到写实 / 非写实 / 文字 / 图表 / 多图拼接 5 类，各类只标对应属性，属性池共 25 个<span class="src">§2.2.2 · 图 11</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑样本的源图也先分类再 caption：文字类必须有逐行 Text 字段，图表类必须有 Data Point Values。编辑指令里引用的对象必须能在源图 caption 的某个属性里找到，找不到就打回。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>指令拆成 common / difference</h4>
+        <p class="paper">论文：I2I / TI2S 的 PE 输出两个字段，common 写应保持的主体与风格，difference 写要改的方面<span class="src">§3.4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>训练 caption 的 JSON 里固定 <code>preserve</code> 与 <code>edit</code> 两组；评测时 preserve 每条对应一个一致性检查项，edit 每条对应一个执行检查项，两组分开报分。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>按维度改 caption，不整段重写</h4>
+        <p class="paper">论文：结构化 caption 「及时更新」，补缺失维度、删错误维度、其余维度原样保留<span class="src">§2.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>caption 按字段存版本号；发现某类错误（如左右方位写反）时只重跑对应字段，并记录哪一版字段进了哪次训练，方便把效果变化归因到具体字段。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>保留一份「脏」的原始文本</h4>
+        <p class="paper">论文：与 MLLM caption 并用 raw caption（alt、标题、标签、上下文），刻意保留网页噪声与弱监督<span class="src">§2.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令除了规范化版本，再按比例混入短、口语、错字、只说意图的用户式写法；评测集同样分「规范指令 / 用户口吻」两桶报分。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>编辑任务三层标签</h4>
+        <p class="paper">论文：I2I / TI2S 按「参考或编辑范式 → 编辑目标 → 编辑类型」分层打标，用于组织复杂任务、缓解长尾<span class="src">§2.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每条编辑对至少带这三层标签，采样器按叶子节点配额而不是按原始频率采；评测集按同一棵树分层抽样，保证每个叶子都有样本。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>先核对自己的 I2I 配比</h4>
+        <p class="paper">论文：I2I 中 Face / Multi-Face / Object Consistency 合计 76.1%，Basic / Human / General / Text 等显式编辑类约 19.9%<span class="src">图 8</span><span class="src calc">推算</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>如果目标是「指令编辑」而非「参考生成」，不要照抄这个配比；把参考一致性类与显式编辑类分成两个桶，单独调两桶的配比，对照编辑指标看。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>多张种子图定义一个类别</h4>
+        <p class="paper">论文：难以用文字描述的类别（美学、构图逻辑）用多张种子图共同检索，专家标正/负集，训练类别专属美学打分器<span class="src">§2.2.1 · 图 9</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>为难找的编辑源图（如复杂透明物体、密排小字海报）各挑一组种子图做多图检索；正/负集同时留下来，当这一类源图的自动准入分类器。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>便宜算子放在 VLM 之前</h4>
+        <p class="paper">论文：压缩比、边缘像素方差、JPEG 重编码 bpp、AIGC 检测分，加水印与油腻纹理检测<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>对编辑对的源图和目标图都跑一遍；尤其目标图由模型合成时，AI score 与「油腻纹理」分的差值（目标 − 源）可当作「编辑引入了合成感」的信号，记录下来按分层采样，而不是一刀切。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>阈值按阶段收紧，再人工抽检</h4>
+        <p class="paper">论文：PT 只用基线过滤保规模，CT / SFT 显著收紧美学与清晰度阈值，自动过滤后随机人工抽检<span class="src">§2.2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>同一批编辑对存一份打分而非只存过/不过，不同阶段用不同阈值切片；每次切片随机抽 N 条人工看，记录误杀与漏放率，作为阈值调整依据。</p></div>
+      <div class="impl"><h4><span class="ix">D6</span>RL prompt 与 SFT prompt 互斥</h4>
+        <p class="paper">论文：RL 数据集与 SFT 数据集的 prompt 互不重叠，防止靠记忆拿高 reward<span class="src">§4.3.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 阶段对源图也做去重（不只是指令文本），避免同一源图换个说法出现在两个阶段；评测集再与两者都去重。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>Win Score 把「都好」算半分</h4>
+        <p class="paper">论文：Win Score = (Wins + 0.5 × BothGood) / Total；交互编辑与组图改用 Pass Rate<span class="src">图 1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>GSB 报告里把 BothGood 与 BothBad 分开列，再给 Win Score；同时附 prompt 数、评审人数与置信区间——这些正是论文缺的。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>用多源 benchmark 选 RM，不靠留出集</h4>
+        <p class="paper">论文：留出验证集导致 RM 偏好过拟合，改建来源更多样的 reward benchmark 来选骨干、规模、数据量、损失<span class="src">§4.3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RM 的验证集换数据源（不同标注批次、不同源图分布、不同生成模型产出的候选），并与 RL 后人评结果做相关性检查，相关性低的 RM 不上线。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>按编辑类别画轴，而不是只给总分</h4>
+        <p class="paper">论文：通用编辑分 Local / Advanced / Multi-image / Identity &amp; Reference / Object &amp; Scene / Style &amp; Lighting / Text 等轴；交互编辑另分 5 轴<span class="src">图 1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>评测集分类轴与 D1 的训练标签树对齐，这样某一轴掉分时能直接回查该叶子节点的训练数据量与质量。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>先测 VAE 的小字上限</h4>
+        <p class="paper">论文：在文档细粒度文字区域对比各 VAE 重建（图 13），并称 CT 加入文字、人脸、纹理数据后小字重建能力出现<span class="src">§3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑评测前，先把评测图过一遍「编码-解码」，用 OCR 比对重建前后；VAE 重建都认不出的字号区间，从文字编辑分数里单独剔出或分桶，避免把 VAE 上限算成编辑能力。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>评测 query 先打属性再均衡</h4>
+        <p class="paper">论文：MLLM 给真实 query 标任务类别、难度、是否需推理、是否纯视觉问答，再按人工规则均衡成最终 query 集<span class="src">§2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>线上真实编辑请求同样打这四类属性后均衡抽样做评测集，并保留原始分布权重，能同时报「均衡分」和「按线上分布加权分」。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits prose">
+    <li class="key"><b>生成 / 编辑没有可复现的定量结果。</b>全部结论来自图 1 的内部人评雷达，无数值表、无 prompt 数与评审人数、无公开基准；交互编辑与组图的约 80% Pass Rate 没有对比对象<span class="src">图 1 · §1</span>。</li>
+    <li class="key"><b>几乎没有消融。</b>结构化 caption、跨图双向注意力、干净 VAE token、PE 字段拆分、Cascade RL 各算法、ReFMA、RM 选型都没有对照数字；RL 只给了 15%–50% 的区间<span class="src">§4.3.4</span>。</li>
+    <li class="key"><b>数据规模与来源未披露。</b>无图像数、编辑对数、来源占比、过滤阈值与剔除率；编辑对如何构造（专家模型合成、真实对等）完全没写。图 8 只给任务内占比。</li>
+    <li><b>参数量、开源与许可证均未写。</b>只给 Model Card 名 Wan2.7-Image 与在线体验链接；「moderate parameter scale」没有数字<span class="src">§4.4</span>。</li>
+    <li><b>VAE 表述略强于表格。</b>正文称 RGB「最佳整体表现」，但 LPIPS FLUX.1 VAE 0.009 更低；RGBA SSIM Qwen-Image-Layered 0.971 更高<span class="src">表 1–2</span>。且对比 VAE latent 维度不同（48 vs 16），不是同等容量比较。</li>
+    <li><b>理解评测的正文与表格不一致。</b>§5.1 说覆盖 Image 与 <b>Video</b> Understanding，但表 4 是 Image 与 Text Understanding，没有视频基准。</li>
+    <li><b>文本理解平均分口径偏有利。</b>理解专用模型多数缺 AIME，Avg 把缺失按 0 计入<span class="src calc">推算</span>，「显著提升」部分来自这一口径；对 Kimi-VL Thinking 实际为 28.9 vs 27.7<span class="src">表 4</span>。</li>
+    <li><b>「超过 GPT Image 1.5」的范围。</b>按图 1 文字层，GPT Image 1.5 只出现在 T2I 对比中，编辑侧对比的是 Nano Banana Pro、Seedream 5.0 Lite、Qwen-Image-2.0-Pro。</li>
+    <li><b>算子定义有一处方向矛盾。</b>compression ratio 定义为「未压缩大小 / 实际大小」，却说「比值越低压缩越重」<span class="src">§2.2.1</span>。</li>
+    <li><b>效率数字只有倍数。</b>蒸馏「&gt;8×」与 Refiner「4K 不牺牲速度」都没有 NFE、延迟或硬件信息<span class="src">§4.4 · §1</span>。</li>
+    <li><b>日期口径。</b>arXiv v1 为 2026-04-21；本页对照的 PDF 为 v2（arXiv 戳 2026-04-23），正文 Date 写 2026-04-27。</li>
+  </ul>
+</section>
+
+<!-- 10 INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+    <tbody>
+      <tr><td>图 1</td><td>四类任务人评雷达（Win Score / Pass Rate）；本页仅有首页局部裁图</td><td><a href="#eval">评测 6.1</a></td></tr>
+      <tr><td>图 2</td><td>文生图能力示例</td><td><a href="#top">页首</a></td></tr>
+      <tr><td>图 3–6</td><td>I2I、组图、极端比例/人像/调色板/透明通道、超长文字示例</td><td>未收录</td></tr>
+      <tr><td>图 7</td><td>理解数据构建流程</td><td><a href="#data">数据 4.7</a></td></tr>
+      <tr><td>图 8</td><td>T2I / I2I / 组图类别占比</td><td><a href="#data">数据 4.3</a></td></tr>
+      <tr><td>图 9</td><td>多模态检索系统（本页裁图为下半部分）</td><td><a href="#data">数据 4.1</a></td></tr>
+      <tr><td>图 10</td><td>代表性过滤算子的分布与示例</td><td>未收录（定义见数据 4.2）</td></tr>
+      <tr><td>图 11</td><td>结构化数据分类体系</td><td>未收录（转写见数据 4.5）</td></tr>
+      <tr><td>图 12</td><td>Wan-Image 架构</td><td>未收录（示意见<a href="#arch">架构</a>）</td></tr>
+      <tr><td>图 13</td><td>VAE 小字重建对比</td><td>未收录</td></tr>
+      <tr><td>图 14 / 31</td><td>PE 变体对比；有无 PE</td><td>未收录</td></tr>
+      <tr><td>图 15</td><td>有无 Refiner</td><td>未收录</td></tr>
+      <tr><td>图 16</td><td>RLHF 框架；RL 相对 SFT 的 Win Score 提升</td><td>未收录（要点见<a href="#train">训练</a>）</td></tr>
+      <tr><td>图 17 / 18 / 30</td><td>SFT vs Cascade RL（T2I / I2I）</td><td>未收录</td></tr>
+      <tr><td>图 19</td><td>teacher vs 蒸馏 student</td><td>未收录</td></tr>
+      <tr><td>图 20–26</td><td>更多 T2I / I2I / 交互编辑 / 组图 / 人像等示例</td><td>未收录</td></tr>
+      <tr><td>图 27 / 28</td><td>与竞品的 T2I、I2I、TI2S 定性对比</td><td>未收录</td></tr>
+      <tr><td>图 29</td><td>PT / CT / SFT 阶段演进</td><td>未收录</td></tr>
+      <tr><td>表 1 / 表 2</td><td>RGB / RGBA VAE 重建</td><td><a href="#eval">评测 6.2</a></td></tr>
+      <tr><td>表 3</td><td>理解与生成各阶段训练配置</td><td><a href="#train">训练配方</a></td></tr>
+      <tr><td>表 4</td><td>理解基准对比</td><td><a href="#eval">评测 6.3</a></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 Wan Team, Alibaba Group,《Wan-Image: Pushing the Boundaries of Generative Visual Intelligence》，<a href="https://arxiv.org/abs/2604.19858" target="_blank" rel="noopener">arXiv:2604.19858</a>（v1 2026-04-21；本页对照 v2）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行加减或核对；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

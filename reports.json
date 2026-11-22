@@ -112,6 +112,22 @@
       "one_liner": "用多模态视觉语言统一视频生成、编辑与参考；内部人评 GSB 对 Veo 3.1 为 247%、对 Runway-Aleph 为 230%。",
       "path": "reports/video/kling-omni/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "wan-image",
+      "title": "Wan-Image",
+      "subtitle": "Pushing the Boundaries of Generative Visual Intelligence",
+      "vendor": "Wan Team, Alibaba Group",
+      "vendor_key": "alibaba",
+      "category": "image",
+      "date": "2026-04-21",
+      "paper": "https://arxiv.org/abs/2604.19858",
+      "arxiv": "2604.19858",
+      "open_weights": false,
+      "params": null,
+      "one_liner": "MLLM Planner + DiT Visualizer 统一理解与生成；最多 9 张输入、一次 12 张组图，原生 RGBA 与最高 4K，结构化 caption 含 25 个属性。",
+      "path": "reports/image/wan-image/",
+      "added": "2026-11-22"
     }
   ]
 }
