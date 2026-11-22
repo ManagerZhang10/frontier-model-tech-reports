@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nemotron 3 Nano Omni 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Nemotron 3 Nano Omni 技术报告中文精读：30B-A3B MoE 混合底座 + C-RADIOv4-H + Parakeet 音频编码器，7 段 SFT + 5 段 RL 配方、各阶段数据配比、Conv3D/EVS 视频 token 压缩、评测与局限，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* 页面特有：分差图、比例条多色、token 流示意 */
+  .d-pos { fill: var(--good); }
+  .d-neg { fill: var(--warm); }
+  .ratio .rbar .c { background: var(--good); }
+  .ratio .rbar .d { background: var(--bar-other2); }
+  .ratio .rbar .e { background: var(--warn); }
+  .ratio .rbar .f { background: color-mix(in srgb, var(--accent) 50%, var(--card)); }
+  .ratio .rbar .g { background: var(--bar-other); }
+  .ratio .rbar .h { background: color-mix(in srgb, var(--warm) 45%, var(--card)); }
+  .rkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .8rem; color: var(--muted); margin-top: 6px; }
+  .rkey i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .rkey .ka { background: var(--accent); } .rkey .kb { background: var(--warm); } .rkey .kc { background: var(--good); }
+  .rkey .kd { background: var(--bar-other2); } .rkey .ke { background: var(--warn); }
+  .rkey .kf { background: color-mix(in srgb, var(--accent) 50%, var(--card)); } .rkey .kg { background: var(--bar-other); }
+  .rkey .kh { background: color-mix(in srgb, var(--warm) 45%, var(--card)); }
+  .flow.f3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .flow.f5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  @media (max-width: 960px) { .flow.f3, .flow.f5 { grid-template-columns: 1fr; } .flow.f3 .stage::after, .flow.f5 .stage::after { display: none; } }
+  .stage .grp-tag { display: inline-block; font: 600 .7rem/1 var(--f-mono); color: var(--muted); margin-left: 6px; }
+  .tok-svg .bx { fill: var(--card); stroke: var(--line); }
+  .tok-svg .v { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .tok-svg .v2 { fill: color-mix(in srgb, var(--accent) 35%, var(--card)); stroke: var(--accent); }
+  .tok-svg .drop { fill: none; stroke: var(--line); stroke-dasharray: 3 3; }
+  .tok-svg .hd { fill: var(--ink); font: 700 13px var(--f-body); }
+  .tok-svg .nt { fill: var(--muted); font: 500 11.5px var(--f-body); }
+  .tok-svg .num { fill: var(--accent-ink); font: 700 12px var(--f-mono); }
+  .tok-svg .arr { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型（Omni）</div>
+    <h1>Nemotron 3 Nano Omni<span class="sub">Nemotron 3 Nano Omni: Efficient and Open Multimodal Intelligence</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>NVIDIA</b></span>
+      <span>arXiv <b>2604.24954</b></span>
+      <span>v1 发布 <b>2026-04-27</b></span>
+      <span>本页依据 <b>v2（2026-05-11）</b></span>
+    </div>
+    <p class="lede">把 Nemotron Nano V2 VL 的 12B 稠密底座换成 <em>Nemotron 3 Nano 30B-A3B MoE 混合底座</em>，接 C-RADIOv4-H 视觉编码器和 Parakeet-TDT-0.6B-v2 音频编码器，首次原生支持音频；上下文 128K → 256K。训练是 <em>7 段 SFT（共约 466.9B token）+ 5 段 RL</em>，每段 SFT 都给了样本数、token 数和按类别的 token 占比。对数据读者最有用的是：各阶段配比表、「先抽元数据再生成 QA / caption」的合成管线、用 pass-rate 过滤 RL prompt，以及 Conv3D + EVS 把 512 帧视频的 LLM 输入从约 141k 压到约 42k token。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>开放权重 · BF16 / FP8 / NVFP4</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4"/></svg>30B-A3B MoE 混合底座</span>
+      <span class="badge">256K 上下文</span>
+      <span class="badge">视觉语言模型（Omni）</span>
+      <span class="badge">文本 / 图像 / 视频 / 音频 → 文本</span>
+      <span class="badge">部分训练数据 + 代码开放</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2604.24954" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M21 3l-9 9M19 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg>arXiv 论文</a>
+      <a href="https://arxiv.org/pdf/2604.24954" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/></svg>PDF</a>
+      <a href="https://github.com/NVIDIA-NeMo/DataDesigner/tree/main/docs/assets/recipes/vlm_long_doc" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3"/></svg>长文档数据管线 recipe</a>
+      <a href="https://huggingface.co/nvidia/C-RADIOv4-H" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/></svg>C-RADIOv4-H</a>
+      <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 11v2"/></svg>Parakeet-TDT-0.6B-v2</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自原文；<span class="src calc">推算</span> 为本页计算。</div>
+  </nav>
+
+  <main>
+
+  <!-- 01 速览 -->
+  <section class="sec" id="glance">
+    <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+    <div class="glance wide">
+      <div class="card stat"><span class="stat-k">发布</span><span class="stat-num sm">2026-04-27</span><span class="stat-sub">arXiv v1；本页依据 v2（arXiv 戳 2026-05-11，PDF 页眉 2026-5-12）</span><span class="src">arXiv</span></div>
+      <div class="card stat"><span class="stat-k">LLM 底座</span><span class="stat-num sm">Nemotron 3 Nano 30B-A3B</span><span class="stat-sub">MoE 混合底座，替换 V2 VL 的 12B 稠密混合底座</span><span class="src">§1</span></div>
+      <div class="card stat"><span class="stat-k">编码器</span><span class="stat-num sm">C-RADIOv4-H · Parakeet-TDT-0.6B-v2</span><span class="stat-sub">视觉 / 音频，各接 MLP projector</span><span class="src">§2</span></div>
+      <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">256K</span><span class="stat-sub">前代 128K；Stage 6 训练长度 262,144</span><span class="src">§1 · §3.1.7</span></div>
+      <div class="card stat"><span class="stat-k">SFT 总量</span><span class="stat-num">466.9B</span><span class="stat-sub">tokens · 434.1M 样本，7 个阶段，含重复与 prompt 被 mask 的 token</span><span class="src">表 1</span></div>
+      <div class="card stat"><span class="stat-k">Omni-RL 语料</span><span class="stat-num">≈120K</span><span class="stat-sub">prompts，113 个子数据集，图像 / 视频 / 音频 / 纯文本四组</span><span class="src">§3.2.4</span></div>
+      <div class="card stat"><span class="stat-k">512 帧视频 → LLM token</span><span class="stat-num sm">141k → 75k → 42k</span><span class="stat-sub">无压缩 → +Conv3D → +Conv3D+EVS（q=0.5）</span><span class="src">§4.6</span></div>
+      <div class="card stat"><span class="stat-k">权重体积</span><span class="stat-num sm">61.5 / 32.8 / 20.9 GB</span><span class="stat-sub">BF16 / FP8 / NVFP4；11 项非 ASR 均值差 −0.37 / −0.40</span><span class="src">表 14</span></div>
+      <div class="card stat"><span class="stat-k">单流解码</span><span class="stat-num">&gt;500</span><span class="stat-sub">output tok/s（B200，并发 1）；Qwen3-Omni 175–210</span><span class="src">§4.8</span></div>
+      <div class="card stat"><span class="stat-k">开放数据</span><span class="stat-num sm">≈6.9M 样本</span><span class="stat-sub">Nemotron-Image-Training-v3；另有数据管线示例、Megatron-Bridge 训练代码、NeMo-RL 指南</span><span class="src">§1</span></div>
+      <div class="card stat"><span class="stat-k">训练硬件</span><span class="stat-num sm">32–128 节点 H100</span><span class="stat-sub">SFT；RL 用 B200 + H100</span><span class="src">§3.1.8 · §3.2.5</span></div>
+      <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">原文只写在 HuggingFace 发布三种精度权重</span><span class="src">§1</span></div>
+    </div>
+  </section>
+
+  <!-- 02 TL;DR -->
+  <section class="sec" id="tldr">
+    <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看懂</h2></div>
+    <div class="tldr wide">
+      <div class="card tl"><span class="idx">01</span><h3>换底座 + 加音频，结构是常规拼接</h3><p>encoder–projector–decoder：30B-A3B MoE 混合 LLM + C-RADIOv4-H + Parakeet 音频编码器，视觉 / 音频 / 文本 token 拼接后送入 LLM，音视频按时间顺序交错<span class="src">§2 · 图 1</span>。上下文 128K → 256K<span class="src">§1</span>。</p></div>
+      <div class="card tl"><span class="idx">02</span><h3>7 段 SFT，配比全公开</h3><p>先视觉（Stage 0–1，230.3B token<span class="src calc">推算</span>），再音频（Stage 2–3，111.9B<span class="src calc">推算</span>），再联合 omni 16k → 48k → 256k<span class="src">表 1</span>。每段给出按类别的样本数、token 数与占比<span class="src">表 2–5</span>，比多数报告透明。</p></div>
+      <div class="card tl"><span class="idx">03</span><h3>数据几乎都是「抽元数据 → LLM 生成」</h3><p>视觉 QA 由 Qwen3-VL / Qwen3.5 / GPT-OSS / Nemotron-Parse / DeepSeek-OCR 生成后「严格过滤」<span class="src">§3.1.2</span>；音视频先用 Qwen3-Omni-30B-A3B 抽元数据，再由 GPT-OSS-120B 生成 QA 与 caption<span class="src">§3.1.5–3.1.6</span>。过滤标准未披露。</p></div>
+      <div class="card tl"><span class="idx">04</span><h3>效率是主卖点</h3><p>Conv3D 两帧并一 + 运行时 EVS 剪枝，BF16 TTFT 7969 → 5313 ms（−33%），256 帧平均准确率 66.72 → 66.32<span class="src">表 12</span>。B200 上单流 &gt;500 tok/s，约为 Qwen3-Omni 的 2.4–2.9×<span class="src">§4.8</span>。</p></div>
+      <div class="card tl caveat"><span class="idx">05</span><h3>「全面领先」需要打折</h3><p>对 Qwen3.5-Omni（Flash，未开源）多数可比项落后：DailyOmni 74.5 vs 81.8，VideoMME 72.2 vs 77.0<span class="src">表 7 · 表 9</span>。文本侧比自家底座 AIME25 低 7.0、LiveCodeBench 低 5.1<span class="src">表 10</span>。</p></div>
+    </div>
+  </section>
+
+  <!-- 03 架构 -->
+  <section class="sec" id="arch">
+    <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：encoder–projector–decoder</h2>
+      <p class="sec-intro">Nemotron 3 Nano 30B-A3B 做 LLM，视觉、音频各自一个编码器，经 MLP projector 接入；三路 token 拼接后进 LLM<span class="src">§2</span>。</p></div>
+
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig1.jpg" alt="Nemotron 3 Nano Omni 架构：音频经 Parakeet Audio Encoder 与 Audio Adaptor，图像和视频帧经 3D Convolution、C-RADIOv4-H、Vision Adaptor 和 Efficient Video Sampling，文本经 Text Tokenizer，三路 token 拼接后输入 Nemotron 3 Nano 30B-A3B LLM" loading="lazy"></div>
+      <figcaption><b>Nemotron 3 Nano Omni 架构。</b>图像与视频都用动态分辨率；视频另经 3D 卷积（Conv3D），可选 Efficient Video Sampling（EVS）提升吞吐；音频由 Parakeet v2 编码。视觉、音频、文本 token 拼接后送入 LLM。<span class="from">来源：论文图 1</span></figcaption>
+    </figure>
+
+    <h3>相对 Nemotron Nano V2 VL 的五项改动 <span class="src">§1</span></h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4><span class="tag">1</span>LLM 换成 MoE 混合底座</h4><p>12B 稠密混合底座 → Nemotron 3 Nano 30B-A3B MoE 混合底座，目的是处理长多模态序列并提高吞吐<span class="src">§1</span>。量化一节提到含 Mamba 层与 attention 层<span class="src">§4.7</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">2</span>原生音频输入</h4><p>16 kHz 单声道 → log-mel（10 ms hop）→ 3 层 stride-2 卷积，约 8× 下采样 → 约 12.5 token/s（≈80 ms/token）。按 30 s 切段（≈375 token/段），不足 30 s 不 padding<span class="src">§2</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">3</span>动态分辨率替代 tiling</h4><p>保持原始宽高比，按 16×16 切 patch，每图视觉 token 限制在 1,024–13,312（方图约 512² 到 1840²）；进 projector 前 pixel shuffle 4× 下采样<span class="src">§2</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">4</span>Conv3D 时间压缩</h4><p>视频每 2 帧经 Conv3D 合成一个 tubelet，视频 token 减半；训练、推理都生效<span class="src">§2 · §4.6</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">5</span>上下文 128K → 256K</h4><p>Stage 6 以 262,144 长度训练，主打 10 到 100+ 页长文档<span class="src">§3.1.7</span>。音频训练长度 0.5 s–20 min，上下文可容纳 5 小时以上音频<span class="src">§2</span>。</p></div>
+      <div class="card mod"><h4><span class="tag ok-tag">运行时</span>EVS：只在推理时剪 token</h4><p>在 ViT 与 vision adapter 之后、进 LLM 之前，对每个空间位置算相邻 tubelet 的余弦差异，按剪枝率 q 保留全局最不相似的 token；首个 tubelet 全部保留作锚点<span class="src">§4.6</span>。</p></div>
+    </div>
+
+    <h3>视频 token 怎么被压两次</h3>
+    <div class="card diagram wide">
+      <svg class="tok-svg" viewBox="0 0 760 196" role="img" aria-label="示意：Conv3D 在时间维两帧合一，EVS 在进入 LLM 前按相邻 tubelet 差异剪掉冗余 token">
+        <text class="hd" x="0" y="18">① 帧（每帧一组 patch）</text>
+        <g>
+          <rect class="v" x="0" y="34" width="40" height="40" rx="4"/><rect class="v" x="46" y="34" width="40" height="40" rx="4"/>
+          <rect class="v" x="92" y="34" width="40" height="40" rx="4"/><rect class="v" x="138" y="34" width="40" height="40" rx="4"/>
+          <rect class="v" x="184" y="34" width="40" height="40" rx="4"/><rect class="v" x="230" y="34" width="40" height="40" rx="4"/>
+        </g>
+        <path class="arr" d="M280 54 h28 m-6 -5 l6 5 -6 5"/>
+        <text class="hd" x="318" y="18">② Conv3D：每 2 帧 → 1</text>
+        <g>
+          <rect class="v2" x="318" y="34" width="40" height="40" rx="4"/><rect class="v2" x="364" y="34" width="40" height="40" rx="4"/><rect class="v2" x="410" y="34" width="40" height="40" rx="4"/>
+        </g>
+        <path class="arr" d="M460 54 h28 m-6 -5 l6 5 -6 5"/>
+        <text class="hd" x="498" y="18">③ EVS：剪掉冗余 token</text>
+        <g>
+          <rect class="v2" x="498" y="34" width="40" height="40" rx="4"/>
+          <rect class="drop" x="544" y="34" width="40" height="40" rx="4"/><rect class="v2" x="554" y="44" width="20" height="20" rx="3"/>
+          <rect class="drop" x="590" y="34" width="40" height="40" rx="4"/><rect class="v2" x="600" y="38" width="14" height="14" rx="3"/><rect class="v2" x="612" y="56" width="14" height="14" rx="3"/>
+        </g>
+        <text class="nt" x="498" y="92">首个 tubelet 整体保留作锚点 §4.6</text>
+        <text class="num" x="0" y="130">512 帧 · 512×512：≈141k token</text>
+        <text class="num" x="318" y="130">≈75k（−47%）</text>
+        <text class="num" x="498" y="130">≈42k（q=0.5，−70%）</text>
+        <text class="nt" x="0" y="152">Conv3D 是结构改动（训练 + 推理）；EVS 只在推理时启用，位于 ViT 与 vision adapter 之后 §4.6</text>
+        <text class="nt" x="0" y="184">示意：方块数量、保留位置为虚构示例；token 数取自 §4.6 正文。</text>
+      </svg>
+      <div class="cap">示意，非论文原图。只表达「时间维先合并、再按相邻差异剪 token」的顺序关系。</div>
+    </div>
+  </section>
+
+  <!-- 04 数据 -->
+  <section class="sec" id="data">
+    <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：每段 SFT 吃什么</h2>
+      <p class="sec-intro">原文给了 SFT 每段的样本数与 token 数（含样本重复、含被 mask 的 prompt token）<span class="src">表 1</span>，Stage 3–6 还有按类别的 token 占比<span class="src">表 2–5</span>。下面的比例条全部来自原表，不是本页估算。</p></div>
+
+    <h3>已披露规模：SFT 七段</h3>
+    <div class="tbl-wrap wide">
+      <table class="idx-table">
+        <thead><tr><th>阶段</th><th>样本</th><th>Tokens</th><th style="text-align:left">主要数据域</th><th style="text-align:left">数据怎么来</th></tr></thead>
+        <tbody>
+          <tr><td>Stage 0</td><td>9.35M</td><td>15.5B</td><td style="text-align:left">Captioning、OCR、文档、VQA</td><td style="text-align:left">Stage 1 数据的一部分；含 caption、grounding、OCR、文档、GUI、通用 VQA <span class="src">§3.1.1</span></td></tr>
+          <tr class="hl"><td>Stage 1</td><td>86.3M</td><td>214.8B</td><td style="text-align:left">综合视觉-语言 SFT</td><td style="text-align:left">在 V2 VL 的 SFT Stage 1 数据上增强：重标注、补推理链、扩领域、全合成管线 <span class="src">§3.1.2</span></td></tr>
+          <tr><td>Stage 2</td><td>59.2M</td><td>11.4B</td><td style="text-align:left">ASR（Granary）</td><td style="text-align:left">Granary v1.1 ASR，多声学条件 / 说话风格 / 语言 <span class="src">§3.1.3</span></td></tr>
+          <tr><td>Stage 3</td><td>242.0M</td><td>100.5B</td><td style="text-align:left">ASR、声音、音乐、语音理解</td><td style="text-align:left">Qwen3-Omni-30B-A3B 出 caption、音乐工具出元数据，GPT-OSS-120B 生成 QA <span class="src">§3.1.4</span></td></tr>
+          <tr><td>Stage 4</td><td>30.5M</td><td>57.3B</td><td style="text-align:left">视觉、视频、音频、文本、omni、安全</td><td style="text-align:left">&lt;2 分钟视频抽音视频元数据 → QA / 摘要 <span class="src">§3.1.5</span></td></tr>
+          <tr><td>Stage 5</td><td>6.08M</td><td>33.5B</td><td style="text-align:left">长视频、omni、推理</td><td style="text-align:left">视频切 20 s 段抽元数据 → QA + 推理链；加入 Nemotron 3 Super 安全数据 <span class="src">§3.1.6</span></td></tr>
+          <tr><td>Stage 6</td><td>623K</td><td>34.0B</td><td style="text-align:left">超长文档、长上下文文本</td><td style="text-align:left">论文 / 财报 / 演示文稿，VLM 在页、多页、全文档三级生成 QA 与推理链 <span class="src">§3.1.7</span></td></tr>
+          <tr><td><b>合计</b></td><td><b>434.1M</b></td><td><b>466.9B</b></td><td style="text-align:left" colspan="2">含样本重复 <span class="src">表 1</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">来源：表 1（原文标注为近似值），「数据怎么来」列摘自 §3.1.1–3.1.7。七段 token 逐项相加为 467.0B<span class="src calc">推算</span>，与表中合计 466.9B 的差来自四舍五入。</p>
+
+    <h3>配比：原文给了 token 占比的四段</h3>
+    <div class="card mod wide">
+      <div class="ratio"><div class="rlab"><span>Stage 3 音频预训练 · token 占比</span><span class="src">表 2</span></div><div class="rbar"><span class="a" style="width:43.3%" title="Music understanding 43.3%">43.3%</span><span class="b" style="width:24.4%" title="Sound understanding 24.4%">24.4%</span><span class="c" style="width:22.7%" title="ASR 22.7%">22.7%</span><span class="d" style="width:9.6%" title="Speech understanding 9.6%">9.6%</span></div><div class="rkey"><span><i class="ka"></i>Music understanding 43.3%</span><span><i class="kb"></i>Sound understanding 24.4%</span><span><i class="kc"></i>ASR 22.7%</span><span><i class="kd"></i>Speech understanding 9.6%</span></div></div>
+      <p class="footnote">Music understanding 只有 19.8M 样本却占 43.5B token，平均约 2.2k token/样本；ASR 113.8M 样本仅 22.8B，约 200 token/样本<span class="src calc">推算</span>。音乐片段明显更长。</p>
+      <div class="ratio"><div class="rlab"><span>Stage 4 Omni SFT 16k · token 占比</span><span class="src">表 3</span></div><div class="rbar"><span class="a" style="width:53.4%" title="Vision 53.4%">53.4%</span><span class="b" style="width:16.9%" title="Audio 16.9%">16.9%</span><span class="c" style="width:11.0%" title="Short video 11.0%">11.0%</span><span class="d" style="width:6.1%" title="Text 6.1%"></span><span class="e" style="width:4.4%" title="Audio reasoning 4.4%"></span><span class="f" style="width:4.2%" title="Short video reasoning 4.2%"></span><span class="g" style="width:2.8%" title="Short video omni 2.8%"></span><span class="h" style="width:1.14%" title="ASR + 两类 safety（1.1 + 0.02 + 0.02） 1.14%"></span></div><div class="rkey"><span><i class="ka"></i>Vision 53.4%</span><span><i class="kb"></i>Audio 16.9%</span><span><i class="kc"></i>Short video 11.0%</span><span><i class="kd"></i>Text 6.1%</span><span><i class="ke"></i>Audio reasoning 4.4%</span><span><i class="kf"></i>Short video reasoning 4.2%</span><span><i class="kg"></i>Short video omni 2.8%</span><span><i class="kh"></i>ASR + 两类 safety（1.1 + 0.02 + 0.02） 1.14%</span></div></div>
+      <p class="footnote">两类 safety 各约 10M token（0.02%）；omni 数据只有 short video omni 一项（251K 样本、1.6B）<span class="src">表 3</span>。</p>
+      <div class="ratio"><div class="rlab"><span>Stage 5 Omni SFT 48k · token 占比</span><span class="src">表 4</span></div><div class="rbar"><span class="a" style="width:39.1%" title="Omni (medium+long) 39.1%">39.1%</span><span class="b" style="width:11.8%" title="Omni reasoning 11.8%">11.8%</span><span class="c" style="width:11.3%" title="Audio 11.3%">11.3%</span><span class="d" style="width:10.2%" title="Video reasoning 10.2%">10.2%</span><span class="e" style="width:9.8%" title="Vision 9.8%">9.8%</span><span class="f" style="width:7.2%" title="Text 7.2%"></span><span class="g" style="width:9.1%" title="Video (medium + long)（5.8 + 3.3） 9.1%">9.1%</span><span class="h" style="width:1.4%" title="其余 4 类（ASR 0.4 · Video short 0.6 · Omni short 0.3 · Safety 0.1） 1.4%"></span></div><div class="rkey"><span><i class="ka"></i>Omni (medium+long) 39.1%</span><span><i class="kb"></i>Omni reasoning 11.8%</span><span><i class="kc"></i>Audio 11.3%</span><span><i class="kd"></i>Video reasoning 10.2%</span><span><i class="ke"></i>Vision 9.8%</span><span><i class="kf"></i>Text 7.2%</span><span><i class="kg"></i>Video (medium + long)（5.8 + 3.3） 9.1%</span><span><i class="kh"></i>其余 4 类（ASR 0.4 · Video short 0.6 · Omni short 0.3 · Safety 0.1） 1.4%</span></div></div>
+      <p class="footnote">48k 段把 omni（中长）推到 39.1%，短视频 / 短 omni 被下采样<span class="src">§3.1.6 · 表 4</span>。</p>
+      <div class="ratio"><div class="rlab"><span>Stage 6 Omni SFT 256k · token 占比</span><span class="src">表 5</span></div><div class="rbar"><span class="a" style="width:90.9%" title="Long Context Vision 90.9%">90.9%</span><span class="b" style="width:7.3%" title="Text 7.3%"></span><span class="c" style="width:1.5%" title="Long Context Text 1.5%"></span><span class="d" style="width:0.3%" title="Vision 0.3%"></span></div><div class="rkey"><span><i class="ka"></i>Long Context Vision 90.9%</span><span><i class="kb"></i>Text 7.3%</span><span><i class="kc"></i>Long Context Text 1.5%</span><span><i class="kd"></i>Vision 0.3%</span></div></div>
+      <p class="footnote">256k 段 90.9% 是长上下文视觉（508K 样本、30.9B）；不含音频，音频编码器与 projector 冻结<span class="src">§3.1.7 · 表 5</span>。</p>
+    </div>
+    <p class="tbl-note">Stage 0–2 无类别拆分：Stage 2 只有 Granary ASR；Stage 0、1 的领域配比<span class="nd">原文未披露</span>。</p>
+
+    <details class="more wide">
+      <summary>Stage 3–6 原始配比表 <span class="hint">表 2 / 3 / 4 / 5 · 样本数、token 数、占比</span></summary>
+      <div class="body">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">Stage 3（表 2）</th><th>样本</th><th>占比</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">ASR</td><td>113.8M</td><td>22.7%</td><td>22.8B</td></tr>
+            <tr><td style="text-align:left">Sound understanding</td><td>61.0M</td><td>24.4%</td><td>24.5B</td></tr>
+            <tr><td style="text-align:left">Music understanding</td><td>19.8M</td><td>43.3%</td><td>43.5B</td></tr>
+            <tr><td style="text-align:left">Speech understanding</td><td>47.5M</td><td>9.6%</td><td>9.6B</td></tr>
+            <tr><td style="text-align:left"><b>Total</b></td><td>242.0M</td><td></td><td>100.5B</td></tr>
+          </tbody></table></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">Stage 4（表 3）</th><th>样本</th><th>占比</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">Vision data</td><td>14.6M</td><td>53.4%</td><td>30.6B</td></tr>
+            <tr><td style="text-align:left">Text data</td><td>948K</td><td>6.1%</td><td>3.5B</td></tr>
+            <tr><td style="text-align:left">Text safety data</td><td>14K</td><td>0.02%</td><td>10.4M</td></tr>
+            <tr><td style="text-align:left">Image safety data</td><td>9K</td><td>0.02%</td><td>10.0M</td></tr>
+            <tr><td style="text-align:left">Short video data</td><td>1.3M</td><td>11.0%</td><td>6.3B</td></tr>
+            <tr><td style="text-align:left">Short video reasoning data</td><td>388K</td><td>4.2%</td><td>2.4B</td></tr>
+            <tr><td style="text-align:left">Short video omni data</td><td>251K</td><td>2.8%</td><td>1.6B</td></tr>
+            <tr><td style="text-align:left">ASR data</td><td>2.9M</td><td>1.1%</td><td>640M</td></tr>
+            <tr><td style="text-align:left">Audio reasoning data</td><td>765K</td><td>4.4%</td><td>2.5B</td></tr>
+            <tr><td style="text-align:left">Audio data</td><td>9.3M</td><td>16.9%</td><td>9.7B</td></tr>
+            <tr><td style="text-align:left"><b>Total</b></td><td>30.5M</td><td></td><td>57.3B</td></tr>
+          </tbody></table></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">Stage 5（表 4）</th><th>样本</th><th>占比</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">ASR</td><td>650K</td><td>0.4%</td><td>0.12B</td></tr>
+            <tr><td style="text-align:left">Audio</td><td>2.84M</td><td>11.3%</td><td>3.80B</td></tr>
+            <tr><td style="text-align:left">Vision</td><td>1.17M</td><td>9.8%</td><td>3.28B</td></tr>
+            <tr><td style="text-align:left">Text</td><td>101K</td><td>7.2%</td><td>2.42B</td></tr>
+            <tr><td style="text-align:left">Safety</td><td>45K</td><td>0.1%</td><td>0.04B</td></tr>
+            <tr><td style="text-align:left">Video (short)</td><td>25K</td><td>0.6%</td><td>0.21B</td></tr>
+            <tr><td style="text-align:left">Video (medium)</td><td>96K</td><td>5.8%</td><td>1.95B</td></tr>
+            <tr><td style="text-align:left">Video (long)</td><td>74K</td><td>3.3%</td><td>1.11B</td></tr>
+            <tr><td style="text-align:left">Video reasoning</td><td>167K</td><td>10.2%</td><td>3.42B</td></tr>
+            <tr><td style="text-align:left">Omni (short)</td><td>6K</td><td>0.3%</td><td>0.09B</td></tr>
+            <tr><td style="text-align:left">Omni (medium+long)</td><td>710K</td><td>39.1%</td><td>13.10B</td></tr>
+            <tr><td style="text-align:left">Omni reasoning</td><td>198K</td><td>11.8%</td><td>3.94B</td></tr>
+            <tr><td style="text-align:left"><b>Total</b></td><td>6.08M</td><td>100%</td><td>∼33.5B</td></tr>
+          </tbody></table></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">Stage 6（表 5）</th><th>样本</th><th>占比</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">Long Context Vision</td><td>508K</td><td>90.9%</td><td>30.9B</td></tr>
+            <tr><td style="text-align:left">Text</td><td>63K</td><td>7.3%</td><td>2.5B</td></tr>
+            <tr><td style="text-align:left">Long Context Text</td><td>2.2K</td><td>1.5%</td><td>506M</td></tr>
+            <tr><td style="text-align:left">Vision</td><td>50K</td><td>0.3%</td><td>106M</td></tr>
+            <tr><td style="text-align:left"><b>Total</b></td><td>623K</td><td>100%</td><td>34.0B</td></tr>
+          </tbody></table></div>
+      </div>
+    </details>
+
+    <h3>Stage 1 视觉数据的四项增强 <span class="src">§3.1.2</span></h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4><span class="tag">替换</span>文本子集换成 Nemotron 3 Nano 的 SFT 数据</h4><p>V2 VL 的纯文本部分换成 Nemotron 3 Nano 30B-A3B SFT 数据的一部分，得到质量更高的文本推理样本。</p></div>
+      <div class="card mod"><h4><span class="tag">重标注</span>噪声子集用 Qwen3-VL 重新标注</h4><p>只重标「noisy subsets」。如何判定噪声、重标了多少<span class="nd">原文未披露</span>。</p></div>
+      <div class="card mod"><h4><span class="tag">推理链</span>人工 + 模型生成并存</h4><p>补充人工标注和模型生成的思维链，模型来自 Qwen3-VL、Qwen3.5、Kimi-K2.5 系列。</p></div>
+      <div class="card mod"><h4><span class="tag">扩领域</span>按缺口补数据 + 全合成管线</h4><p>扩到 GUI、grounding、图表、表格、文档、视频与多语言；公开数据 + 内部整理（含人工标注）+ 全合成。<b>按训练配比中发现的缺口</b>去找数据并合成 QA。</p></div>
+    </div>
+
+    <h3>合成管线：几乎都是「感知模型抽信息 → 文本 LLM 写」</h3>
+    <div class="tbl-wrap wide">
+      <table>
+        <thead><tr><th>数据</th><th style="text-align:left">第一步：抽信息</th><th style="text-align:left">第二步：生成</th><th style="text-align:left">第三步：过滤 / 后处理</th></tr></thead>
+        <tbody>
+          <tr><td>视觉 QA（Stage 1）</td><td style="text-align:left">图像、视频，或从图像中抽取的 OCR 文本；按领域写指令</td><td style="text-align:left">Qwen3-VL、Qwen3.5、GPT-OSS、Nemotron-Parse、DeepSeek-OCR 生成 QA，再蒸馏推理链</td><td style="text-align:left">「严格过滤」保证正确性、有用性与质量；标准<span class="nd">原文未披露</span> <span class="src">§3.1.2</span></td></tr>
+          <tr><td>音频（Stage 3）</td><td style="text-align:left">Qwen3-Omni-30B-A3B 出 caption；专用音乐工具出元数据</td><td style="text-align:left">GPT-OSS-120B 生成 caption 配套的选择题与开放题；部分加推理链</td><td style="text-align:left"><span class="nd">原文未披露</span> <span class="src">§3.1.4</span></td></tr>
+          <tr><td>Omni（Stage 4）</td><td style="text-align:left">&lt;2 分钟视频抽音视频元数据</td><td style="text-align:left">Qwen3-Omni-30B-A3B、GPT-OSS-120B 生成 QA、MCQ 与摘要式 caption</td><td style="text-align:left"><span class="nd">原文未披露</span> <span class="src">§3.1.5</span></td></tr>
+          <tr><td>音频推理（Stage 4）</td><td style="text-align:left">文本 SFT 的 user turn 转成语音</td><td style="text-align:left">LLM 对精选 ASR prompt 子集生成回答</td><td style="text-align:left">转语音所用模型<span class="nd">原文未披露</span> <span class="src">§3.1.5</span></td></tr>
+          <tr><td>Omni（Stage 5）</td><td style="text-align:left">视频切 20 s 段，Qwen3-Omni-30B-A3B 等抽元数据</td><td style="text-align:left">GPT-OSS-120B 等开源推理模型生成单轮 QA 与推理链</td><td style="text-align:left"><span class="nd">原文未披露</span> <span class="src">§3.1.6</span></td></tr>
+          <tr><td>长文档（Stage 6）</td><td style="text-align:left">论文、财报、演示文稿等长文档</td><td style="text-align:left">VLM 在单页、多页、全文档三级生成 QA 与推理链</td><td style="text-align:left">NeMo Data Designer recipe 已开源 <span class="src">§3.1.7</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>caption / 标注方式</h3>
+    <ul class="prose">
+      <li><b>caption 是 QA 的上游。</b>音频与 omni 数据里，caption（或「元数据」）先由 Qwen3-Omni-30B-A3B 生成，再作为 GPT-OSS-120B 的输入写 QA；音频样本同时配 caption、选择题、开放题三种监督<span class="src">§3.1.4 · §3.1.5</span>。</li>
+      <li><b>音乐用工具补元数据。</b>「specialized music tools」产出元数据再参与生成，工具名<span class="nd">原文未披露</span><span class="src">§3.1.4</span>。</li>
+      <li><b>人工标注只在视觉侧提到。</b>Stage 1 的内部数据「包括人工标注」，推理链也有人工标注部分；规模<span class="nd">原文未披露</span><span class="src">§3.1.2</span>。</li>
+      <li><b>RL 用 binary / 规则标签。</b>MPO 用拒绝采样 + 结果正误打二值标签<span class="src">§3.2.1</span>；Image / Omni RL 用四到五种规则校验器<span class="src">§3.2.3–3.2.4</span>。</li>
+    </ul>
+
+    <h3>RL 数据：规模与过滤</h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4>Image RL <span class="tag">§3.2.3</span></h4>
+        <ul class="prose" style="margin:0">
+          <li>图表 / 文档 / 文字密集图推理 ≈28K</li>
+          <li>STEM 与数学（中英）≈19K</li>
+          <li>游戏与谜题 ≈12K</li>
+          <li>VQA ≈8K</li>
+          <li>GUI 点击坐标 grounding ≈7K</li>
+        </ul>
+        <p class="footnote">过滤：初始策略每题 8 次 rollout，只留通过率 &lt;0.8 的题；另加少量不可回答 / 图文不符的题，训练模型弃答。</p></div>
+      <div class="card mod"><h4>Omni-RL ≈120K prompts <span class="tag">§3.2.4</span></h4>
+        <ul class="prose" style="margin:0">
+          <li>Omni（带音频的视频，合成）≈17.6K</li>
+          <li>Video ≈8.5K（空间 / 时间 / 因果）</li>
+          <li>Image ≈32K（OCR ≈10.5K、图表 ≈8.9K、游戏 ≈11.9K、GUI ≈7.1K 等）</li>
+          <li>Audio QA ≈4.2K · ASR ≈3.8K</li>
+          <li>不可回答 / 不匹配样本 ≈4K</li>
+        </ul>
+        <p class="footnote">过滤：只留初始策略通过率在 0.1–0.9 之间的题，AudioQA 收紧到 0.3–0.7。列出的分组合计约 66.1K<span class="src calc">推算</span>，其余（纯文本推理组）规模<span class="nd">原文未披露</span>。</p></div>
+    </div>
+    <div class="card mod wide">
+      <div class="ratio"><div class="rlab"><span>Omni-RL 校验器任务类型占比</span><span class="src">§3.2.4</span></div><div class="rbar"><span class="a" style="width:34%" title="Multiple-choice 34%">34%</span><span class="b" style="width:31%" title="String matching 31%">31%</span><span class="c" style="width:26%" title="Math rule-based 26%">26%</span><span class="d" style="width:6%" title="GUI coordinate 6%"></span><span class="e" style="width:3%" title="ASR 3%"></span></div><div class="rkey"><span><i class="ka"></i>Multiple-choice 34%</span><span><i class="kb"></i>String matching 31%</span><span><i class="kc"></i>Math rule-based 26%</span><span><i class="kd"></i>GUI coordinate 6%</span><span><i class="ke"></i>ASR 3%</span></div></div>
+      <p class="footnote">ASR 校验器奖励 = 1 − WER（文本归一化后）<span class="src">§3.2.4</span>。</p>
+    </div>
+  </section>
+
+  <!-- 05 训练 -->
+  <section class="sec" id="train">
+    <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：7 段 SFT + 5 段 RL</h2>
+      <p class="sec-intro">思路是「逐个引入模态、逐步拉长上下文」，用来减轻灾难性遗忘、稳定跨模态对齐<span class="src">§1 · §3.1</span>。</p></div>
+
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="分阶段训练配方：Vision SFT 两段（Stage 0–1），Omni SFT 五段（Stage 2–6，上下文 16k/16k/16k/48k/256k），Omni RL 五段（MPO、Text RL 1、Vision RL、Omni RL、Text RL 2）" loading="lazy"></div>
+      <figcaption><b>分阶段训练配方。</b>先视觉 SFT，再联合 omni SFT 并逐步拉长上下文，最后多模态 RL。图中各阶段 token 数（如 Stage 1 ∼214.8B、Stage 6 ∼34B）与表 1 一致。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+
+    <h3>SFT 七段：冻结什么、训多长</h3>
+    <div class="flow wide">
+      <div class="card stage"><span class="sid">S0</span><span class="grp-tag">Vision</span><h4>Vision projector warmup</h4>
+        <dl><dt>可训</dt><dd>仅视觉 projector</dd><dt>上下文</dt><dd>16k</dd><dt>Tokens</dt><dd>≈15.5B</dd><dt>LR</dt><dd>1e-3</dd></dl></div>
+      <div class="card stage"><span class="sid">S1</span><span class="grp-tag">Vision</span><h4>Vision + LLM SFT</h4>
+        <dl><dt>可训</dt><dd>除音频外全部</dd><dt>上下文</dt><dd>16k · ≤64 帧</dd><dt>Tokens</dt><dd>≈214.8B</dd><dt>LR</dt><dd>5e-5</dd></dl></div>
+      <div class="card stage"><span class="sid">S2</span><span class="grp-tag">Audio</span><h4>Audio projector warmup</h4>
+        <dl><dt>可训</dt><dd>仅音频 projector</dd><dt>上下文</dt><dd>16k</dd><dt>Tokens</dt><dd>≈11.4B</dd><dt>LR</dt><dd>1e-3</dd></dl></div>
+      <div class="card stage"><span class="sid">S3</span><span class="grp-tag">Audio</span><h4>Audio encoder &amp; projector</h4>
+        <dl><dt>可训</dt><dd>音频编码器 + projector</dd><dt>上下文</dt><dd>16k</dd><dt>Tokens</dt><dd>≈100.5B</dd><dt>LR</dt><dd>2.5e-5</dd></dl></div>
+    </div>
+    <div class="flow f3 wide">
+      <div class="card stage"><span class="sid">S4</span><span class="grp-tag">Omni</span><h4>Joint omni SFT 16k</h4>
+        <dl><dt>可训</dt><dd>全部参数</dd><dt>上下文</dt><dd>16k · ≤64 帧</dd><dt>Tokens</dt><dd>≈57.3B</dd><dt>LR</dt><dd>1e-5</dd></dl>
+        <div class="tokbar"><i style="width:6.25%"></i></div><p class="footnote">条：16,384 / 262,144 = 6.25%<span class="src calc">推算</span></p></div>
+      <div class="card stage"><span class="sid">S5</span><span class="grp-tag">Omni</span><h4>Joint omni SFT 48k</h4>
+        <dl><dt>可训</dt><dd>全部参数</dd><dt>上下文</dt><dd>49,152 · ≤256 帧</dd><dt>Tokens</dt><dd>≈33.5B</dd><dt>CP</dt><dd>2</dd></dl>
+        <div class="tokbar"><i style="width:18.75%"></i></div><p class="footnote">条：49,152 / 262,144 = 18.75%<span class="src calc">推算</span></p></div>
+      <div class="card stage"><span class="sid">S6</span><span class="grp-tag">Omni</span><h4>Joint omni SFT 256k</h4>
+        <dl><dt>可训</dt><dd>除音频外全部</dd><dt>上下文</dt><dd>262,144 · ≤256 帧</dd><dt>Tokens</dt><dd>≈34.0B</dd><dt>CP</dt><dd>16</dd></dl>
+        <div class="tokbar"><i style="width:100%"></i></div><p class="footnote">音频编码器与 projector 冻结，容量留给长文本 / 长文档<span class="src">§3.1.7</span></p></div>
+    </div>
+    <p class="tbl-note">来源：§3.1.1–3.1.8、表 6。可训模块按表 6「Trainable Modules」行；S1 正文写「解冻 LLM 与视觉编码器」。</p>
+
+    <h3>共同设置 <span class="src">§3.1.8 · 表 6</span></h3>
+    <ul class="prose">
+      <li>AdamW（β₁=0.9，β₂=0.999），cosine 衰减 + 线性 warmup，BF16 混合精度；TP=2、EP=32 + 序列并行。</li>
+      <li>在线 sequence packing，用 balanced greedy knapsack 算法提高 GPU 利用率。</li>
+      <li>LLM 选择性重计算（core attention、MLP、LayerNorm、MoE）；视觉编码器 32 层全部 block 级重计算；音频模型从 Stage 4 起重计算，两个 projector 从 Stage 5 起重计算。</li>
+      <li>视觉编码器的 CPE 层在 Stage 1、4、5 保持 eval 模式以稳定训练。</li>
+      <li>视频增强：每帧目标 patch 数从 {256, 512, 768, 1024} 随机取，便于推理时降分辨率、多抽帧而不增加 token。</li>
+    </ul>
+
+    <details class="more wide">
+      <summary>表 6：SFT 超参全表 <span class="hint">含合并单元格，跨度按版面推断</span></summary>
+      <div class="body">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">项</th><th>S0</th><th>S1</th><th>S2</th><th>S3</th><th>S4</th><th>S5</th><th>S6</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">Context</td><td colspan="5">16K</td><td>48k</td><td>256k</td></tr>
+            <tr><td style="text-align:left">Max video frames</td><td>–</td><td>64</td><td>–</td><td>–</td><td>64</td><td>256</td><td>256</td></tr>
+            <tr><td style="text-align:left">CP</td><td colspan="5">–</td><td>2</td><td>16</td></tr>
+            <tr><td style="text-align:left">LR</td><td>1e-3</td><td>5e-5</td><td>1e-3</td><td>2.5e-5</td><td>1e-5</td><td colspan="2">1e-6</td></tr>
+            <tr><td style="text-align:left">Minimum LR</td><td>1e-5</td><td>0</td><td>1e-5</td><td>0</td><td>1e-7</td><td colspan="2">0</td></tr>
+            <tr><td style="text-align:left">Trainable</td><td>Vision projector</td><td>All except audio</td><td>Audio projector</td><td>Audio encoder &amp; projector</td><td colspan="2">All</td><td>All except audio</td></tr>
+          </tbody></table></div>
+        <p class="footnote">上表只放跨度明确的行。表 6 还给了 Global BS（128 / 256 / 512 / 256 / 128）、Linear warmup fraction（0.1 / 0.01 / 0.1）、Weight decay（0.01 / 0.05 / 0.01 / 0.05）、GPU 节点数（32 / 64 / 128 / 64），但从文本版面无法确定每个值覆盖哪几段，需对照 PDF。正文只说 32–128 节点，视阶段而定<span class="src">§3.1.8</span>。</p>
+      </div>
+    </details>
+
+    <h3>RL 五段：课程式后训练 <span class="src">§3.2 · 图 2</span></h3>
+    <div class="flow f5 wide">
+      <div class="card stage"><span class="sid">R1</span><h4>MPO（离线）</h4><dl><dt>损失</dt><dd>DPO + BCO</dd><dt>数据</dt><dd>视觉域拒绝采样，按正误打二值标签</dd></dl></div>
+      <div class="card stage"><span class="sid">R2</span><h4>Text RL 1</h4><dl><dt>可训</dt><dd>仅 LM，冻结输入 embedding</dd><dt>数据</dt><dd>复用 Nemotron 3 Nano / Super 的 RLVR / RLHF</dd></dl></div>
+      <div class="card stage"><span class="sid">R3</span><h4>Image RL</h4><dl><dt>奖励</dt><dd>[0,1]，4 种规则校验器 + 格式分</dd><dt>过滤</dt><dd>8 rollout，通过率 &lt;0.8</dd></dl></div>
+      <div class="card stage"><span class="sid">R4</span><h4>Omni RL</h4><dl><dt>数据</dt><dd>≈120K prompts / 113 子集</dd><dt>过滤</dt><dd>通过率 0.1–0.9</dd></dl></div>
+      <div class="card stage"><span class="sid">R5</span><h4>Text RL 2</h4><dl><dt>同 R2</dt><dd>纯文本 RL，再拉回文本能力</dd></dl></div>
+    </div>
+    <ul class="prose">
+      <li><b>算法：</b>改造版 GSPO；global batch 4,096，每题 16 rollout，micro-batch 1；NeMo-RL（Ray）上跑，B200 + H100<span class="src">§3.2.5</span>。</li>
+      <li><b>格式分：</b>奖励单个 <code>&lt;think&gt;</code> 块 + 单个 <code>\boxed</code> 答案，多出的推理 / boxed 给部分分，避免 SFT 后常见的格式错误把对的答案清零<span class="src">§3.2.3</span>。结果分与格式分的线性权重<span class="nd">原文未披露</span>。</li>
+      <li><b>GUI 奖励随距离平滑衰减</b>，不是命中 / 不命中二值<span class="src">§3.2.3</span>。</li>
+      <li><b>多模态去重：</b>生成阶段同一 prompt 的多条 rollout 共享一份多模态张量<span class="src">§3.2.5</span>。</li>
+      <li>RL 学习率、KL 系数、步数、各段时长<span class="nd">原文未披露</span>。</li>
+    </ul>
+  </section>
+
+  <!-- 06 评测 -->
+  <section class="sec" id="eval">
+    <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+      <p class="sec-intro">对比对象：前代 <b>Nemotron Nano V2 VL</b>（12B，开源）、<b>Qwen3-Omni</b>（30B-A3B，开源）、<b>Qwen3.5-Omni</b>（Flash，未开源）；文本侧对比自家底座 <b>Nemotron 3 Nano 30B-A3B</b>。视觉 / 音频用 VLMEvalKit + vLLM，文本用 NeMo-Skills<span class="src">§4</span>。</p></div>
+
+    <h3>视觉（表 7 节选）</h3>
+    <div class="card diagram wide">
+      <svg class="chart" viewBox="0 0 640 410" role="img" aria-label="表 7 节选：Nemotron 3 Nano Omni（reasoning on）、Nemotron Nano V2 VL（reasoning on）、Qwen3-Omni 对比，横轴从 0 起">
+<text class="ch-t" x="0" y="14">表 7 节选 · 视觉基准（越高越好，横轴从 0 起）</text>
+<line x1="160.0" y1="26" x2="160.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="160.0" y="394" text-anchor="middle">0</text>
+<line x1="248.0" y1="26" x2="248.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="248.0" y="394" text-anchor="middle">20</text>
+<line x1="336.0" y1="26" x2="336.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="336.0" y="394" text-anchor="middle">40</text>
+<line x1="424.0" y1="26" x2="424.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="424.0" y="394" text-anchor="middle">60</text>
+<line x1="512.0" y1="26" x2="512.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="512.0" y="394" text-anchor="middle">80</text>
+<line x1="600.0" y1="26" x2="600.0" y2="380" stroke="var(--line)"/>
+<text class="ch-ax" x="600.0" y="394" text-anchor="middle">100</text>
+<text class="ch-lbl" x="152" y="56" text-anchor="end">MMMU (val)</text>
+<rect class="bar-q" x="160" y="34" width="311.5" height="11" rx="2"/>
+<text class="ch-val" x="476.5" y="43.5">70.8</text>
+<rect class="bar-o2" x="160" y="47" width="298.3" height="11" rx="2"/>
+<text class="ch-val" x="463.3" y="56.5">67.8</text>
+<rect class="bar-o" x="160" y="60" width="332.6" height="11" rx="2"/>
+<text class="ch-val" x="497.6" y="69.5">75.6</text>
+<text class="ch-lbl" x="152" y="106" text-anchor="end">MMLongBench-Doc</text>
+<rect class="bar-q" x="160" y="84" width="253.0" height="11" rx="2"/>
+<text class="ch-val" x="418.0" y="93.5">57.5</text>
+<rect class="bar-o2" x="160" y="97" width="167.2" height="11" rx="2"/>
+<text class="ch-val" x="332.2" y="106.5">38.0</text>
+<rect class="bar-o" x="160" y="110" width="217.8" height="11" rx="2"/>
+<text class="ch-val" x="382.8" y="119.5">49.5</text>
+<text class="ch-lbl" x="152" y="156" text-anchor="end">OCRBenchV2 (EN)</text>
+<rect class="bar-q" x="160" y="134" width="294.8" height="11" rx="2"/>
+<text class="ch-val" x="459.8" y="143.5">67.0</text>
+<rect class="bar-o2" x="160" y="147" width="241.1" height="11" rx="2"/>
+<text class="ch-val" x="406.1" y="156.5">54.8</text>
+<text class="ch-ax" x="164" y="169.5">– 未报告</text>
+<text class="ch-lbl" x="152" y="206" text-anchor="end">CharXiv (RQ)</text>
+<rect class="bar-q" x="160" y="184" width="279.8" height="11" rx="2"/>
+<text class="ch-val" x="444.8" y="193.5">63.6</text>
+<rect class="bar-o2" x="160" y="197" width="181.7" height="11" rx="2"/>
+<text class="ch-val" x="346.7" y="206.5">41.3</text>
+<rect class="bar-o" x="160" y="210" width="268.8" height="11" rx="2"/>
+<text class="ch-val" x="433.8" y="219.5">61.1</text>
+<text class="ch-lbl" x="152" y="256" text-anchor="end">ScreenSpot-Pro</text>
+<rect class="bar-q" x="160" y="234" width="254.3" height="11" rx="2"/>
+<text class="ch-val" x="419.3" y="243.5">57.8</text>
+<rect class="bar-o2" x="160" y="247" width="24.2" height="11" rx="2"/>
+<text class="ch-val" x="189.2" y="256.5">5.5</text>
+<rect class="bar-o" x="160" y="260" width="262.7" height="11" rx="2"/>
+<text class="ch-val" x="427.7" y="269.5">59.7</text>
+<text class="ch-lbl" x="152" y="306" text-anchor="end">OSWorld</text>
+<rect class="bar-q" x="160" y="284" width="208.6" height="11" rx="2"/>
+<text class="ch-val" x="373.6" y="293.5">47.4</text>
+<rect class="bar-o2" x="160" y="297" width="48.8" height="11" rx="2"/>
+<text class="ch-val" x="213.8" y="306.5">11.1</text>
+<rect class="bar-o" x="160" y="310" width="127.6" height="11" rx="2"/>
+<text class="ch-val" x="292.6" y="319.5">29.0</text>
+<text class="ch-lbl" x="152" y="356" text-anchor="end">VideoMME (w/o sub)</text>
+<rect class="bar-q" x="160" y="334" width="317.7" height="11" rx="2"/>
+<text class="ch-val" x="482.7" y="343.5">72.2</text>
+<rect class="bar-o2" x="160" y="347" width="277.2" height="11" rx="2"/>
+<text class="ch-val" x="442.2" y="356.5">63.0</text>
+<rect class="bar-o" x="160" y="360" width="310.2" height="11" rx="2"/>
+<text class="ch-val" x="475.2" y="369.5">70.5</text>
+<line class="axis" x1="160" y1="26" x2="160" y2="380"/></svg>
+      <div class="chart-legend"><span class="l1">Nemotron 3 Nano Omni（reasoning on）</span><span class="l4">Nemotron Nano V2 VL（reasoning on）</span><span class="l3">Qwen3-Omni</span></div>
+      <div class="cap">Qwen3-Omni / Qwen3.5-Omni 列在表 7 中未标 reasoning 模式。ScreenSpot-Pro 上 Nemotron reasoning off 为 59.3，略高于 on 的 57.8<span class="src">表 7</span>。</div>
+    </div>
+
+    <div class="tbl-wrap wide tall">
+      <table>
+        <thead><tr><th style="text-align:left">基准</th><th class="q">N3 Omni off</th><th class="q">N3 Omni on</th><th>V2 VL off</th><th>V2 VL on</th><th>Qwen3-Omni</th><th>Qwen3.5-Omni</th></tr></thead>
+        <tbody>
+          <tr><td style="text-align:left">MMMU (val)</td><td class="q">55.2</td><td class="q">70.8</td><td>55.3</td><td>67.8</td><td>75.6</td><td class="best">76.9</td></tr>
+          <tr><td style="text-align:left">MathVista-Mini</td><td class="q">71.9</td><td class="q">82.8</td><td>69.0</td><td>75.5</td><td>80.0</td><td class="best">82.9</td></tr>
+          <tr><td style="text-align:left">MMLongBench-Doc</td><td class="q">46.1</td><td class="q best">57.5</td><td>32.1</td><td>38.0</td><td>49.5</td><td>53.6</td></tr>
+          <tr><td style="text-align:left">OCRBench</td><td class="q">88.3</td><td class="q">86.6</td><td>85.6</td><td>83.5</td><td>86.0</td><td class="best">89.1</td></tr>
+          <tr><td style="text-align:left">OCRBenchV2 (EN/ZH)</td><td class="q">65.8/52.0</td><td class="q best">67.0/52.7</td><td>62.0/44.2</td><td>54.8/39.8</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">ChartQA (Test)</td><td class="q">89.9</td><td class="q best">90.3</td><td>89.8</td><td>84.9</td><td>89.5</td><td>–</td></tr>
+          <tr><td style="text-align:left">DocVQA (Test)</td><td class="q">93.3</td><td class="q best">95.6</td><td>94.7</td><td>93.2</td><td>95.3</td><td>–</td></tr>
+          <tr><td style="text-align:left">AI2D (Test)</td><td class="q">88.5</td><td class="q">88.5</td><td>87.2</td><td>84.7</td><td>86.62</td><td class="best">89.0</td></tr>
+          <tr><td style="text-align:left">TextVQA (Val)</td><td class="q">85.1</td><td class="q">81.0</td><td class="best">85.4</td><td>76.1</td><td>81.7</td><td>–</td></tr>
+          <tr><td style="text-align:left">InfoVQA (Test)</td><td class="q">83.6</td><td class="q best">86.8</td><td>79.4</td><td>80.4</td><td>83.31</td><td>–</td></tr>
+          <tr><td style="text-align:left">OCR-Reasoning</td><td class="q">22.2</td><td class="q best">54.14</td><td>21.0</td><td>33.9</td><td>49.9</td><td>–</td></tr>
+          <tr><td style="text-align:left">CharXiv (RQ/DQ)</td><td class="q">49.1/81.9</td><td class="q">63.6/88.9</td><td>41.7/76.5</td><td>41.3/77.2</td><td>61.1/–</td><td class="best">64.4/–</td></tr>
+          <tr><td style="text-align:left">TreeBench</td><td class="q">43.7</td><td class="q best">51.6</td><td>38.5</td><td>42.5</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">CV-Bench</td><td class="q best">84.2</td><td class="q">84.0</td><td>81.0</td><td>78.3</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">RefCOCO</td><td class="q">80.6</td><td class="q">90.5</td><td>–</td><td>–</td><td>–</td><td class="best">92.6</td></tr>
+          <tr><td style="text-align:left">ScreenSpot</td><td class="q best">90.3</td><td class="q">89.3</td><td>39.4</td><td>42.5</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">ScreenSpot-v2</td><td class="q best">93.4</td><td class="q">92.8</td><td>41.7</td><td>42.8</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">ScreenSpot-Pro</td><td class="q">59.3</td><td class="q">57.8</td><td>4.8</td><td>5.5</td><td class="best">59.7</td><td>–</td></tr>
+          <tr><td style="text-align:left">OSWorld</td><td class="q">–</td><td class="q best">47.4</td><td>–</td><td>11.1</td><td>29.0</td><td>–</td></tr>
+          <tr><td style="text-align:left">VideoMME (w/o sub)</td><td class="q">70.8</td><td class="q">72.2</td><td>66.0</td><td>63.0</td><td>70.5</td><td class="best">77.0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">来源：表 7。● = 该行最高（本页标注；「–」为原表未报告）。Qwen3.5-Omni 为 Flash、未开源。</p>
+
+    <h3>音频（表 8 节选）</h3>
+    <div class="tbl-wrap wide">
+      <table>
+        <thead><tr><th style="text-align:left">基准</th><th style="text-align:left">模式</th><th class="q">Nemotron 3 Nano Omni</th><th>Qwen3-Omni</th><th>Qwen3.5-Omni</th></tr></thead>
+        <tbody>
+          <tr><td style="text-align:left">OpenASR Avg（WER↓，8 项）</td><td style="text-align:left">off</td><td class="q best">5.95</td><td>6.55</td><td>–</td></tr>
+          <tr><td style="text-align:left">LibriSpeech clean / other（WER↓）</td><td style="text-align:left">off</td><td class="q">1.57 / 2.96</td><td>1.52 / 3.22</td><td class="best">1.3 / 2.4</td></tr>
+          <tr><td style="text-align:left">GigaSpeech（WER↓）</td><td style="text-align:left">off</td><td class="q">9.66</td><td class="best">8.49</td><td>–</td></tr>
+          <tr><td style="text-align:left">TED-LIUM Long-form（WER↓）</td><td style="text-align:left">off</td><td class="q">3.11</td><td class="best">2.4</td><td>–</td></tr>
+          <tr><td style="text-align:left">MMAU Avg</td><td style="text-align:left">off</td><td class="q">74.6</td><td>77.5</td><td class="best">80.4</td></tr>
+          <tr><td style="text-align:left">VoiceBench Avg</td><td style="text-align:left">on</td><td class="q best">89.4</td><td>88.8</td><td>87.8</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">来源：表 8。ASR 为 WER，越低越好。OpenASR 8 项中 Nemotron 在 AMI、Earnings22、LibriSpeech other、SPGISpeech、VoxPopuli 上 WER 低于 Qwen3-Omni（更好），在 GigaSpeech、LibriSpeech clean、TED-LIUM 上更高（更差）。</p>
+
+    <details class="more wide">
+      <summary>表 8 全部子项 <span class="hint">OpenASR 8 项 · MMAU 3 项 · VoiceBench 9 项</span></summary>
+      <div class="body"><div class="tbl-wrap"><table>
+        <thead><tr><th style="text-align:left">子项</th><th>Nemotron 3 Nano Omni</th><th>Qwen3-Omni</th><th>Qwen3.5-Omni</th></tr></thead>
+        <tbody>
+          <tr><td style="text-align:left">AMI</td><td>11.09</td><td>12.52</td><td>–</td></tr>
+          <tr><td style="text-align:left">Earnings22</td><td>11.27</td><td>12.3</td><td>–</td></tr>
+          <tr><td style="text-align:left">GigaSpeech</td><td>9.66</td><td>8.49</td><td>–</td></tr>
+          <tr><td style="text-align:left">LibriSpeech (clean)</td><td>1.57</td><td>1.52</td><td>1.3</td></tr>
+          <tr><td style="text-align:left">LibriSpeech (other)</td><td>2.96</td><td>3.22</td><td>2.4</td></tr>
+          <tr><td style="text-align:left">SPGISpeech</td><td>1.98</td><td>3.69</td><td>–</td></tr>
+          <tr><td style="text-align:left">TED-LIUM</td><td>3.44</td><td>2.38</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoxPopuli</td><td>5.6</td><td>8.26</td><td>–</td></tr>
+          <tr><td style="text-align:left">MMAU Music / Audio / Speech</td><td>74.2 / 76.9 / 72.8</td><td>–</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench IFEval</td><td>88.7</td><td>80.6</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench BBH</td><td>91.1</td><td>88.9</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench AdvBench</td><td>100</td><td>97.2</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench AlpacaEval</td><td>95.0</td><td>96.4</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench CommonEval</td><td>91.3</td><td>90.5</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench WildVoice</td><td>91.7</td><td>90.5</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench OpenBookQA</td><td>93.0</td><td>94.3</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench MMSU</td><td>82.3</td><td>83.0</td><td>–</td></tr>
+          <tr><td style="text-align:left">VoiceBench SD-QA</td><td>71.4</td><td>78.1</td><td>–</td></tr>
+        </tbody></table></div></div>
+    </details>
+
+    <h3>音视频（表 9）</h3>
+    <div class="tbl-wrap wide">
+      <table>
+        <thead><tr><th style="text-align:left">基准</th><th class="q">N3 Omni off</th><th class="q">N3 Omni on</th><th>Qwen3-Omni Instruct</th><th>Qwen3-Omni Thinking</th><th>Qwen3.5-Omni</th></tr></thead>
+        <tbody>
+          <tr><td style="text-align:left">DailyOmni</td><td class="q">74.5</td><td class="q">74.1</td><td>71.9</td><td>73.6</td><td class="best">81.8</td></tr>
+          <tr><td style="text-align:left">WorldSense</td><td class="q">55.2</td><td class="q">55.4</td><td>54</td><td>–</td><td class="best">57.8</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">来源：表 9，准确率。对开源的 Qwen3-Omni 两种模式都领先；对 Qwen3.5-Omni 落后。</p>
+
+    <h3>文本能力保持（表 10）</h3>
+    <div class="card diagram wide">
+      <svg class="chart" viewBox="0 0 640 280" role="img" aria-label="表 10：Nemotron 3 Nano Omni 减 Nemotron 3 Nano 30B-A3B 的分差">
+<text class="ch-t" x="0" y="14">表 10 · Omni − 纯文本底座（分差，点）· 右列为 Omni vs 底座原始分</text>
+<line x1="188" y1="26" x2="188" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="188" y="268" text-anchor="middle">-8</text>
+<line x1="236" y1="26" x2="236" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="236" y="268" text-anchor="middle">-6</text>
+<line x1="284" y1="26" x2="284" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="284" y="268" text-anchor="middle">-4</text>
+<line x1="332" y1="26" x2="332" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="332" y="268" text-anchor="middle">-2</text>
+<line x1="380" y1="26" x2="380" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="380" y="268" text-anchor="middle">0</text>
+<line x1="428" y1="26" x2="428" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="428" y="268" text-anchor="middle">+2</text>
+<line x1="476" y1="26" x2="476" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="476" y="268" text-anchor="middle">+4</text>
+<line x1="524" y1="26" x2="524" y2="254" stroke="var(--line)"/>
+<text class="ch-ax" x="524" y="268" text-anchor="middle">+6</text>
+<text class="ch-lbl" x="150" y="47" text-anchor="end">MMLU-Pro</text>
+<text class="ch-ax" x="636" y="47" text-anchor="end">77.3 vs 78.3</text>
+<rect class="d-neg" x="356.0" y="36" width="24.0" height="14" rx="2"/>
+<text class="ch-val" x="351.0" y="47" text-anchor="end">-1.0</text>
+<text class="ch-lbl" x="150" y="75" text-anchor="end">GPQA (no tools)</text>
+<text class="ch-ax" x="636" y="75" text-anchor="end">72.2 vs 73.0</text>
+<rect class="d-neg" x="360.8" y="64" width="19.2" height="14" rx="2"/>
+<text class="ch-val" x="355.8" y="75" text-anchor="end">-0.8</text>
+<text class="ch-lbl" x="150" y="103" text-anchor="end">LiveCodeBench</text>
+<text class="ch-ax" x="636" y="103" text-anchor="end">63.2 vs 68.3</text>
+<rect class="d-neg" x="257.6" y="92" width="122.4" height="14" rx="2"/>
+<text class="ch-val" x="252.6" y="103" text-anchor="end">-5.1</text>
+<text class="ch-lbl" x="150" y="131" text-anchor="end">AIME25 (no tools)</text>
+<text class="ch-ax" x="636" y="131" text-anchor="end">82.1 vs 89.1</text>
+<rect class="d-neg" x="212.0" y="120" width="168.0" height="14" rx="2"/>
+<text class="ch-val" x="207.0" y="131" text-anchor="end">-7.0</text>
+<text class="ch-lbl" x="150" y="159" text-anchor="end">IFBench (prompt)</text>
+<text class="ch-ax" x="636" y="159" text-anchor="end">74.2 vs 71.5</text>
+<rect class="d-pos" x="380" y="148" width="64.8" height="14" rx="2"/>
+<text class="ch-val" x="449.8" y="159">+2.7</text>
+<text class="ch-lbl" x="150" y="187" text-anchor="end">AA-LCR</text>
+<text class="ch-ax" x="636" y="187" text-anchor="end">41.0 vs 35.9</text>
+<rect class="d-pos" x="380" y="176" width="122.4" height="14" rx="2"/>
+<text class="ch-val" x="507.4" y="187">+5.1</text>
+<text class="ch-lbl" x="150" y="215" text-anchor="end">TauBench V2 (Telecom)</text>
+<text class="ch-ax" x="636" y="215" text-anchor="end">42.7 vs 42.2</text>
+<rect class="d-pos" x="380" y="204" width="12.0" height="14" rx="2"/>
+<text class="ch-val" x="397.0" y="215">+0.5</text>
+<text class="ch-lbl" x="150" y="243" text-anchor="end">SciCode</text>
+<text class="ch-ax" x="636" y="243" text-anchor="end">32.0 vs 33.3</text>
+<rect class="d-neg" x="348.8" y="232" width="31.2" height="14" rx="2"/>
+<text class="ch-val" x="343.8" y="243" text-anchor="end">-1.3</text>
+<line class="axis" x1="380" y1="26" x2="380" y2="254"/></svg>
+      <div class="cap">8 项中 5 项低于纯文本底座，最大降幅 AIME25 −7.0、LiveCodeBench −5.1；AA-LCR +5.1、IFBench +2.7<span class="src calc">推算</span>。设置：最长输出 131,072、temperature 1.0、top-p 1.0；AIME25 取 8 次平均，GPQA 4 次<span class="src">§4.4</span>。</div>
+    </div>
+
+    <h3>效率：Conv3D × EVS（表 12）</h3>
+    <div class="card diagram wide">
+      <svg class="chart" viewBox="0 0 640 266" role="img" aria-label="表 12：Conv3D 与 EVS 组合下的 TTFT（毫秒），横轴从 0 起">
+<text class="ch-t" x="0" y="14">表 12 · TTFT（ms，越低越好，横轴从 0 起）· 右列为 256 帧平均准确率</text>
+<line x1="170.0" y1="26" x2="170.0" y2="238" stroke="var(--line)"/>
+<text class="ch-ax" x="170.0" y="252" text-anchor="middle">0</text>
+<line x1="265.0" y1="26" x2="265.0" y2="238" stroke="var(--line)"/>
+<text class="ch-ax" x="265.0" y="252" text-anchor="middle">2000</text>
+<line x1="360.0" y1="26" x2="360.0" y2="238" stroke="var(--line)"/>
+<text class="ch-ax" x="360.0" y="252" text-anchor="middle">4000</text>
+<line x1="455.0" y1="26" x2="455.0" y2="238" stroke="var(--line)"/>
+<text class="ch-ax" x="455.0" y="252" text-anchor="middle">6000</text>
+<line x1="550.0" y1="26" x2="550.0" y2="238" stroke="var(--line)"/>
+<text class="ch-ax" x="550.0" y="252" text-anchor="middle">8000</text>
+<text class="ch-lbl" x="162" y="47" text-anchor="end">BF16</text>
+<rect class="bar-o2" x="170" y="36" width="378.5" height="14" rx="2"/>
+<text class="ch-val" x="553.5" y="47">7969</text>
+<text class="ch-ax" x="636" y="47" text-anchor="end">66.72</text>
+<text class="ch-lbl" x="162" y="73" text-anchor="end">BF16 + EVS</text>
+<rect class="bar-qi" x="170" y="62" width="306.5" height="14" rx="2"/>
+<text class="ch-val" x="481.5" y="73">6452</text>
+<text class="ch-ax" x="636" y="73" text-anchor="end">66.92</text>
+<text class="ch-lbl" x="162" y="99" text-anchor="end">BF16 + Conv3D</text>
+<rect class="bar-qi" x="170" y="88" width="284.2" height="14" rx="2"/>
+<text class="ch-val" x="459.2" y="99">5984</text>
+<text class="ch-ax" x="636" y="99" text-anchor="end">66.64</text>
+<text class="ch-lbl" x="162" y="125" text-anchor="end">BF16 + Conv3D + EVS</text>
+<rect class="bar-q" x="170" y="114" width="252.4" height="14" rx="2"/>
+<text class="ch-val" x="427.4" y="125">5313</text>
+<text class="ch-ax" x="636" y="125" text-anchor="end">66.32</text>
+<text class="ch-lbl" x="162" y="151" text-anchor="end">NVFP4</text>
+<rect class="bar-o2" x="170" y="140" width="327.0" height="14" rx="2"/>
+<text class="ch-val" x="502.0" y="151">6885</text>
+<text class="ch-ax" x="636" y="151" text-anchor="end">65.26</text>
+<text class="ch-lbl" x="162" y="177" text-anchor="end">NVFP4 + EVS</text>
+<rect class="bar-qi" x="170" y="166" width="283.9" height="14" rx="2"/>
+<text class="ch-val" x="458.9" y="177">5977</text>
+<text class="ch-ax" x="636" y="177" text-anchor="end">65.65</text>
+<text class="ch-lbl" x="162" y="203" text-anchor="end">NVFP4 + Conv3D</text>
+<rect class="bar-qi" x="170" y="192" width="267.7" height="14" rx="2"/>
+<text class="ch-val" x="442.7" y="203">5635</text>
+<text class="ch-ax" x="636" y="203" text-anchor="end">64.96</text>
+<text class="ch-lbl" x="162" y="229" text-anchor="end">NVFP4 + Conv3D + EVS</text>
+<rect class="bar-q" x="170" y="218" width="241.4" height="14" rx="2"/>
+<text class="ch-val" x="416.4" y="229">5083</text>
+<text class="ch-ax" x="636" y="229" text-anchor="end">65.00</text>
+<line class="axis" x1="170" y1="26" x2="170" y2="238"/></svg>
+      <div class="cap">EVS q=0.5、reasoning off；准确率 3 次平均，TTFT 为 5 次并发 1 的 aiperf 均值，输入是合成的 512 帧、512×512、30 fps 视频<span class="src">§4.6</span>。BF16：Conv3D −25%，EVS −19%，叠加 −33%，平均准确率约降半个点<span class="src">§4.6</span>。</div>
+    </div>
+
+    <details class="more wide">
+      <summary>EVS 剪枝率扫描（表 13）与推理预算（表 11） <span class="hint">BF16 + Conv3D</span></summary>
+      <div class="body">
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>EVS q</th><th>Avg 128f</th><th>Avg 256f</th><th>LongVideoBench 256f</th><th>TTFT (ms)</th></tr></thead>
+          <tbody>
+            <tr><td>none</td><td>66.06</td><td>66.64</td><td>67.20</td><td>5984</td></tr>
+            <tr><td>0.5</td><td>65.78</td><td>66.32</td><td>66.60</td><td>5313</td></tr>
+            <tr><td>0.6</td><td>65.74</td><td>66.56</td><td>66.50</td><td>5173</td></tr>
+            <tr><td>0.7</td><td>65.41</td><td>65.82</td><td>65.40</td><td>5124</td></tr>
+            <tr><td>0.8</td><td>64.87</td><td>65.47</td><td>64.80</td><td>5182</td></tr>
+            <tr><td>0.9</td><td>62.85</td><td>63.47</td><td>61.00</td><td>4883</td></tr>
+            <tr><td>0.95</td><td>60.29</td><td>61.36</td><td>57.90</td><td>4804</td></tr>
+          </tbody></table></div>
+        <p class="footnote">原文：准确率到 q=0.7 基本平稳，0.8 略降，再往上明显下降，LongVideoBench 最敏感；q=0.7 比无 EVS 的 TTFT 低约 14%<span class="src">§4.6 · 表 13</span>。</p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th style="text-align:left">设置</th><th>MathVista-Mini</th><th>MMLongBench-Doc</th><th>DocVQA (Val)</th><th>CharXiv (RQ)</th><th>RefCOCO</th><th>VideoMME</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">无推理预算</td><td>80.3</td><td>54.5</td><td>95.3</td><td>61.8</td><td>90.4</td><td>67.5</td></tr>
+            <tr><td style="text-align:left">13K 推理预算 + 1,024 grace</td><td>82.8</td><td>56.8</td><td>95.2</td><td>64</td><td>90.6</td><td>70.3</td></tr>
+          </tbody></table></div>
+        <p class="footnote">两种设置最大序列长度都是 16,384<span class="src">§4.5 · 表 11</span>。原文推测增益来自截断重复循环和过长推理链。</p>
+      </div>
+    </details>
+
+    <h3>量化与吞吐（表 14 · §4.8）</h3>
+    <div class="grid2 wide">
+      <div class="card mod"><h4>NVFP4 混合精度 <span class="tag">§4.7</span></h4><p>路由专家 NVFP4（E2M1 + 每 16 元素 FP8 E4M3 scale + 每张量 FP32 scale）；Mamba in/out_proj、共享专家、attention o_proj 用 FP8；其余 LM 层与视觉 / 音频编码器、projector 保持 BF16；KV cache FP8，Mamba SSM 状态 FP32。4.98 bpw，20.9 GB。</p></div>
+      <div class="card mod"><h4>精度损失 <span class="tag">表 14</span></h4><p>11 项非 ASR 均值 BF16 60.58 → FP8 60.21 / NVFP4 60.18；OCRBenchV2 (ZH) 降得最多（52.00 → 50.24 / 50.39）。原文称在 25 项基准上中位数降幅 &lt;1%，表中只列了 13 行。</p></div>
+      <div class="card mod"><h4>吞吐 <span class="tag">§4.8</span></h4><p>B200 单卡：单流 &gt;500 tok/s；多文档负载 TTFT ≈1.3 s（Qwen3-Omni &gt;2.5 s）；满并发多文档 5000 tok/s；50 tok/s/user 下，长视频吞吐为 Qwen3-Omni 的 9×、多文档 7.5×，为 V2 VL 的 3×。</p></div>
+      <div class="card mod"><h4>测量口径 <span class="tag nd-tag">注意</span></h4><p>Nemotron 用 NVFP4，Qwen3-Omni 用动态 FP8，V2 VL 用 NVFP4；vLLM nightly（2026-04-19），EVS 50%；文本 ISL=50、OSL=8000；多文档 32 张 1024×1536，长视频 512 帧 512×512<span class="src">§4.8</span>。精度不对齐，倍数里混有量化收益。</p></div>
+    </div>
+  </section>
+
+  <!-- 07 新在哪 -->
+  <section class="sec" id="novel">
+    <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+      <p class="sec-intro">换 MoE 底座、动态分辨率、拉长上下文属于常规升级，下面只列能核对、对别人有参考价值的点。</p></div>
+    <div class="novel wide">
+      <div class="card nv"><h4>Conv3D + EVS 两级视频 token 压缩，带完整消融</h4><p>结构级的两帧合一（训练 + 推理）叠加推理期的相邻差异剪枝；给了 4 种组合 × 2 种精度<span class="src">表 12</span>和 7 档剪枝率扫描<span class="src">表 13</span>。</p><p class="why">为什么值得看：少见地同时报准确率（3 次平均）和 TTFT（5 次平均），能直接拿来选工作点。</p></div>
+      <div class="card nv"><h4>逐模态 warmup + 分段冻结的 7 段 SFT，配比逐段公开</h4><p>视觉、音频各自「先 projector 再编码器」，联合段再按 16k → 48k → 256k 拉长；256k 段冻结音频侧<span class="src">§3.1 · 表 6</span>。每段样本 / token / 类别占比都有<span class="src">表 1–5</span>。</p><p class="why">为什么值得看：可直接对照自己的多阶段配方；但原文没有「去掉某段会怎样」的消融。</p></div>
+      <div class="card nv"><h4>统一的 Omni-RL：五类规则校验器 + 弃答样本</h4><p>图像 / 视频 / 音频 / 文本混合训练，校验器含选择题、字符串、数学规则、GUI 坐标（距离平滑衰减）、ASR（1 − WER）；另加 ≈4K 不可回答 / 不匹配样本<span class="src">§3.2.3–3.2.4</span>。</p></div>
+      <div class="card nv"><h4>文本 RL 夹在多模态 RL 两头，并冻结输入 embedding</h4><p>Text RL 只训 LM 参数并冻结输入 token embedding，用来减少多模态阶段之间的表示漂移<span class="src">§3.2.2</span>。</p><p class="why">注意：表 10 显示 AIME25、LiveCodeBench 仍明显低于底座，这个做法的效果没有单独量化。</p></div>
+      <div class="card nv"><h4>按层分配精度的 NVFP4 方案</h4><p>专家 NVFP4、敏感投影层 FP8、编码器 BF16，4.98 bpw；11 项均值只降 0.40<span class="src">§4.7 · 表 14</span>。方案来自 Nemotron 3 Super。</p></div>
+    </div>
+  </section>
+
+  <!-- 08 启示 -->
+  <section class="sec" id="impl">
+    <div class="impl-wrap wide">
+      <div class="sec-num">08 · FOR IMAGE-EDITING DATA / EVAL / CAPTION</div>
+      <h2 style="margin-top:8px">对图像编辑数据、评测和 caption 的启示</h2>
+      <p class="sec-intro">Nemotron 3 Nano Omni 是理解模型，不做编辑，但它的合成管线、RL 数据过滤和效率评测协议可以直接借。每条先写论文怎么做，再写<b>迁移建议</b>。迁移建议是本页的推断，不是论文内容。</p>
+
+      <div class="impl-group">Caption</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">C1</span>先抽结构化元数据，再让文本 LLM 写</h4>
+          <p class="paper">论文：音视频数据先由 Qwen3-Omni-30B-A3B 抽元数据 / caption，再交给 GPT-OSS-120B 生成 QA、MCQ 和摘要<span class="src">§3.1.4–3.1.6</span>；音乐另用专用工具出元数据。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑对先跑检测 / 分割 / 属性抽取，得到「哪个物体、哪个区域、哪项属性变了」的结构化 diff，再让文本 LLM 把 diff 写成指令和 caption。感知和措辞分开，出错时能定位是哪一步。</p></div>
+        <div class="impl"><h4><span class="ix">C2</span>强模型只重标「噪声子集」</h4>
+          <p class="paper">论文：Stage 1 不重做全部标注，只用 Qwen3-VL 重标 noisy subsets<span class="src">§3.1.2</span>。判定标准未披露。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>老编辑数据集先用 VLM 判「指令与前后图是否一致」，只对低分样本重写指令，保留原指令做对照，统计重写前后被改掉的比例，作为数据集版本说明的一部分。</p></div>
+        <div class="impl"><h4><span class="ix">C3</span>多粒度 caption：页 / 多页 / 全文档</h4>
+          <p class="paper">论文：长文档 QA 在单页、多页、全文档三个层级生成<span class="src">§3.1.7</span>；视频先切 20 s 段再抽元数据<span class="src">§3.1.6</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 也分三级：局部区域（mask 内变化）、整图（场景与风格）、成对（前后差异 + 必须保持项）。同一样本保留三级，训练时随机取，评测时分级打分。</p></div>
+      </div>
+
+      <div class="impl-group">数据构建</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">D1</span>按配比缺口定向合成</h4>
+          <p class="paper">论文：「根据训练配比中发现的缺口」去找数据、批量合成 QA，覆盖领域、题型和视觉多样性<span class="src">§3.1.2</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>维护一张「编辑操作 × 主体类别 × 难度」覆盖矩阵，把评测失败样本映射回格子，只对稀疏格子定向生成，而不是整体扩量。</p></div>
+        <div class="impl"><h4><span class="ix">D2</span>用初始策略的通过率筛 RL prompt</h4>
+          <p class="paper">论文：Image RL 8 次 rollout 只留通过率 &lt;0.8；Omni RL 留 0.1–0.9，AudioQA 收紧到 0.3–0.7<span class="src">§3.2.3–3.2.4</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 前用当前模型对每条指令采样 N 张，用奖励模型或规则（区域保持、指令命中）算通过率，丢掉太容易和完全做不到的；按任务类型分别设阈值带，难验证的类型用更窄的带。</p></div>
+        <div class="impl"><h4><span class="ix">D3</span>放一小批「不该照做」的样本</h4>
+          <p class="paper">论文：Image / Omni RL 都加入不可回答或图文不符的样本（Omni ≈4K），训练模型在证据不足时弃答<span class="src">§3.2.3–3.2.4</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据里加入「指令指向图中不存在的物体」「指令自相矛盾」的样本，目标是原图不变或明确拒绝，并在评测集中单列这一类，防止模型乱改。</p></div>
+        <div class="impl"><h4><span class="ix">D4</span>报规模时连重复和 mask token 一起报</h4>
+          <p class="paper">论文：表 1 明确写 token 数「包含 prompt 中被 mask 的 token、包含样本重复」<span class="src">表 1</span>，并按类别给样本数与 token 占比<span class="src">表 2–5</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据集的版本说明同时给唯一样本数、含重复的训练样本数、各任务占比；音乐那种「样本少但 token 多」的情况在编辑里对应高分辨率样本，按像素或 token 而不只按条数报配比。</p></div>
+      </div>
+
+      <div class="impl-group">评测</div>
+      <div class="impl-grid">
+        <div class="impl"><h4><span class="ix">E1</span>按题型分校验器，连续量用平滑奖励</h4>
+          <p class="paper">论文：每题选一种校验器（字符串 / 数学 / 选择题 / GUI 坐标 / ASR）；GUI 奖励随距离平滑衰减，ASR 用 1 − WER；格式错误给部分分而不是清零<span class="src">§3.2.3–3.2.4</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测拆成独立检查项：mask 外像素保持用连续指标、定位类编辑用 IoU 平滑打分、文字渲染用 OCR 编辑距离。不要把它们压成一个二值「成功」。</p></div>
+        <div class="impl"><h4><span class="ix">E2</span>质量和成本同表报，多次运行取平均</h4>
+          <p class="paper">论文：Conv3D / EVS 消融里准确率 3 次平均、TTFT 5 次平均，并给出剪枝率扫描曲线<span class="src">§4.6 · 表 12–13</span>。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型的加速方案（步数蒸馏、token 剪枝、量化）都按「质量指标 + 延迟」双列报，固定种子跑多次给均值，扫一组强度画出拐点，再选工作点。</p></div>
+        <div class="impl"><h4><span class="ix">E3</span>把评测配置钉在每个数字上</h4>
+          <p class="paper">论文：同一 benchmark 在表 7 与表 11 的分数不同（如 VideoMME 72.2 vs 70.3），因为推理预算等设置不同<span class="src">表 7 · 表 11</span>；表 7 本身没写对应配置。</p>
+          <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测的每个分数都附带分辨率、步数、CFG、种子数、judge 模型版本；配置变了就当作新的一列，不和旧数混在一张表里。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 09 局限 -->
+  <section class="sec" id="limits">
+    <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+    <ul class="limits wide">
+      <li class="key"><b>训练配方没有消融。</b>7 段 SFT 的顺序、冻结策略、Stage 6 冻结音频、Text RL 冻结 embedding、MPO 都只有描述，没有对照实验。唯一完整的消融是 Conv3D / EVS<span class="src">表 12–13</span>。</li>
+      <li class="key"><b>过滤标准全部未披露。</b>「严格过滤」「噪声子集重标」「精选 ASR prompt 子集」的判定方法、阈值、保留比例都没给<span class="src">§3.1.2 · §3.1.5</span>。Stage 0–1 的领域配比也没给。</li>
+      <li><b>「所有基准都显著提升」与表 7 不符。</b>reasoning off 下 MMMU 55.2 vs 55.3、DocVQA 93.3 vs 94.7、TextVQA 85.1 vs 85.4，均略低于 V2 VL<span class="src">§4.1 · 表 7</span>。</li>
+      <li><b>「领先」主要相对 Qwen3-Omni。</b>对 Qwen3.5-Omni（Flash）在 MMMU、OCRBench、CharXiv RQ、RefCOCO、VideoMME、DailyOmni、WorldSense、MMAU 上落后<span class="src">表 7–9</span>；结论里把 CharXiv、ScreenSpot-Pro 列为领先或有竞争力，而这两项分别低于 Qwen3.5-Omni（63.6 vs 64.4）和 Qwen3-Omni（59.3 vs 59.7）。表 7 也没写 Qwen 两列的推理模式和分数来源。</li>
+      <li><b>「保留文本推理能力」偏乐观。</b>AIME25 82.1 vs 89.1、LiveCodeBench 63.2 vs 68.3<span class="src">表 10</span>。</li>
+      <li><b>ASR 并非全面领先。</b>OpenASR 均值更好，但 GigaSpeech、TED-LIUM、长音频 TED-LIUM（3.11 vs 2.4）、MMAU（74.6 vs 77.5）都不如 Qwen3-Omni<span class="src">表 8</span>。</li>
+      <li><b>正文与表格有几处对不上。</b>表 13 中 TTFT 在 q=0.8（5182 ms）高于 q=0.7（5124 ms），正文却说「单调改善」；Omni-RL 的 Image 组写 ≈32K，其子项 10.5K + 8.9K + 11.9K + 7.1K 已达 38.4K<span class="src calc">推算</span>；引言写单流吞吐是 Qwen3-Omni 的 3×，§4.8 是 2.4–2.9×；表 11 称「无退化」，DocVQA 实为 95.3 → 95.2。</li>
+      <li><b>效率对比精度不对齐。</b>Nemotron 用 NVFP4，Qwen3-Omni 用动态 FP8<span class="src">§4.8</span>，9× / 7.5× 中有多少来自量化无法拆开。</li>
+      <li><b>量化结论样本不全。</b>「25 项基准中位降幅 &lt;1%」只公开了 13 行<span class="src">§4.7 · 表 14</span>。</li>
+      <li><b>超参部分缺失。</b>RL 学习率、KL、步数、奖励权重未披露；表 6 的合并单元格在文本版里跨度不明确。许可证原文未披露。</li>
+    </ul>
+  </section>
+
+  <!-- 10 图表索引 -->
+  <section class="sec" id="figs">
+    <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+    <div class="tbl-wrap wide">
+      <table class="idx-table">
+        <thead><tr><th>编号</th><th style="text-align:left">内容</th><th style="text-align:left">本页位置</th></tr></thead>
+        <tbody>
+          <tr><td>图 1</td><td style="text-align:left">整体架构（第 3 页） · <a href="figures/fig1.jpg" target="_blank" rel="noopener">查看</a></td><td style="text-align:left"><a href="#arch">§03 架构</a></td></tr>
+          <tr><td>图 2</td><td style="text-align:left">分阶段 SFT / RL 配方，含各阶段 token 数（第 4 页） · <a href="figures/fig2.jpg" target="_blank" rel="noopener">查看</a></td><td style="text-align:left"><a href="#train">§05 训练配方</a></td></tr>
+          <tr><td>表 1</td><td style="text-align:left">SFT 各阶段样本数与 token 数</td><td style="text-align:left"><a href="#data">§04 数据</a></td></tr>
+          <tr><td>表 2–5</td><td style="text-align:left">Stage 3 / 4 / 5 / 6 数据配比</td><td style="text-align:left"><a href="#data">§04 比例条 + 折叠表</a></td></tr>
+          <tr><td>表 6</td><td style="text-align:left">SFT 超参</td><td style="text-align:left"><a href="#train">§05 阶段卡 + 折叠表</a></td></tr>
+          <tr><td>表 7</td><td style="text-align:left">视觉基准对比</td><td style="text-align:left"><a href="#eval">§06 柱状图 + 表</a></td></tr>
+          <tr><td>表 8</td><td style="text-align:left">音频基准（ASR / MMAU / VoiceBench）</td><td style="text-align:left"><a href="#eval">§06 表 + 折叠表</a></td></tr>
+          <tr><td>表 9</td><td style="text-align:left">音视频（DailyOmni / WorldSense）</td><td style="text-align:left"><a href="#eval">§06</a></td></tr>
+          <tr><td>表 10</td><td style="text-align:left">文本基准 vs 底座</td><td style="text-align:left"><a href="#eval">§06 分差图</a></td></tr>
+          <tr><td>表 11</td><td style="text-align:left">推理预算</td><td style="text-align:left"><a href="#eval">§06 折叠表</a></td></tr>
+          <tr><td>表 12</td><td style="text-align:left">Conv3D × EVS × 精度：准确率与 TTFT</td><td style="text-align:left"><a href="#eval">§06 柱状图</a></td></tr>
+          <tr><td>表 13</td><td style="text-align:left">EVS 剪枝率扫描</td><td style="text-align:left"><a href="#eval">§06 折叠表</a></td></tr>
+          <tr><td>表 14</td><td style="text-align:left">BF16 / FP8 / NVFP4 精度对比</td><td style="text-align:left"><a href="#eval">§06 量化卡片</a></td></tr>
+          <tr><td>示意图</td><td style="text-align:left">Conv3D + EVS 两级压缩（本页绘制，非原图）</td><td style="text-align:left"><a href="#arch">§03</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 NVIDIA《Nemotron 3 Nano Omni: Efficient and Open Multimodal Intelligence》（<a href="https://arxiv.org/abs/2604.24954" target="_blank" rel="noopener">arXiv:2604.24954</a>；v1 发布于 2026-04-27，本页依据 v2，arXiv 戳 2026-05-11、PDF 页眉 2026-5-12）。文中数字均来自原文正文与表格，标有「推算」的是本页自行计算的结果；「迁移建议」是本页的推断，不代表论文观点；Conv3D / EVS 示意图为本页绘制。论文插图版权归原作者所有，仅用于学习交流。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

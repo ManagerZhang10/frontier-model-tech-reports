@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LongCat-Next 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="LongCat-Next（Meituan LongCat Team）中文深读：DiNA 全离散原生自回归，dNaViT = Qwen2.5-ViT + 8 级 RVQ，68.5B-A3B MoE 训练约 2T token，统一图像理解、文生图与语音；数据管线、训练配方、评测与对图像编辑数据 / caption / 评测的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+  /* DiNA 架构示意 */
+  .dn .lane { fill: none; stroke: var(--line); stroke-dasharray: 4 4; }
+  .dn .in { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+  .dn .tok { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+  .dn .emb { fill: color-mix(in srgb, var(--accent) 12%, var(--card)); stroke: color-mix(in srgb, var(--accent) 35%, var(--line)); stroke-width: 1.2; }
+  .dn .llm { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
+  .dn .head { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.2; }
+  .dn .arr { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+  .dn .arr-a { stroke: var(--accent); stroke-width: 1.6; fill: none; marker-end: url(#ah2); }
+  .dn .t { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .dn .s { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  .dn .h { fill: var(--accent-ink); font: 700 14px var(--f-head); }
+  .dn .lv rect { stroke: var(--card); stroke-width: 1; }
+  /* RVQ 级联示意 */
+  .rq .bx { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+  .rq .cb { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); }
+  .rq .t { fill: var(--ink); font: 700 12px var(--f-body); }
+  .rq .s { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  .rq .ln { stroke: var(--muted); stroke-width: 1.3; fill: none; marker-end: url(#ah3); }
+  .ratio .rbar .c { background: var(--good); }
+  .ratio .rbar .d { background: var(--bar-other); }
+  .ratio .rbar .e { background: color-mix(in srgb, var(--accent) 55%, var(--card)); }
+  .ratio .rbar .f { background: var(--bar-other2); }
+  :root[data-theme="dark"] .ratio .rbar .c, :root[data-theme="dark"] .ratio .rbar .d { color: #141218; }
+  .bar-legend span.c::before { background: var(--good); }
+  .bar-legend span.d::before { background: var(--bar-other); }
+  .bar-legend span.e::before { background: color-mix(in srgb, var(--accent) 55%, var(--card)); }
+  .bar-legend span.f::before { background: var(--bar-other2); }
+  .pipe-row.two, .pipe-head.two { grid-template-columns: 112px repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 960px) { .pipe-row.two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型（统一多模态）</div>
+    <h1>LongCat-Next<span class="sub">Lexicalizing Modalities as Discrete Tokens</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Meituan LongCat Team</b></span>
+      <span>arXiv v1 <b>2026-03-29</b></span>
+      <span>arXiv <b>2603.27538</b></span>
+    </div>
+    <p class="lede">把图像、语音都当成「外语」：用 <strong>dNaViT</strong>（冻结的 Qwen2.5-ViT + 8 级残差向量量化）把任意分辨率图像变成离散 ID，再和文本、音频 token 一起喂给 <strong>68.5B 总参 / 约 3B 激活</strong>的 LongCat-Flash-Lite MoE，只用一个 next-token 目标同时做看图、画图和说话。主张是：离散视觉理解没有天花板，瓶颈在数据量。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源：模型 + tokenizer</span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">68.5B 总参 · A3B（2.9B–4.5B 激活）</span>
+      <span class="badge">视觉语言模型（统一多模态）</span>
+      <span class="badge">全离散 NTP · 文本 / 图像 / 音频</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2603.27538" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>论文 arXiv:2603.27538</a>
+      <a href="https://github.com/meituan-longcat/LongCat-Next" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-1-2.6c3.1-.4 6.4-1.5 6.4-7a5.4 5.4 0 0 0-1.5-3.8 5 5 0 0 0-.1-3.8s-1.2-.4-3.9 1.5a13.4 13.4 0 0 0-7 0C6.2 1.6 5 2 5 2a5 5 0 0 0-.1 3.8A5.4 5.4 0 0 0 3.4 9.6c0 5.4 3.3 6.6 6.4 7a3.4 3.4 0 0 0-1 2.6V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/meituan-longcat/LongCat-Next" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg>Hugging Face</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对图像编辑的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自原文，旁边灰色胶囊为出处；橙色「推算」为本页自行计算。</div>
+  </nav>
+
+<main>
+
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num">68.5B / A3B</span><span class="stat-sub">平均激活 3B，随上下文在 2.9B–4.5B 之间</span><span class="src">§2.4</span></div>
+    <div class="card stat"><span class="stat-k">训练量</span><span class="stat-num">~2T token</span><span class="stat-sub">预对齐 → 预训练 → 中期训练 → SFT 四段合计</span><span class="src">§4.1.3</span></div>
+    <div class="card stat"><span class="stat-k">语言骨干</span><span class="stat-num sm">LongCat-Flash-Lite MoE</span><span class="stat-sub">从零训练；Zero-Expert + Shortcut MoE；模态无关，不加 3D RoPE / 双向注意力</span><span class="src">§2.4</span></div>
+    <div class="card stat"><span class="stat-k">视觉 tokenizer</span><span class="stat-num sm">dNaViT</span><span class="stat-sub">Qwen2.5-ViT（28× 空间压缩）+ 8 级 RVQ；视觉码本 8 × 16,384</span><span class="src">§4.1.1</span><span class="src">§2.5.1</span></div>
+    <div class="card stat"><span class="stat-k">音频 tokenizer</span><span class="stat-num sm">Whisper + 8 层 RVQ</span><span class="stat-sub">12.5 Hz；码本 8k/4k/2k/1k×5；训练语料约 250 万小时</span><span class="src">§2.3</span><span class="src">§4.1.2</span></div>
+    <div class="card stat"><span class="stat-k">分辨率</span><span class="stat-num sm">任意分辨率进出</span><span class="stat-sub">tokenizer 训练最大 1,736×1,736、序列上限 8192</span><span class="src">§4.1.1</span></div>
+    <div class="card stat"><span class="stat-k">生成数据</span><span class="stat-num">~300M</span><span class="stat-sub">自建文生图图文对，三段式（过滤+重写 caption → 聚类重平衡 → SFT）</span><span class="src">§4.3</span></div>
+    <div class="card stat"><span class="stat-k">开源 / 许可</span><span class="stat-num sm">模型 + tokenizer</span><span class="stat-sub">GitHub / HF：meituan-longcat/LongCat-Next；许可证 <span class="nd">原文未披露</span></span><span class="src">摘要</span></div>
+  </div>
+  <p class="footnote">发布日期取 arXiv v1（2026-03-29）。本页依据的论文文本即 v1（文本首页标注 <code>arXiv:2603.27538v1</code>）。</p>
+</section>
+
+<!-- 02 TL;DR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>一切皆离散 ID，一个 NTP 目标</h3><p>文本、图像、音频各有 tokenizer / de-tokenizer，骨干是模态无关的 MoE，不加 modality-aware MoE、3D RoPE、双向注意力<span class="src">§2.4</span>。视觉与音频 embedding 随机初始化，与文本一起端到端学<span class="src">§2.5</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>dNaViT：语义编码器 + 残差量化</h3><p>直接用 Qwen2.5-ViT 做「语义对齐编码器」（SAE），后接 8 级 RVQ<span class="src">§4.1.1</span><span class="src">§9.3</span>。输入时 8 级 embedding 相加成 1 个 token，输出时 DepthTransformer 一步并行解出 8 级<span class="src">§9.4</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>离散理解追平连续</h3><p>MathVista 83.1、MathVision 64.7、OmniDocBench-zh 0.226（↓）均为表 1 最好<span class="src">表 1</span>；但 OCRBench 86.5 低于 Qwen3-VL-A3B 的 90.3*。Qwen-7B 小实验里，数据放大到 300B 后离散与连续基本持平<span class="src">图 9</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>生成强在长文字渲染</h3><p>LongText-EN 93.15 / ZH 89.08、CVTG 76.36、GenEval 84.44<span class="src">表 2</span>，统一模型里领先多数项<span class="src">表 3</span>；对专用模型仍落后 Qwen-Image 2507、Emu-3.5 多数项。</p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>要打折看的地方</h3><p>图像数据在 2T token 中的配比未披露；RL 只在 Qwen-7B 降配设置上验证<span class="src">§9.2</span>；dNaViT 自身重建质量无定量指标；表中自测值与引用值（*）混排。</p></div>
+  </div>
+</section>
+
+<!-- 03 架构 -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：配对 tokenizer + 模态无关 MoE</h2>
+  <p class="sec-intro">DiNA（Discrete Native Autoregression）的做法很朴素：每种模态一对「tokenizer ↔ de-tokenizer」负责信号与离散 ID 互转，中间的 decoder-only 骨干只看 ID 序列<span class="src">§2.1</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="LongCat-Next 总体架构：多模态 tokenizer、LongCat-Flash 模态无关 MoE 骨干、多模态 de-tokenizer" loading="lazy"></div>
+    <figcaption><b>LongCat-Next 总体架构（DiNA 范式）。</b>下层：文本 / 视觉 / 音频 tokenizer 把输入变成离散 ID；中间：LongCat-Flash 模态无关 MoE；上层：各模态 de-tokenizer 还原为文本、图像（如 720×1372 生成图）、语音。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 980 330" class="dn" role="img" aria-label="DiNA 中视觉 token 的输入与输出路径示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--accent)"/></marker>
+      </defs>
+      <text class="h" x="10" y="22">理解方向（输入）</text>
+      <rect class="in" x="10" y="40" width="120" height="52" rx="10"/><text class="t" x="70" y="62" text-anchor="middle">任意分辨率图像</text><text class="s" x="70" y="80" text-anchor="middle">原生分辨率，不裁不缩</text>
+      <path class="arr" d="M130 66 H160"/>
+      <rect class="tok" x="162" y="40" width="160" height="52" rx="10"/><text class="t" x="242" y="62" text-anchor="middle">Qwen2.5-ViT（冻结）</text><text class="s" x="242" y="80" text-anchor="middle">SAE · 28× 空间压缩</text>
+      <path class="arr" d="M322 66 H352"/>
+      <rect class="tok" x="354" y="40" width="140" height="52" rx="10"/><text class="t" x="424" y="62" text-anchor="middle">8 级 RVQ（冻结）</text><text class="s" x="424" y="80" text-anchor="middle">每级 16,384 码</text>
+      <path class="arr" d="M494 66 H524"/>
+      <g class="lv">
+        <rect x="526" y="36" width="34" height="8" fill="var(--warm)"/><rect x="526" y="44" width="34" height="8" fill="color-mix(in srgb,var(--warm) 85%,var(--card))"/><rect x="526" y="52" width="34" height="8" fill="color-mix(in srgb,var(--warm) 72%,var(--card))"/><rect x="526" y="60" width="34" height="8" fill="color-mix(in srgb,var(--warm) 60%,var(--card))"/><rect x="526" y="68" width="34" height="8" fill="color-mix(in srgb,var(--warm) 48%,var(--card))"/><rect x="526" y="76" width="34" height="8" fill="color-mix(in srgb,var(--warm) 38%,var(--card))"/><rect x="526" y="84" width="34" height="8" fill="color-mix(in srgb,var(--warm) 28%,var(--card))"/><rect x="526" y="92" width="34" height="8" fill="color-mix(in srgb,var(--warm) 18%,var(--card))"/>
+      </g>
+      <text class="s" x="543" y="114" text-anchor="middle">8 级 ID</text>
+      <path class="arr" d="M560 66 H590"/>
+      <rect class="emb" x="592" y="40" width="150" height="52" rx="10"/><text class="t" x="667" y="62" text-anchor="middle">8 级 embedding 求和</text><text class="s" x="667" y="80" text-anchor="middle">随机初始化 · 端到端学</text>
+      <path class="arr-a" d="M742 66 H790 V140"/>
+
+      <rect class="llm" x="770" y="142" width="200" height="56" rx="12"/><text class="t" x="870" y="166" text-anchor="middle">LongCat-Flash-Lite MoE</text><text class="s" x="870" y="184" text-anchor="middle">68.5B · A3B · 模态无关</text>
+
+      <text class="h" x="10" y="232">生成方向（输出）</text>
+      <path class="arr-a" d="M870 198 V262 H742"/>
+      <rect class="head" x="592" y="236" width="150" height="52" rx="10"/><text class="t" x="667" y="258" text-anchor="middle">DepthTransformer</text><text class="s" x="667" y="276" text-anchor="middle">一步并行出 8 级 ID</text>
+      <path class="arr" d="M592 262 H562"/>
+      <g class="lv">
+        <rect x="526" y="232" width="34" height="8" fill="var(--warm)"/><rect x="526" y="240" width="34" height="8" fill="color-mix(in srgb,var(--warm) 85%,var(--card))"/><rect x="526" y="248" width="34" height="8" fill="color-mix(in srgb,var(--warm) 72%,var(--card))"/><rect x="526" y="256" width="34" height="8" fill="color-mix(in srgb,var(--warm) 60%,var(--card))"/><rect x="526" y="264" width="34" height="8" fill="color-mix(in srgb,var(--warm) 48%,var(--card))"/><rect x="526" y="272" width="34" height="8" fill="color-mix(in srgb,var(--warm) 38%,var(--card))"/><rect x="526" y="280" width="34" height="8" fill="color-mix(in srgb,var(--warm) 28%,var(--card))"/><rect x="526" y="288" width="34" height="8" fill="color-mix(in srgb,var(--warm) 18%,var(--card))"/>
+      </g>
+      <path class="arr" d="M526 262 H496"/>
+      <rect class="tok" x="306" y="236" width="188" height="52" rx="10"/><text class="t" x="400" y="258" text-anchor="middle">像素解码器 ViT（400M）</text><text class="s" x="400" y="276" text-anchor="middle">从零训练 · 2D RoPE</text>
+      <path class="arr" d="M306 262 H276"/>
+      <rect class="tok" x="114" y="236" width="160" height="52" rx="10"/><text class="t" x="194" y="258" text-anchor="middle">Refiner（flow matching）</text><text class="s" x="194" y="276" text-anchor="middle">自 OmniGen2 初始化</text>
+      <path class="arr" d="M114 262 H84"/>
+      <rect class="in" x="10" y="236" width="72" height="52" rx="10"/><text class="t" x="46" y="266" text-anchor="middle">图像</text>
+      <text class="s" x="10" y="318">文本走标准 MLP head；音频同样是「多级 embedding 相加输入 + DepthTransformer 输出」，再接对称解码器 + flow matching + vocoder。</text>
+    </svg>
+    <div class="cap">示意，按 §2.2–2.5、§4.1.1、§9.4 文字整理，不是论文原图。§3.2.1 消融里引入的单层 FFN「Pre-Buffer」（对求和后的多级 embedding 重编码）正文未说明是否进入最终模型，故未画入。</div>
+  </div>
+
+  <h3>相对「连续 ViT + 投影」与同类统一模型的改动</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>视觉侧：语义编码器 + RVQ，而不是 VQ-VAE<span class="tag">§2.2</span></h4>
+      <p>作者把现有视觉 tokenizer 分三类：低层重建型（VQ-VAE，Emu / Chameleon）、自监督语义型（SigLIP / DINOv2，Janus）、无编码器（EVE / NEO），主张第四类「语义对齐编码器 SAE」——即 VLM 里训过大量 QA 的 ViT——才同时够理解与生成用<span class="src">§2.2.1</span>。实际直接拿 Qwen2.5-ViT，没有自训 SAE<span class="src">§4.1.1</span>。</p></div>
+    <div class="card mod"><h4>量化：8 级 RVQ + EMA 码本<span class="tag">§2.2.3</span></h4>
+      <p>投影后的特征逐级量化残差；码本用 EMA 更新、Laplace 平滑、死码（N<sub>k</sub>&lt;1）用当前 batch 重新初始化；监督只有 commitment loss + 语义特征余弦重建，不做像素重建<span class="src">式 5</span>。附录称 8 级相对 2 级与单级 VQ 的特征重建损失显著更低<span class="src">图 19</span>。</p></div>
+    <div class="card mod"><h4>de-tokenizer 与 tokenizer 解耦<span class="tag">§2.2.4</span></h4>
+      <p>先训完 tokenizer 并冻结 SAE 与码本，再单独训像素解码器（L<sub>pixel</sub> + L<sub>percep</sub> + L<sub>align</sub>）。只用解码器结果偏糊，所以再加一个以重建图和离散 embedding 为条件的 flow-matching refiner<span class="src">§4.1.1</span>。</p></div>
+    <div class="card mod"><h4>语言骨干与输出头<span class="tag">§2.4–2.5</span></h4>
+      <p>LongCat-Flash-Lite A3B 作骨干，所有模态走同一路径。文本 head 是标准 MLP；视觉 / 音频由任务感知的 DepthTransformer 并行解多级 token<span class="src">§2.5.2</span>。语音输出沿用 Moshi 式「文本引导音频」，用随机延迟把串行与并行两种生成统一到一个训练格式<span class="src">§2.5.3</span>。</p></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="dNaViT：不同分辨率图像经 Vision Tokenizer 变成不同长度的离散 ID，再由 Vision De-Tokenizer 还原" loading="lazy"></div>
+    <figcaption><b>dNaViT：原生分辨率的离散化与反离散化。</b>756×1372 报纸、672×560 照片、476×168 公式等不同尺寸图像各自变成长度不同的离散 ID 序列（len<sub>1</sub>…len<sub>N</sub>），再还原为图像。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <details class="more wide"><summary>两条有意思的分析：残差通路与 MoE 分化<span class="hint">§3.2.2 · §3.2.5</span></summary><div class="body">
+    <p><b>残差通路保留低层信息。</b>冻结不同编码器、接同一个轻量 ViT 解码器做重建：随机初始化的 ViT-B/16 PSNR 30.52，高于预训练 ViT-B/16 的 21.86 和 ResNet50 的 20.88；去掉 merger 的 QwenViT 为 18.16<span class="src">表 6</span>。作者据此认为语义编码器的残差连接天然保留了一条低层信号通路，加上 merger（14×→28× 下采样）会明显变差<span class="src">§3.2.2</span>。</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>指标</th><th>ResNet50</th><th>ViT-B/16（预训练）</th><th>ViT-B/16（随机）</th><th>QwenViT（无 merger）</th></tr></thead>
+      <tbody>
+        <tr><td>PSNR ↑</td><td>20.88 ± 3.44</td><td>21.86 ± 3.14</td><td class="best">30.52 ± 3.42</td><td>18.16 ± 2.61</td></tr>
+        <tr><td>SSIM ↑</td><td>0.509 ± 0.174</td><td>0.581 ± 0.139</td><td class="best">0.887 ± 0.051</td><td>0.46 ± 0.14</td></tr>
+        <tr><td>rFID ↓</td><td class="best">0.4619</td><td>0.8850</td><td>0.5847</td><td>0.987</td></tr>
+      </tbody></table></div>
+    <p class="tbl-note">来源：表 6。● 为本页按数值标出的列内最优。</p>
+    <p><b>模态无关 MoE 自发分化。</b>多模态训练后，部分专家出现对视觉或音频的偏好，路由更稳定；每个专家平均接收的 token 从 507.1 升到 584.6<span class="src">§3.2.5</span>。t-SNE（50,000 点）显示 LongCat-Next 的视觉与文本 token 交织分布，Qwen2.5-VL 则分簇<span class="src">图 12</span>。</p>
+  </div></details>
+</section>
+
+<!-- 04 数据 -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：四条管线，规模有、总配比无</h2>
+  <p class="sec-intro">原文按「tokenizer 训练 / 视觉理解 / 视觉生成 / 音频」分别写了数据。<b>文本、理解、生成、音频在约 2T token 里各占多少，各阶段 token 数，均<span class="nd">原文未披露</span></b>；能画比例条的只有音频预训练任务格式（表 8）。</p></div>
+
+  <h3>已披露规模</h3>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>数据</th><th>规模 / 构成</th><th>出处</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">Tokenizer 训练</td></tr>
+      <tr><td>视觉 tokenizer（RVQ）</td><td>约 50M 张任意分辨率图像：LAION、COYO、DataComp、TextAtlas + 自有理解数据子集 + 高保真合成图（如 MidJourney）</td><td>§4.1.1</td></tr>
+      <tr><td>视觉 de-tokenizer</td><td>复用上述图像，另加 SAM-1B、RenderedText、IDL、自有高分辨率图；数量<span class="nd">原文未披露</span></td><td>§4.1.1</td></tr>
+      <tr><td>音频 tokenizer</td><td>约 250 万小时：网络中英文语音（开源 ASR 自动转写）+ 多语种 / 方言 ASR、自合成语音、音乐与声音 caption</td><td>§4.1.2</td></tr>
+      <tr class="grp"><td colspan="3">视觉理解</td></tr>
+      <tr><td>OCR</td><td>75% 自合成 + 25% 来自 90+ 开源数据集的过滤真实数据；其中图表→代码 / 表格 / JSON 元组 4.2M（取自 arXiv）</td><td>§4.2.1</td></tr>
+      <tr><td>STEM</td><td>60% 开源（70+ 数据集）+ 40% 自有 / 合成</td><td>§4.2.1</td></tr>
+      <tr><td>Grounding</td><td>约 60M 样本，10+ 公开来源（GRiT、Visual Genome、RefCOCO 系、Objects365、OpenImages 等）</td><td>§4.2.1</td></tr>
+      <tr><td>Counting</td><td>8M 样本（PixMo-Points、TallyQA 为基础）</td><td>§4.2.1</td></tr>
+      <tr><td>Caption / 交错 / GUI</td><td>数量<span class="nd">原文未披露</span>；GUI 真实轨迹来自「数万并发会话」</td><td>§4.2.1</td></tr>
+      <tr class="grp"><td colspan="3">视觉生成</td></tr>
+      <tr><td>文生图图文对</td><td>约 300M（多公开来源 + 网络平台）；含文字密集子集（合成排版、自然场景文字、海报广告、信息图），子集规模<span class="nd">原文未披露</span></td><td>§4.3</td></tr>
+      <tr class="grp"><td colspan="3">音频</td></tr>
+      <tr><td>网络音频</td><td>原始 19.9M 小时 → 清洗后保留 3.2M 小时（原文写占 16.2%）</td><td>§4.4.1</td></tr>
+      <tr><td>合成语音-文本</td><td>1.2M 小时</td><td>§4.4.1</td></tr>
+      <tr><td>任务专用</td><td>0.4M 小时（副语言感知、音频事件等）</td><td>§4.4.1</td></tr>
+      <tr class="grp"><td colspan="3">RL（Qwen-7B 验证实验）</td></tr>
+      <tr><td>理解 RL</td><td>ViRL39K + Orsta-Data-47k + 自有数据，去重并去掉 4 次 rollout 全对 / 全错的题，剩约 30K</td><td>§9.2</td></tr>
+      <tr><td>生成 RL</td><td>约 40K 条 prompt，每条可对应多个奖励</td><td>§9.2</td></tr>
+    </tbody></table></div>
+
+  <h3>视觉生成数据：三段式递进 <span class="src">§4.3 · 图 14</span></h3>
+  <p class="prose">出发点：网络图文对高度长尾，模型容量被「通用人像、常见物体」这类高频模式吃掉；而过度审美过滤又会把输出推向同质化的「AI 风」<span class="src">§4.3.2</span>。所以按阶段换数据目标。</p>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>过滤</span><span>标注 / 组织</span><span>产出</span></div>
+    <div class="pipe-row"><div class="lbl">I 预训练</div>
+      <div class="chip">SigLIP 余弦去近重；分辨率 ≥384×384、宽高比约束、HPS v3 打分；Qwen3-VL-8B 检水印；AIGC 检测剔合成 / 损坏图</div>
+      <div class="chip m">Qwen3-VL-8B 结构化重写 caption：overview + 细节属性 + tags；文字图并入 PaddleOCR 结果</div>
+      <div class="chip o">基础图文对齐</div></div>
+    <div class="pipe-row"><div class="lbl">II 中期训练</div>
+      <div class="chip">SigLIP2 编码全量图 → FAISS 分布式 K-Means，切成「数百万」语义簇；高密度簇内激进去重</div>
+      <div class="chip m">簇间按幂律重加权，提高稀疏簇（如稀有植物、专业仪器）的采样概率</div>
+      <div class="chip o">长尾概念拿到足够梯度</div></div>
+    <div class="pipe-row"><div class="lbl">III SFT</div>
+      <div class="chip">每个簇取质心附近质量最高的代表样本</div>
+      <div class="chip m">+ 专业摄影 / 数字艺术高审美集 + 合成排版与真实 OCR 场景（海报、信息图）文字集</div>
+      <div class="chip o">指令遵循、审美、文字渲染</div></div>
+  </div>
+  <div class="legend-dots"><span>过滤</span><span class="m">标注 / 重组</span><span class="o">目标</span></div>
+  <p class="footnote">图 14 右侧有一张图像来源类别饼图（Photo、Portrait、Product、Digital Art、Architecture 等十余类），但纯文本抽取后标签与百分比无法可靠对应，本页不转录这些比例，请以原 PDF 为准。</p>
+
+  <h3>视觉理解数据 <span class="src">§4.2</span></h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Image Caption<span class="tag">§4.2.1</span></h4><p>三步：启发式去损坏 / 异常分辨率 / 低质图 → <b>多个开源 LVLM 重写 caption</b>，把稀疏标签变成细描述 → <b>SigLIP 相似度阈值</b>剔除错配对。</p></div>
+    <div class="card mod"><h4>交错图文<span class="tag">§4.2.1</span></h4><p>网页图文用 CLIP 分数过滤；视频切场景取关键帧，ASR + OCR 抽文本，组织成交错序列。</p></div>
+    <div class="card mod"><h4>OCR<span class="tag">§4.2.1</span></h4><p>文档版面转 Markdown、表格标 HTML；arXiv 合成 4.2M 图表元组；场景文字做去污染并重标，<b>刻意加入词表外（OOV）文字组合</b>压语言先验与幻觉；SynthDoG、LaTeX 造艺术字 / 手写 / 扭曲面。SFT 阶段按简单 / 中等 / 复杂三档出题，用规则过滤 + LLM-as-judge + 拒绝采样控质量。</p></div>
+    <div class="card mod"><h4>STEM<span class="tag">§4.2.1</span></h4><p>70+ 开源集（MAVIS、AI2D、MMK12、ViRL39K 等）深度去重重采样；自有 K12 内容带专家推理链；题面清洗改写，并为每题构造逐步推理链。</p></div>
+    <div class="card mod"><h4>GUI<span class="tag">§4.2.1</span></h4><p>参考 UI-TARS / EvoCUA 自动采轨迹；去视觉噪声、对齐坐标格式、元数据转自然语言意图；开源集（AgentNet、ScaleCUA）按 OS / 应用平衡。疑难样本用「轻模型去空间噪声 + 强推理模型修语义与坐标」双模型救回。</p></div>
+    <div class="card mod"><h4>Grounding / Counting<span class="tag">§4.2.1</span></h4><p>预训练 VLM 过滤错配框；坐标统一归一化到 [0, 1000]。</p></div>
+  </div>
+
+  <h4>清洗、过滤与采样（理解 SFT）<span class="src">§4.2.2</span></h4>
+  <ul class="prose">
+    <li><b>去污染：</b>图像 pHash 匹配 + 文本 N-gram 重叠，剔除与公开基准高度相似的样本；再按语义聚类去重。</li>
+    <li><b>质量过滤：</b>规则剔除 CoT 里的链接、格式错误、冗余；模型比对 CoT 与标准答案剔错误推导；对 caption 打「知识密度」分优先保留。</li>
+    <li><b>采样：</b>每条数据标来源 / 难度 / 领域 / 质量分；难度 = 多次 rollout 的正确率，动态调易中难比例；按任务复杂度平衡 CoT 长度；<b>每个来源设最低保留比例</b>，防过滤过头丢掉专项能力。具体比例<span class="nd">原文未披露</span>。</li>
+  </ul>
+
+  <h3>音频数据 <span class="src">§4.4</span></h3>
+  <p class="prose">网络音频管线：VAD、强制对齐、去重、<b>双 ASR 一致性过滤</b>、DNSMOS 质量过滤、背景噪声过滤 → 说话人 embedding 聚类，保留中频簇，压制过度代表的合成音色与极稀疏离群类 → 按自然语音的幂律长度分布重新切分<span class="src">§4.4.1</span>。合成语音按代表性说话人簇构造参考音色，并用说话人相似度和 ASR 一致性控质量。</p>
+  <div class="card wide" style="padding:14px 18px">
+    <div class="ratio">
+      <div class="rlab"><b>音频预训练数据的任务格式占比</b><span class="src">表 8</span></div>
+      <div class="rbar"><span class="a" style="width:40%">TTS 40</span><span class="b" style="width:22%">INTLV 22</span><span class="c" style="width:22%">INTLV-TA 22</span><span class="e" style="width:11%">ASR 11</span><span class="d" style="width:3%" title="others 3%"></span><span class="f" style="width:2%" title="Pure Audio 2%"></span></div>
+    </div>
+    <div class="bar-legend"><span>连续文本引导音频（TTS）40%</span><span class="s">音频 / 文本交错 22%</span><span class="c">音频 / 文本引导音频交错 22%</span><span class="e">ASR 11%</span><span class="d">其他（AQA、S2TT 等）3%</span><span class="f">纯音频 2%</span></div>
+    <p class="tbl-note">纯音频模态在 ASR、INTLV、INTLV-TA 数据里不计损失；TTS 与 INTLV-TA 中的文本引导音频对文本与音频 token 联合计损<span class="src">§4.4.2</span>。</p>
+  </div>
+</section>
+
+<!-- 05 训练 -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：先训 tokenizer，再四段统一训练</h2>
+  <p class="sec-intro">两大阶段：模态专属 tokenizer 训练 → DiNA 下的原生多模态训练（tokenizer 全程冻结）<span class="src">§4.1</span>。学习率、优化器、RVQ 衰减系数 γ、各损失权重 λ、各阶段 token 数均<span class="nd">原文未披露</span>。</p></div>
+
+  <h3>Phase I · tokenizer</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>视觉 dNaViT<span class="tag">§4.1.1</span></h4>
+      <ul><li><b>Stage 1 量化：</b>先固定分辨率快速收敛，再任意分辨率训练；变长序列打包 + varlen FlashAttention，序列上限 8192，最大图像 1,736×1,736，约 50M 张图训到收敛。</li>
+      <li><b>Stage 2 反量化：</b>SAE 与码本冻结；400M 像素解码器 ViT 从零训（MLP patch unmerger 还原 SAE 的空间合并 → 2D RoPE Transformer → 线性头到像素）；refiner 从 OmniGen2 初始化，条件 = 解码图（通道拼接噪声 latent）+ 离散 code embedding。</li></ul></div>
+    <div class="card mod"><h4>音频<span class="tag">§4.1.2</span></h4>
+      <ul><li><b>Stage 1：</b>编码器（Whisper-large-v3）与 LLM（Qwen3-1.7B）冻结，只训解码器做 Mel 重建。</li>
+      <li><b>Stage 2：</b>开启 8 层 RVQ（8k/4k/2k/1k/1k/1k/1k/1k），除 LLM 与 flow matching 外全训，重建 + commit + LLM 三项损失。</li>
+      <li><b>Stage 3：</b>用 24kHz 高质量音频，解码器改为 DiT 去 RVQ 伪影。训练完丢弃 Qwen3-1.7B。</li></ul></div>
+  </div>
+
+  <h3>Phase II · 原生多模态训练 <span class="src">表 7 · 图 13</span></h3>
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">S1</span><h4>Pre-Align</h4>
+      <dl><dt>可训</dt><dd>embedding + DepthT.</dd><dt>Batch</dt><dd>8192</dd><dt>Seq</dt><dd>8K</dd></dl>
+      <div class="tokbar"><i style="width:100%"></i></div><div class="tokbar seqbar"><i style="width:12.5%"></i></div></div>
+    <div class="card stage"><span class="sid">S2</span><h4>Pre-training</h4>
+      <dl><dt>可训</dt><dd>全部</dd><dt>Batch</dt><dd>8192</dd><dt>Seq</dt><dd>8K</dd></dl>
+      <div class="tokbar"><i style="width:100%"></i></div><div class="tokbar seqbar"><i style="width:12.5%"></i></div></div>
+    <div class="card stage"><span class="sid">S3</span><h4>Mid-training</h4>
+      <dl><dt>可训</dt><dd>全部</dd><dt>Batch</dt><dd>1024</dd><dt>Seq</dt><dd>32K</dd></dl>
+      <div class="tokbar"><i style="width:12.5%"></i></div><div class="tokbar seqbar"><i style="width:50%"></i></div></div>
+    <div class="card stage"><span class="sid">S4</span><h4>SFT</h4>
+      <dl><dt>可训</dt><dd>全部</dd><dt>Batch</dt><dd>128</dd><dt>Seq</dt><dd>64K</dd></dl>
+      <div class="tokbar"><i style="width:1.6%"></i></div><div class="tokbar seqbar"><i style="width:100%"></i></div></div>
+  </div>
+  <div class="bar-legend wide"><span>batch size（相对 8192）</span><span class="s">序列长度（相对 64K）</span></div>
+
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>阶段</th><th>视觉（V）</th><th>音频（A）</th><th>文本（T）</th></tr></thead>
+    <tbody>
+      <tr><td>S1 Pre-Align</td><td>图文 caption 对</td><td>纯音频、ASR、TTS、交错数据</td><td>—</td></tr>
+      <tr><td>S2 Pre-training</td><td>+ 交错数据、OCR、Grounding、固定分辨率生成</td><td>同上一阶段</td><td>纯文本</td></tr>
+      <tr><td>S3 Mid-training</td><td>+ 长 CoT、通用 QA、视频、GUI、任意分辨率生成</td><td>高质量数据、多轮对话</td><td>同上一阶段</td></tr>
+      <tr><td>S4 SFT</td><td>高质量指令、推理、任意分辨率生成</td><td>指令数据</td><td>长纯文本</td></tr>
+    </tbody></table></div>
+  <p class="tbl-note">表 7 在纯文本中排版错位，上表按列位置还原，细节以原 PDF 为准。正文补充：中期训练加入更多合成与精选数据，理解分支加长 CoT，生成分支加任意分辨率训练<span class="src">§4.1.3</span>。</p>
+
+  <h3>后训练 / RL <span class="src">§6.1 · §9</span></h3>
+  <p class="prose">原文把 RL 放在「Advantages and Future Work」一章，验证实验用 Qwen-7B 骨干<span class="src">§9.2</span>；<b>发布的 LongCat-Next 是否做过 RL，原文未说明</b>，§4.1.3 的四段流程也不含 RL。</p>
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">GEN</span><h4>文生图 GRPO</h4>
+      <ul><li>离散视觉 token 直接当动作空间，无需 flow 模型的 ODE→SDE 改造</li>
+      <li>对 RVQ 每一级算 GRPO 损失，按权重 w<sub>l</sub> 加总（式 10；w<sub>l</sub> 取值<span class="nd">未披露</span>）</li>
+      <li>四类奖励：检测式数量 / 颜色 / 位置 / 属性；GOT-OCR 2.0 编辑距离（每条 prompt 2–20 段文字，按长度分桶）；VLM 语义对齐；HPS + Aesthetic Score + UnifiedReward</li></ul></div>
+    <div class="card stage"><span class="sid">UND</span><h4>理解 GRPO + 序列级过滤</h4>
+      <ul><li>问题：熵与训推不一致同步上升，长 rollout 出现乱码 token，形成正反馈</li>
+      <li>熵过滤：序列熵 &gt; μ<sub>H</sub> + nσ<sub>H</sub> 整条丢弃</li>
+      <li>训推差过滤：任一 token |π<sub>sampler</sub> − π<sub>actor</sub>| &gt; δ 整条丢弃（n、δ <span class="nd">未披露</span>）</li>
+      <li>TIS / MIS 只把熵爆炸推迟几步<span class="src">§9.1</span></li></ul></div>
+    <div class="card stage"><span class="sid">EXP</span><h4>Qwen-7B 上的效果</h4>
+      <ul><li>GenEval Overall 83.94 → 87.33；counting +7.50、position +6.75、color_attr +4.56<span class="src">表 9</span></li>
+      <li>MMStar 66.33 → 71.13，RealWorldQA 66.01 → 72.54，MathVision 49.28 → 53.52<span class="src">表 9</span></li>
+      <li>OmniDocBench-en 0.256 → 0.266（↓ 越低越好，反而变差）<span class="src">表 9</span></li></ul></div>
+  </div>
+
+  <details class="more wide"><summary>基础设施：V-Half 流水线并行<span class="hint">§5.1</span></summary><div class="body">
+    <p>多模态下 embedding 层与模态损失模块（DepthTransformer）的耗时随样本模态分布波动，均匀切流水线会严重不平衡。做法：把流水线折成 V 形，<b>embedding 与模态损失模块放在同一设备</b>（共享 buffer，前后向都是设备内零拷贝）；LLM head 带少量层单独成一段；其余层均分。先 profile 各模块耗时再分配。原文未给吞吐或 MFU 数字。</p>
+  </div></details>
+</section>
+
+<!-- 06 评测 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：理解 · 生成 · 音频 · 文本</h2>
+  <p class="sec-intro">主对比对象是 Qwen3-Omni-A3B-Instruct（全模态），理解另比 Qwen3-VL-A3B-Instruct、InternVL3.5-A3B-Flash（专用 VLM）及 GPT5-minimal、Gemini2.5-Flash-Lite<span class="src">§3</span>。<b>表中带 * 的数值取自公开报告，不带 * 的基线是作者自测</b>，两者混排。下图横轴均从 0 起，紫色为 LongCat-Next。</p></div>
+
+  <div class="chart-grid wide">
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 212" role="img" aria-label="LongText-Bench EN（0–100）">
+<text class="ch-t" x="0" y="15">LongText-Bench EN（0–100）</text><text class="ch-src" x="0" y="30">表 2 · 专用 T2I + 本模型</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="184"/><text class="ch-ax" x="132.0" y="198" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="184"/><text class="ch-ax" x="179.5" y="198" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="184"/><text class="ch-ax" x="227.0" y="198" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="184"/><text class="ch-ax" x="274.5" y="198" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="184"/><text class="ch-ax" x="322.0" y="198" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">Emu-3.5</text><rect class="bar-o" x="132" y="43" width="185.4" height="15" rx="3"/><text class="ch-val" x="322.4" y="55">97.60*</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">Qwen-Image 2507</text><rect class="bar-o" x="132" y="67" width="179.2" height="15" rx="3"/><text class="ch-val" x="316.2" y="79">94.30*</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="91" width="177.0" height="15" rx="3"/><text class="ch-val" x="314.0" y="103">93.15</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">Seeddream 3.0</text><rect class="bar-o" x="132" y="115" width="170.2" height="15" rx="3"/><text class="ch-val" x="307.2" y="127">89.60*</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">Gemini 2.5 Flash Img</text><rect class="bar-o" x="132" y="139" width="163.5" height="15" rx="3"/><text class="ch-val" x="300.5" y="151">86.04</text>
+<text class="ch-lbl" x="124" y="174" text-anchor="end">FLUX.1-dev</text><rect class="bar-o" x="132" y="163" width="115.3" height="15" rx="3"/><text class="ch-val" x="252.3" y="175">60.70*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="184"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 212" role="img" aria-label="CVTG（0–100）">
+<text class="ch-t" x="0" y="15">CVTG（0–100）</text><text class="ch-src" x="0" y="30">表 2 · 文字渲染</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="184"/><text class="ch-ax" x="132.0" y="198" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="184"/><text class="ch-ax" x="179.5" y="198" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="184"/><text class="ch-ax" x="227.0" y="198" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="184"/><text class="ch-ax" x="274.5" y="198" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="184"/><text class="ch-ax" x="322.0" y="198" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">Emu-3.5</text><rect class="bar-o" x="132" y="43" width="173.3" height="15" rx="3"/><text class="ch-val" x="310.3" y="55">91.23*</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">Qwen-Image 2507</text><rect class="bar-o" x="132" y="67" width="157.5" height="15" rx="3"/><text class="ch-val" x="294.5" y="79">82.88*</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="91" width="145.1" height="15" rx="3"/><text class="ch-val" x="282.1" y="103">76.36</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">Gemini 2.5 Flash Img</text><rect class="bar-o" x="132" y="115" width="139.9" height="15" rx="3"/><text class="ch-val" x="276.9" y="127">73.64*</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">Seeddream 3.0</text><rect class="bar-o" x="132" y="139" width="112.6" height="15" rx="3"/><text class="ch-val" x="249.6" y="151">59.24*</text>
+<text class="ch-lbl" x="124" y="174" text-anchor="end">FLUX.1-dev</text><rect class="bar-o" x="132" y="163" width="94.3" height="15" rx="3"/><text class="ch-val" x="231.3" y="175">49.65*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="184"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 188" role="img" aria-label="GenEval（0–100）">
+<text class="ch-t" x="0" y="15">GenEval（0–100）</text><text class="ch-src" x="0" y="30">表 2 · 组合对齐</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="160"/><text class="ch-ax" x="132.0" y="174" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="160"/><text class="ch-ax" x="179.5" y="174" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="160"/><text class="ch-ax" x="227.0" y="174" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="160"/><text class="ch-ax" x="274.5" y="174" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="160"/><text class="ch-ax" x="322.0" y="174" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">Qwen-Image 2507</text><rect class="bar-o" x="132" y="43" width="165.3" height="15" rx="3"/><text class="ch-val" x="302.3" y="55">87.00*</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="67" width="160.4" height="15" rx="3"/><text class="ch-val" x="297.4" y="79">84.44</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">Gemini 2.5 Flash Img</text><rect class="bar-o" x="132" y="91" width="151.4" height="15" rx="3"/><text class="ch-val" x="288.4" y="103">79.67</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">Emu-3.5</text><rect class="bar-o" x="132" y="115" width="138.1" height="15" rx="3"/><text class="ch-val" x="275.1" y="127">72.67</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">FLUX.1-dev</text><rect class="bar-o" x="132" y="139" width="125.4" height="15" rx="3"/><text class="ch-val" x="262.4" y="151">66.00*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="160"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 212" role="img" aria-label="MathVision（0–80）">
+<text class="ch-t" x="0" y="15">MathVision（0–80）</text><text class="ch-src" x="0" y="30">表 1 · 视觉数学</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="184"/><text class="ch-ax" x="132.0" y="198" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="184"/><text class="ch-ax" x="179.5" y="198" text-anchor="middle">20</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="184"/><text class="ch-ax" x="227.0" y="198" text-anchor="middle">40</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="184"/><text class="ch-ax" x="274.5" y="198" text-anchor="middle">60</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="184"/><text class="ch-ax" x="322.0" y="198" text-anchor="middle">80</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="43" width="153.7" height="15" rx="3"/><text class="ch-val" x="290.7" y="55">64.7</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">Gemini2.5-Flash-Lite</text><rect class="bar-o" x="132" y="67" width="147.0" height="15" rx="3"/><text class="ch-val" x="284.0" y="79">61.9</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">Qwen3-VL-A3B</text><rect class="bar-o" x="132" y="91" width="143.0" height="15" rx="3"/><text class="ch-val" x="280.0" y="103">60.2*</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">Qwen3-Omni-A3B</text><rect class="bar-o" x="132" y="115" width="133.7" height="15" rx="3"/><text class="ch-val" x="270.7" y="127">56.3*</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">InternVL3.5-A3B-Flash</text><rect class="bar-o" x="132" y="139" width="132.3" height="15" rx="3"/><text class="ch-val" x="269.3" y="151">55.7*</text>
+<text class="ch-lbl" x="124" y="174" text-anchor="end">GPT5-minimal</text><rect class="bar-o" x="132" y="163" width="108.8" height="15" rx="3"/><text class="ch-val" x="245.8" y="175">45.8*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="184"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 212" role="img" aria-label="OmniDocBench-zh 编辑距离（↓ 越低越好）">
+<text class="ch-t" x="0" y="15">OmniDocBench-zh 编辑距离（↓ 越低越好）</text><text class="ch-src" x="0" y="30">表 1 · 文档解析</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="184"/><text class="ch-ax" x="132.0" y="198" text-anchor="middle">0</text>
+<line class="grid-l" x1="170.0" y1="36" x2="170.0" y2="184"/><text class="ch-ax" x="170.0" y="198" text-anchor="middle">0.1</text>
+<line class="grid-l" x1="208.0" y1="36" x2="208.0" y2="184"/><text class="ch-ax" x="208.0" y="198" text-anchor="middle">0.2</text>
+<line class="grid-l" x1="246.0" y1="36" x2="246.0" y2="184"/><text class="ch-ax" x="246.0" y="198" text-anchor="middle">0.3</text>
+<line class="grid-l" x1="284.0" y1="36" x2="284.0" y2="184"/><text class="ch-ax" x="284.0" y="198" text-anchor="middle">0.4</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="184"/><text class="ch-ax" x="322.0" y="198" text-anchor="middle">0.5</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="43" width="85.9" height="15" rx="3"/><text class="ch-val" x="222.9" y="55">0.226</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">Qwen3-VL-A3B</text><rect class="bar-o" x="132" y="67" width="96.1" height="15" rx="3"/><text class="ch-val" x="233.1" y="79">0.253*</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">Gemini2.5-Flash-Lite</text><rect class="bar-o" x="132" y="91" width="118.6" height="15" rx="3"/><text class="ch-val" x="255.6" y="103">0.312</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">InternVL3.5-A3B-Flash</text><rect class="bar-o" x="132" y="115" width="136.4" height="15" rx="3"/><text class="ch-val" x="273.4" y="127">0.359</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">GPT5-minimal</text><rect class="bar-o" x="132" y="139" width="147.8" height="15" rx="3"/><text class="ch-val" x="284.8" y="151">0.389*</text>
+<text class="ch-lbl" x="124" y="174" text-anchor="end">Qwen3-Omni-A3B</text><rect class="bar-o" x="132" y="163" width="154.3" height="15" rx="3"/><text class="ch-val" x="291.3" y="175">0.406</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="184"/></svg></div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 360 212" role="img" aria-label="OCRBench（0–100）">
+<text class="ch-t" x="0" y="15">OCRBench（0–100）</text><text class="ch-src" x="0" y="30">表 1 · 这里 LongCat-Next 不是第一</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="184"/><text class="ch-ax" x="132.0" y="198" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="184"/><text class="ch-ax" x="179.5" y="198" text-anchor="middle">25</text>
+<line class="grid-l" x1="227.0" y1="36" x2="227.0" y2="184"/><text class="ch-ax" x="227.0" y="198" text-anchor="middle">50</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="184"/><text class="ch-ax" x="274.5" y="198" text-anchor="middle">75</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="184"/><text class="ch-ax" x="322.0" y="198" text-anchor="middle">100</text>
+<text class="ch-lbl" x="124" y="54" text-anchor="end">Qwen3-VL-A3B</text><rect class="bar-o" x="132" y="43" width="171.6" height="15" rx="3"/><text class="ch-val" x="308.6" y="55">90.3*</text>
+<text class="ch-lbl" x="124" y="78" text-anchor="end">InternVL3.5-A3B-Flash</text><rect class="bar-o" x="132" y="67" width="167.2" height="15" rx="3"/><text class="ch-val" x="304.2" y="79">88.0*</text>
+<text class="ch-lbl" x="124" y="102" text-anchor="end">LongCat-Next</text><rect class="bar-q" x="132" y="91" width="164.3" height="15" rx="3"/><text class="ch-val" x="301.4" y="103">86.5</text>
+<text class="ch-lbl" x="124" y="126" text-anchor="end">Qwen3-Omni-A3B</text><rect class="bar-o" x="132" y="115" width="162.3" height="15" rx="3"/><text class="ch-val" x="299.3" y="127">85.4*</text>
+<text class="ch-lbl" x="124" y="150" text-anchor="end">Gemini2.5-Flash-Lite</text><rect class="bar-o" x="132" y="139" width="161.1" height="15" rx="3"/><text class="ch-val" x="298.1" y="151">84.8</text>
+<text class="ch-lbl" x="124" y="174" text-anchor="end">GPT5-minimal</text><rect class="bar-o" x="132" y="163" width="149.5" height="15" rx="3"/><text class="ch-val" x="286.5" y="175">78.7*</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="184"/></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">LongCat-Next</span><span class="l3">其他模型</span><span style="margin-left:auto">数值后的 * = 原表标注「取自公开报告」</span></div>
+
+  <h3>理解：关键对比 <span class="src">表 1</span></h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>Benchmark</th><th class="q">LongCat-Next</th><th>Qwen3-Omni-A3B</th><th>Qwen3-VL-A3B</th><th>InternVL3.5-A3B-Flash</th><th>Gemini2.5-Flash-Lite</th></tr></thead>
+    <tbody>
+      <tr><td>MMMU<sub>val</sub></td><td class="q">70.6</td><td>69.1<sup>*</sup></td><td>74.2<sup>*</sup></td><td class="best">75.6<sup>*</sup></td><td>74.9</td></tr>
+      <tr><td>MathVista<sub>mini</sub></td><td class="q best">83.1</td><td>75.9<sup>*</sup></td><td>80.1<sup>*</sup></td><td>80.9<sup>*</sup></td><td>78.2</td></tr>
+      <tr><td>MathVision</td><td class="q best">64.7</td><td>56.3<sup>*</sup></td><td>60.2<sup>*</sup></td><td>55.7<sup>*</sup></td><td>61.9</td></tr>
+      <tr><td>OmniDocBench<sub>zh</sub> ↓</td><td class="q best">0.226</td><td>0.406</td><td>0.253<sup>*</sup></td><td>0.359</td><td>0.312</td></tr>
+      <tr><td>CharXiv<sub>RQ</sub></td><td class="q best">60.1</td><td>42.8</td><td>48.9<sup>*</sup></td><td>48.0<sup>*</sup></td><td>60.0</td></tr>
+      <tr><td>OCRBench</td><td class="q">86.5</td><td>85.4<sup>*</sup></td><td class="best">90.3<sup>*</sup></td><td>88.0<sup>*</sup></td><td>84.8</td></tr>
+      <tr><td>OCRBenchV2<sub>en</sub></td><td class="q">58.5</td><td>62.0</td><td class="best">63.2<sup>*</sup></td><td>47.0</td><td>51.5</td></tr>
+      <tr><td>MMStar</td><td class="q">69.3</td><td>68.5<sup>*</sup></td><td>72.1</td><td>72.0</td><td class="best">74.93</td></tr>
+      <tr><td>ScreenSpot-V2</td><td class="q">88.3</td><td class="best">91.8</td><td>87.7</td><td>87.3<sup>*</sup></td><td>–</td></tr>
+    </tbody></table></div>
+  <div class="keybox"><span class="k-q">LongCat-Next 列</span><span class="k-best">本页按数值重判的行内最好（含 GPT5-minimal 列时可能不同，见完整表）</span></div>
+
+  <details class="more wide"><summary>完整表 1：视觉理解 20 项<span class="hint">含 GPT5-minimal</span></summary><div class="body">
+    <div class="tbl-wrap tall"><table>
+      <thead><tr><th>Benchmark</th><th class="q">LongCat-Next</th><th>Qwen3-Omni-A3B</th><th>GPT5-minimal</th><th>Gemini2.5-Flash-Lite</th><th>InternVL3.5-A3B-Flash</th><th>Qwen3-VL-A3B</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">STEM &amp; Reasoning</td></tr>
+        <tr><td>MMMU-Pro</td><td class="q">60.3</td><td>57.0<sup>*</sup></td><td>62.7<sup>*</sup></td><td>64.1</td><td>–</td><td>60.4<sup>*</sup></td></tr>
+        <tr><td>MMMU<sub>val</sub></td><td class="q">70.6</td><td>69.1<sup>*</sup></td><td>74.4<sup>*</sup></td><td>74.9</td><td>75.6<sup>*</sup></td><td>74.2<sup>*</sup></td></tr>
+        <tr><td>MathVista<sub>mini</sub></td><td class="q">83.1</td><td>75.9<sup>*</sup></td><td>50.9<sup>*</sup></td><td>78.2</td><td>80.9<sup>*</sup></td><td>80.1<sup>*</sup></td></tr>
+        <tr><td>MathVision</td><td class="q">64.7</td><td>56.3<sup>*</sup></td><td>45.8<sup>*</sup></td><td>61.9</td><td>55.7<sup>*</sup></td><td>60.2<sup>*</sup></td></tr>
+        <tr><td>VisuLogic</td><td class="q">29.4</td><td>20.0</td><td>–</td><td>26.1</td><td>28.4</td><td>23.0<sup>*</sup></td></tr>
+        <tr><td>BabyVision</td><td class="q">14.4</td><td>11.9</td><td>–</td><td>19.6</td><td>11.3</td><td>16.0</td></tr>
+        <tr class="grp"><td colspan="7">OCR &amp; Doc &amp; Chart</td></tr>
+        <tr><td>OmniDocBench<sub>en</sub> ↓</td><td class="q">0.152</td><td>0.289</td><td>0.174<sup>*</sup></td><td>0.240</td><td>0.246</td><td>0.183<sup>*</sup></td></tr>
+        <tr><td>OmniDocBench<sub>zh</sub> ↓</td><td class="q">0.226</td><td>0.406</td><td>0.389<sup>*</sup></td><td>0.312</td><td>0.359</td><td>0.253<sup>*</sup></td></tr>
+        <tr><td>CharXiv<sub>DQ</sub></td><td class="q">89.9</td><td>78.8</td><td>79.5<sup>*</sup></td><td>91.2</td><td>81.8<sup>*</sup></td><td>85.5<sup>*</sup></td></tr>
+        <tr><td>CharXiv<sub>RQ</sub></td><td class="q">60.1</td><td>42.8</td><td>57.8<sup>*</sup></td><td>60.0</td><td>48.0<sup>*</sup></td><td>48.9<sup>*</sup></td></tr>
+        <tr><td>ChartQA</td><td class="q">88.0</td><td>86.8<sup>*</sup></td><td>59.1<sup>*</sup></td><td>79.0</td><td>87.4<sup>*</sup></td><td>86.8<sup>*</sup></td></tr>
+        <tr><td>InfoVQA<sub>test</sub></td><td class="q">83.3</td><td>84.4</td><td>69.9<sup>*</sup></td><td>82.2</td><td>81.4<sup>*</sup></td><td>81.8<sup>*</sup></td></tr>
+        <tr><td>DocVQA<sub>test</sub></td><td class="q">94.2</td><td>94.1</td><td>89.6<sup>*</sup></td><td>91.8</td><td>94.2<sup>*</sup></td><td>95.0<sup>*</sup></td></tr>
+        <tr><td>OCRBench</td><td class="q">86.5</td><td>85.4<sup>*</sup></td><td>78.7<sup>*</sup></td><td>84.8</td><td>88.0<sup>*</sup></td><td>90.3<sup>*</sup></td></tr>
+        <tr><td>OCRBenchV2<sub>en</sub></td><td class="q">58.5</td><td>62.0</td><td>48.2<sup>*</sup></td><td>51.5</td><td>47.0</td><td>63.2<sup>*</sup></td></tr>
+        <tr><td>OCRBenchV2<sub>zh</sub></td><td class="q">59.3</td><td>60.5</td><td>37.7<sup>*</sup></td><td>39.5</td><td>48.2</td><td>57.8<sup>*</sup></td></tr>
+        <tr class="grp"><td colspan="7">Agent</td></tr>
+        <tr><td>OSWorld-G</td><td class="q">58.3</td><td>60.3</td><td>–</td><td>–</td><td>42.4<sup>*</sup></td><td>60.5<sup>*</sup></td></tr>
+        <tr><td>ScreenSpot-V2</td><td class="q">88.3</td><td>91.8</td><td>–</td><td>–</td><td>87.3<sup>*</sup></td><td>87.7</td></tr>
+        <tr class="grp"><td colspan="7">General</td></tr>
+        <tr><td>MMStar</td><td class="q">69.3</td><td>68.5<sup>*</sup></td><td>65.2<sup>*</sup></td><td>74.93</td><td>72.0</td><td>72.1</td></tr>
+        <tr><td>RealWorldQA</td><td class="q">72.0</td><td>72.9</td><td>77.3<sup>*</sup></td><td>70.5</td><td>72.3</td><td>73.7</td></tr>
+        <tr><td>CountBench</td><td class="q">82.1</td><td>83.8</td><td>87.8<sup>*</sup></td><td>90.0</td><td>84.2</td><td>90.6</td></tr>
+      </tbody></table></div>
+    <p class="tbl-note">* = 取自公开报告（原表注）。MMStar 行 Qwen3-Omni 的 * 由纯文本中上标位置判断。正文写 CountBench 82.5、OCRBench 865，与表中 82.1、86.5 不一致或量纲不同。</p>
+  </div></details>
+
+  <h3>文生图：对专用模型 <span class="src">表 2</span></h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>Model</th><th>GenEval</th><th>DPG</th><th>LongText-EN</th><th>LongText-ZH</th><th>WISE</th><th>TIFF</th><th>CVTG</th></tr></thead>
+    <tbody>
+      <tr><td>Emu-3.5</td><td>72.67</td><td>89.42<sup>*</sup></td><td class="best">97.60<sup>*</sup></td><td>92.80<sup>*</sup></td><td>57.64</td><td>89.48 / 88.18<sup>*</sup></td><td class="best">91.23<sup>*</sup></td></tr>
+      <tr><td>Qwen-Image 2507</td><td class="best">87.00<sup>*</sup></td><td>88.32<sup>*</sup></td><td>94.30<sup>*</sup></td><td class="best">94.60<sup>*</sup></td><td>63.00<sup>*</sup></td><td>86.10<sup>*</sup> / 86.80<sup>*</sup></td><td>82.88<sup>*</sup></td></tr>
+      <tr><td>Gemini 2.5 Flash Image</td><td>79.67</td><td>85.82</td><td>86.04</td><td>-</td><td class="best">76.27</td><td class="best">90.53 / 90.80</td><td>73.64<sup>*</sup></td></tr>
+      <tr><td>FLUX.1-dev</td><td>66.00<sup>*</sup></td><td>84.00<sup>*</sup></td><td>60.70<sup>*</sup></td><td>0.50<sup>*</sup></td><td>50.00<sup>*</sup></td><td>71.10 / 71.80<sup>*</sup></td><td>49.65<sup>*</sup></td></tr>
+      <tr><td>Seeddream 3.0</td><td>-</td><td class="best">94.31<sup>*</sup></td><td>89.60<sup>*</sup></td><td>87.80<sup>*</sup></td><td>-</td><td>86.02 / 84.31<sup>*</sup></td><td>59.24<sup>*</sup></td></tr>
+      <tr class="hl"><td>LongCat-Next</td><td>84.44</td><td>84.66</td><td>93.15</td><td>89.08</td><td>57.00</td><td>82.85 / 84.38</td><td>76.36</td></tr>
+    </tbody></table></div>
+  <p class="tbl-note">* = 取自公开报告（原表注）。● 为本页按数值重判的列内最好。原文称「在 GenEval 与 LongText 上追平或超过更大的模型」，实际 GenEval 低于 Qwen-Image 2507、LongText-EN 低于 Emu-3.5 与 Qwen-Image；对 FLUX.1-dev 则全面领先。</p>
+
+  <details class="more wide"><summary>表 3：统一模型对比（节选）<span class="hint">原表注「All results are from public reports」</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Model</th><th>MMMU</th><th>MathVista</th><th>OCRBench</th><th>DocVQA</th><th>MMStar</th><th>GenEval</th><th>DPG</th><th>LT-EN / ZH</th><th>WISE</th><th>CVTG</th></tr></thead>
+      <tbody>
+        <tr><td>Janus-Pro</td><td>41.0</td><td>–</td><td>–</td><td>–</td><td>–</td><td>80</td><td>84.19</td><td>1.90 / 0.60</td><td>35</td><td>–</td></tr>
+        <tr><td>BAGEL</td><td>55.3</td><td>73.1</td><td>80.9</td><td>92.2</td><td>69.3</td><td>82</td><td>85.07</td><td colspan="2">纯文本列错位，略</td><td>35.60</td></tr>
+        <tr><td>NEO-unify</td><td>68.9</td><td>–</td><td>81.5</td><td>91.6</td><td>65.5</td><td>85</td><td>86.71</td><td>91.40 / 75.50</td><td>42</td><td>–</td></tr>
+        <tr><td>Ovis-U1</td><td>51.1</td><td>69.4</td><td>88.3</td><td>–</td><td>–</td><td>89</td><td>83.72</td><td>3.00 / 5.10</td><td>42</td><td>9.30</td></tr>
+        <tr><td>X-Omni</td><td>–</td><td>–</td><td>70.4</td><td>–</td><td>–</td><td>83</td><td>87.65</td><td>90.00 / 81.40</td><td>–</td><td>–</td></tr>
+        <tr><td>InternVL-U</td><td>54.7</td><td>–</td><td>83.9</td><td>–</td><td>–</td><td>85</td><td>85.18</td><td>73.80 / 86.00</td><td>46</td><td>62.30</td></tr>
+        <tr><td>BLIP3-o</td><td>50.6</td><td>–</td><td>–</td><td>–</td><td>–</td><td>84</td><td>81.60</td><td>– / –</td><td>62</td><td>–</td></tr>
+        <tr class="hl"><td>LongCat-Next</td><td>70.6</td><td>83.1</td><td>86.5</td><td>94.2</td><td>69.3</td><td>84</td><td>84.66</td><td>93.15 / 89.08</td><td>57</td><td>76.36</td></tr>
+      </tbody></table></div>
+    <p class="tbl-note">节选 8 / 14 行。GenEval 上 OneCAT（90）、Mogao（89）、Ovis-U1（89）、Lumina（88）高于 LongCat-Next 的 84；DPG 上 LongCat-Next 84.66 处于中游。它的优势集中在理解列与长文字渲染（LT、CVTG）。</p>
+  </div></details>
+
+  <details class="more wide"><summary>表 4：音频（节选）<span class="hint">ASR / TTS 为 WER ↓</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Benchmark</th><th class="q">LongCat-Next</th><th>Gemini-3.1-Flash-Lite-preview</th><th>Qwen3-Omni-A3B</th><th>MiMo-Audio</th><th>Kimi-Audio</th><th>Step-Audio-2-mini</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">ASR ↓</td></tr>
+        <tr><td>LibriSpeech test-clean</td><td class="q">1.63</td><td>2.38</td><td>1.22<sup>*</sup></td><td>2.47</td><td>1.28<sup>*</sup></td><td>1.33<sup>*</sup></td></tr>
+        <tr><td>AISHELL-1</td><td class="q">1.47</td><td>6.00</td><td>0.84<sup>*</sup></td><td>1.69</td><td>0.60<sup>*</sup></td><td>0.78<sup>*</sup></td></tr>
+        <tr><td>WenetSpeech test-meeting</td><td class="q">8.19</td><td>20.37</td><td>5.89<sup>*</sup></td><td>9.49</td><td>6.28<sup>*</sup></td><td>4.87<sup>*</sup></td></tr>
+        <tr class="grp"><td colspan="7">TTS ↓</td></tr>
+        <tr><td>SeedTTS<sub>zh</sub></td><td class="q">1.90</td><td>-</td><td>1.07<sup>*</sup></td><td>1.96<sup>*</sup></td><td>13.46</td><td>2.13<sup>*</sup></td></tr>
+        <tr><td>SeedTTS<sub>en</sub></td><td class="q">1.89</td><td>-</td><td>1.39<sup>*</sup></td><td>5.37<sup>*</sup></td><td>29.45</td><td>3.18<sup>*</sup></td></tr>
+        <tr class="grp"><td colspan="7">Audio Understanding ↑</td></tr>
+        <tr><td>MMAU</td><td class="q">76.40</td><td>71.70</td><td>78.20</td><td>75.80</td><td>70.31</td><td>71.30</td></tr>
+        <tr><td>TUT2017</td><td class="q">43.09</td><td>23.15</td><td>40.74<sup>*</sup></td><td>15.06</td><td>65.25<sup>*</sup></td><td>30.67<sup>*</sup></td></tr>
+        <tr class="grp"><td colspan="7">Audio-to-Text Chat ↑</td></tr>
+        <tr><td>ReasoningQA</td><td class="q">87.52</td><td>65.64</td><td>87.62</td><td>75.34</td><td>68.61</td><td>63.86</td></tr>
+        <tr><td>AlpacaEval</td><td class="q">86.83</td><td>62.56</td><td>90.10</td><td>85.67</td><td>78.74</td><td>53.06</td></tr>
+      </tbody></table></div>
+    <p class="tbl-note">* = 取自公开报告。评测用 Kimi-Audio-Evalkit，音频 QA 以 gpt-4o-2024-08-06 作裁判；MMAU 用 v05.15.25 test-mini<span class="src">§3.1.3</span>。ASR/TTS 上 Qwen3-Omni（引用值）多数更低；LongCat-Next 明显优于自测的 Gemini 与 MiMo-Audio。</p>
+  </div></details>
+
+  <details class="more wide"><summary>表 5：纯文本能力<span class="hint">对比 Kimi-Linear、Qwen3-Next、Qwen3-Omni</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Benchmark</th><th class="q">LongCat-Next</th><th>Kimi-Linear-48B-A3B</th><th>Qwen3-Next-80B-A3B-Instruct</th><th>Qwen3-Omni-A3B-Instruct</th></tr></thead>
+      <tbody>
+        <tr><td>Tau2-Airline (avg@8)</td><td class="q">56.50</td><td>44.00</td><td>45.5<sup>*</sup></td><td>27.00</td></tr>
+        <tr><td>Tau2-Retail (avg@8)</td><td class="q">73.68</td><td>18.86</td><td>57.3<sup>*</sup></td><td>40.80</td></tr>
+        <tr><td>Tau2-Telecom (avg@8)</td><td class="q">62.06</td><td>15.68</td><td>13.2<sup>*</sup></td><td>4.39</td></tr>
+        <tr><td>SWE-Bench (acc)</td><td class="q">43.00</td><td>32.80</td><td>37.60</td><td>-</td></tr>
+        <tr><td>TerminalBench (acc)</td><td class="q">18.75</td><td>20.00</td><td>15.19</td><td>-</td></tr>
+        <tr><td>MMLU (acc)</td><td class="q">83.95</td><td>79.91</td><td>89.28</td><td>87.10</td></tr>
+        <tr><td>MMLU-Pro (acc)</td><td class="q">77.02</td><td>67.22</td><td>82.93</td><td>79.89</td></tr>
+        <tr><td>CMMLU (acc)</td><td class="q">82.13</td><td>76.26</td><td>86.50</td><td>85.76</td></tr>
+      </tbody></table></div>
+    <p class="tbl-note">τ²-Bench 用的是作者所称「降噪修订版」（AGI-Eval tau2-bench-revised）<span class="src">§3.1.4 脚注</span>。知识类（MMLU 等）低于 Qwen3-Next 与 Qwen3-Omni。表中未列纯文本前代（LongCat-Flash-Lite）对比，「无多模态税」缺直接证据。</p>
+  </div></details>
+
+  <h3>方法分析：离散 vs 连续、理解 vs 生成 <span class="src">§3.2</span></h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>Exp</th><th>I</th><th>II</th><th>III</th><th>IV</th><th>V</th><th>VI</th><th>VII</th></tr></thead>
+    <tbody>
+      <tr><td>表征</td><td>连续</td><td>离散</td><td>连续</td><td>离散</td><td>离散</td><td>连续</td><td>离散</td></tr>
+      <tr><td>PT / MT&amp;SFT token</td><td>0.1B / 4B</td><td>0.1B / 4B</td><td>5B / 4B</td><td>5B / 4B</td><td>5B / 4B</td><td>5B / 300B</td><td>5B / 300B</td></tr>
+      <tr><td>Pre-Buffer</td><td>-</td><td>✓</td><td>-</td><td>✓</td><td>✗</td><td>-</td><td>✓</td></tr>
+      <tr><td>OCRBench</td><td>779</td><td>598</td><td>776</td><td>720</td><td>705</td><td>858</td><td>844</td></tr>
+      <tr><td>DocVQA</td><td>88.2</td><td>78.0</td><td>88.9</td><td>86.7</td><td>85.2</td><td>96.0</td><td>96.0</td></tr>
+      <tr><td>MMMU<sub>val</sub></td><td>49.8</td><td>44.8</td><td>49.1</td><td>48.0</td><td>49.8</td><td>58.0</td><td>60.0</td></tr>
+      <tr><td>MathVista</td><td>59.6</td><td>47.3</td><td>56.1</td><td>54.2</td><td>56.7</td><td>75.0</td><td>74.0</td></tr>
+    </tbody></table></div>
+  <p class="tbl-note">来源：图 9 右表（Qwen-7B 降配设置）。少数据时离散明显落后（I vs II：OCRBench 779 vs 598），放大到 300B 后基本持平（VI vs VII）。注意 V（无 Pre-Buffer）在 MMMU、MathVista 上反而高于 IV（有 Pre-Buffer）。</p>
+  <p class="prose"><b>理解与生成冲突：</b>同一 checkpoint，纯理解、纯生成各 100B token，统一模型 50B+50B（1:1）；按比例缩放 loss 曲线后，统一模型比纯理解只差 0.006，比纯生成低 0.02，作者据此称「生成不伤理解，理解帮助生成」<span class="src">§3.2.3</span>。只有 loss，没有下游指标。<b>语音并行 vs 串行：</b>LlamaQuestions 79.33 vs 81.67，ReasoningQA 74.95 vs 80.30<span class="src">§3.2.4</span>。</p>
+</section>
+
+<!-- 07 新在哪 -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>用 VLM 的 ViT 当量化前空间，并在 A3B 规模上让离散理解对齐连续 VLM</h4><p>不训 VQ-VAE，直接对 Qwen2.5-ViT 特征做 8 级 RVQ，训练只用语义特征重建，不用像素重建<span class="src">§2.2.3</span>；理解端在表 1 多项超过 Qwen3-VL-A3B<span class="src">表 1</span>。</p><p class="why">可核对：图 9 的离散 / 连续对照、表 1。</p></div>
+    <div class="card nv"><h4>「多级求和进、DepthTransformer 出」同时用于图像理解与生成</h4><p>一个视觉位置只占一个自回归步，8 级码在输入端相加、输出端并行解码<span class="src">§9.4</span>。这一套在语音 RVQ 模型里常见，本文把它搬到视觉并共用一个码本做理解和生成。</p><p class="why">可核对：§2.5、图 20。</p></div>
+    <div class="card nv"><h4>「残差连接自带重建通路」的观察</h4><p>冻结编码器 + 轻量解码器的重建实验里，随机初始化 ViT 的 PSNR（30.52）高于预训练 ViT（21.86）<span class="src">表 6</span>，用来解释为何语义编码器的离散 token 仍可还原图像。</p><p class="why">是观察与解释，不是方法；样本量和数据集原文未说明。</p></div>
+    <div class="card nv"><h4>按 RVQ 层级加权的 GRPO + 序列级训推差过滤</h4><p>离散视觉 token 直接当动作，GRPO 损失按级加权<span class="src">式 10</span>；理解 RL 用熵离群与单 token 训推概率差两道硬掩码整条丢序列<span class="src">式 11</span>。</p><p class="why">只在 Qwen-7B 上验证<span class="src">§9.2</span>。</p></div>
+    <div class="card nv"><h4>随机延迟统一串行 / 并行的文本引导语音</h4><p>每个对齐的文本-音频段，延迟从 1 到文本段长随机取，串行与并行是两个极端<span class="src">§2.5.3</span>。</p><p class="why">可核对：§3.2.4 的并行 / 串行对比。</p></div>
+  </div>
+</section>
+
+<!-- 08 启示 -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING DATA / EVAL / CAPTION</div>
+    <h2 style="margin-top:8px">对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">LongCat-Next <b>没有做图像编辑，也没有编辑评测</b>；作者把 any-to-any、交错生成列为未来工作<span class="src">§6.2</span>。以下每条先写论文做法，再给一条可迁移做法——<b>橙色「迁移建议」是本页观点，不是论文内容</b>。</p>
+
+    <div class="impl-group">Caption</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>结构化 caption + OCR 锚定</h4>
+        <p class="paper">生成数据用 Qwen3-VL-8B 重写成三段结构：overview、细节属性、tags；文字密集图把 PaddleOCR 结果并入 caption<span class="src">§4.3.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑对的 src / tgt 都按同一三段 schema 出 caption，再对两份做字段级 diff 当「变化描述」的候选；涉及文字的编辑，指令中的目标字符串必须能在 tgt 的 OCR 结果里找到，否则丢弃。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>多模型重写 + 相似度阈值剔错配</h4>
+        <p class="paper">理解侧 caption 用「多个开源 LVLM」重写稀疏标签，再用 SigLIP 相似度阈值剔除错配对<span class="src">§4.2.1</span>；SFT 阶段按「知识密度」给 caption 打分<span class="src">§4.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令 / 变化描述用两个以上 VLM 各写一版，只保留语义一致的；对 tgt caption 与 tgt 图算图文相似度，低于阈值的说明 caption 描述的不是实际结果。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>OOV 文字组合压语言先验</h4>
+        <p class="paper">场景文字数据刻意加入词表外文字组合，减少模型靠语言先验「猜字」与幻觉<span class="src">§4.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字替换类编辑数据里混入无意义串、生僻词、混排数字，评测集也单列 OOV 子集，区分「真照着指令写字」和「写常见词」。</p></div>
+    </div>
+
+    <div class="impl-group">数据过滤与配比</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>语义聚类 + 幂律重平衡，防「AI 风」同质化</h4>
+        <p class="paper">SigLIP2 + FAISS K-Means 切数百万簇，簇内激进去重，簇间幂律加权抬稀疏簇；作者明确指出过度审美过滤会把模型推向同质「AI 风」<span class="src">§4.3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按「源图语义簇 × 编辑类型」二维计数，对二者都做重平衡；不要只用审美分把 src 筛成棚拍大片，否则真实手机照片上的编辑会退化。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>SFT 取簇质心附近的最佳样本</h4>
+        <p class="paper">SFT 集一部分来自中期训练的语义簇，每簇取质心附近质量最高的代表<span class="src">§4.3.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 SFT / 精标池按簇各取 top-k，用簇覆盖率代替「总条数」作为精标集的规模指标。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>AIGC 过滤要分清 src 和 tgt</h4>
+        <p class="paper">预训练生成数据用水印检测（Qwen3-VL-8B）和 AIGC 过滤剔除合成或损坏样本<span class="src">§4.3.1</span>；同时 tokenizer 训练又专门加入 MidJourney 等高保真合成图<span class="src">§4.1.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑对的 tgt 多半本就是合成，AIGC 检测只该作用在 src 上；tgt 改查「非编辑区是否被重绘」，可用 src/tgt 掩码外区域的像素 / 感知差。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>每个来源设最低保留比例</h4>
+        <p class="paper">过滤后为每个数据源设最低保留比例，防止过度过滤丢掉专项能力；难度用多次 rollout 的正确率量化<span class="src">§4.2.2</span>；音频侧保留中频说话人簇、压制过度代表的合成音色<span class="src">§4.4.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每类编辑（换背景、改文字、去物体、调光…）设下限配额；指令模板做聚类，压制高频模板，避免模型只会某几种说法。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>OCR 编辑距离 + 文本长度分桶</h4>
+        <p class="paper">文生图 RL 的 OCR 奖励用 GOT-OCR 2.0 识别渲染文字，以编辑距离评分；prompt 含 2–20 段文字，按长度分桶采样<span class="src">§6.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑评测按「待改字符数」分桶报告 OCR 编辑距离，并单独统计非目标文字是否被误改。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>多维奖励互相牵制防 hacking</h4>
+        <p class="paper">四类奖励：检测式数量 / 颜色 / 位置 / 属性、OCR、VLM 语义对齐、HPS + Aesthetic + UnifiedReward，作者称组合可缓解单奖励的 reward hacking<span class="src">§6.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测至少拆成指令遵循、非编辑区保持、画质三轴分别报告；保持轴用确定性指标（掩码外差值），别全交给 VLM 打分。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>评测前做 pHash + N-gram 去污染</h4>
+        <p class="paper">训练数据与公开基准做图像 pHash、文本 N-gram 比对去污染<span class="src">§4.2.2</span>；RL 数据按图像哈希 + prompt 去重，并去掉 4 次 rollout 全对 / 全错的题<span class="src">§9.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑训练池对 GEdit / ImgEdit 等评测集源图做 pHash 去污染；编辑 RL 选题时丢掉多次采样奖励方差为 0 的 prompt。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>自测与引用分开标</h4>
+        <p class="paper">表 1/2/4/5 用 * 区分「公开报告值」与自测值<span class="src">表注</span>，但两者仍混在同一表里比大小。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>内部编辑评测表强制标注每个数的来源与裁判模型版本；排名只在同一评测管线的数之间做。</p></div>
+    </div>
+    <p class="footnote" style="margin-top:14px">另一个间接信号：作者说当前 de-tokenizer「侧重语义一致而非像素保真」<span class="src">§6.2</span><span class="src">§9.6</span>。对需要像素级保持非编辑区的编辑任务，纯离散 28× 压缩路线能否胜任，本文没有证据。</p>
+  </div>
+</section>
+
+<!-- 09 局限 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>数据配比未披露。</b>文本 / 理解 / 生成 / 音频在约 2T token 中的比例、四个阶段各自的 token 数都没给；只有音频任务格式（表 8）和 OCR、STEM 内部来源比例。</li>
+    <li class="key"><b>dNaViT 重建质量没有定量指标。</b>表 6 只比了连续编码器的重建；dNaViT 本身只有图 25 的定性图和图 19 的特征重建损失，作者也承认 de-tokenizer 不追求像素保真<span class="src">§6.2</span>。</li>
+    <li><b>RL 证据不在最终模型上。</b>RL 实验用 Qwen-7B 骨干<span class="src">§9.2</span>，发布模型是否做过 RL 未说明；表 9 中 OmniDocBench-en 0.256→0.266 变差、GenEval single_obj 100.00→99.69，正文仍称「全面提升」。</li>
+    <li><b>消融多在降配设置。</b>离散 vs 连续、Pre-Buffer 等用 Qwen-7B<span class="src">§3.2</span>；图 9 里无 Pre-Buffer 的 V 在 MMMU（49.8）、MathVista（56.7）反而高于有 Pre-Buffer 的 IV（48.0、54.2）。</li>
+    <li><b>理解 / 生成冲突只看 loss。</b>统一模型的 loss 曲线是按比例缩放后比较的，差值 0.006 / 0.02，没有下游指标<span class="src">§3.2.3</span>。</li>
+    <li><b>评测可比性。</b>自测基线与 * 引用值混排；表 3 注明「All results are from public reports」，却含 LongCat-Next 自身结果，且 GenEval 记为 84（表 2 为 84.44）。</li>
+    <li><b>正文与表格不一致。</b>CountBench 正文 82.5 vs 表 1 82.1；OCRBench 正文 865 vs 表 86.5（量纲不同）；§3.2.1 引用「Tab. 9」实指图 9 内表；§2.1 写「As illustrated in Fig. 3」实为图 2；§9.2「MathStar」疑为 MMStar；表 6 中 QwenViT（无 merger）PSNR 18.16 为四者最低，正文却称「comparable」。</li>
+    <li><b>「无多模态税」缺直接对照。</b>表 5 没有同骨干纯文本版本的数，知识类基准低于 Qwen3-Next 与 Qwen3-Omni。</li>
+    <li><b>高分辨率 / GUI 数据不足。</b>作者自述当前数据中高分辨率样本占比有限，GUI 与两个 A3B 基线持平而非领先<span class="src">§3.1.1</span>。</li>
+    <li><b>大量自有数据不可复现。</b>自有理解集、约 300M 生成图文对、合成 OCR / 语音均未公开；许可证原文未披露。</li>
+  </ul>
+</section>
+
+<!-- 10 图表索引 -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2>
+  <p class="sec-intro">本页嵌入了 3 张裁好的论文原图（图 1–3）；其余图表只做索引，页码按 v1 文本页标估计。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1 局部：四组柱状图，绿色柱为 LongCat-Next" loading="lazy"></div>
+    <figcaption><b>基准表现总览（局部）。</b>现有裁图只含四组柱状图、未带基准名，可辨数值 84.38 / 93.15 / 87.52 / 76.4（绿色柱为 LongCat-Next）；对应关系请看原文第 1 页。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+    <tbody>
+      <tr><td>图 1（p.1）</td><td>基准表现总览</td><td>本节（局部裁图）</td></tr>
+      <tr><td>图 2（p.5）</td><td>DiNA 总体架构</td><td>§03 架构（原图）</td></tr>
+      <tr><td>图 3（p.7）</td><td>dNaViT 任意分辨率 tokenize / de-tokenize</td><td>§03 架构（原图）</td></tr>
+      <tr><td>图 4（p.9）</td><td>tokenizer（语义 RVQ）与 de-tokenizer（像素重建）两阶段训练</td><td>§03、§05 文字</td></tr>
+      <tr><td>图 5 / 表 6（p.10 / 19）</td><td>不同冻结编码器的重建效果</td><td>§03 折叠区</td></tr>
+      <tr><td>图 6（p.11）</td><td>音频 tokenizer</td><td>§05 文字</td></tr>
+      <tr><td>图 7（p.12）</td><td>串行 / 并行文本引导语音生成</td><td>§03、§07 文字</td></tr>
+      <tr><td>图 8（p.14）</td><td>任意分辨率理解与生成样例</td><td>—</td></tr>
+      <tr><td>表 1（p.15）</td><td>视觉理解对比</td><td>§06（精选 + 完整）</td></tr>
+      <tr><td>表 2（p.15）</td><td>与专用文生图模型对比</td><td>§06 表 + 柱图</td></tr>
+      <tr><td>表 3（p.16）</td><td>与统一模型对比</td><td>§06 折叠区（节选）</td></tr>
+      <tr><td>表 4 / 表 5（p.17）</td><td>音频 / 纯文本</td><td>§06 折叠区</td></tr>
+      <tr><td>图 9（p.18）</td><td>离散 vs 连续：预对齐 loss 与下游表</td><td>§06 方法分析</td></tr>
+      <tr><td>图 10（p.19）</td><td>理解 / 生成交互的 loss 曲线</td><td>§06 文字</td></tr>
+      <tr><td>图 11（p.20）</td><td>模态无关 MoE 训练前后的专家分化</td><td>§03 折叠区</td></tr>
+      <tr><td>图 12（p.21）</td><td>Qwen2.5-VL / Qwen3.5 / LongCat-Next 的 t-SNE</td><td>§03 折叠区</td></tr>
+      <tr><td>图 13 / 表 7（p.22）</td><td>两阶段训练与四段配置</td><td>§05 流程</td></tr>
+      <tr><td>图 14（p.25）</td><td>生成数据三段式管线 + 图像类别分布</td><td>§04 管线</td></tr>
+      <tr><td>图 15 / 表 8（p.26–27）</td><td>音频数据管线与任务格式占比</td><td>§04 比例条</td></tr>
+      <tr><td>图 16（p.28）</td><td>V-Half 流水线并行</td><td>§05 折叠区</td></tr>
+      <tr><td>图 17（p.30）</td><td>RL 奖励曲线</td><td>—</td></tr>
+      <tr><td>图 18（p.38）</td><td>RL 训推不一致指标对比</td><td>§05 文字</td></tr>
+      <tr><td>表 9（p.39）</td><td>Qwen-7B 上 RL 前后理解与 GenEval</td><td>§05 RL</td></tr>
+      <tr><td>图 19（p.39）</td><td>VQ / 2 级 / 8 级 RVQ 的特征重建损失</td><td>§03 文字</td></tr>
+      <tr><td>图 20（p.39）</td><td>统一 tokenizer：多级求和输入 + DepthTransformer 输出</td><td>§03 示意图</td></tr>
+      <tr><td>图 21–24（p.40–43）</td><td>公式识别、结构化 OCR、逻辑题、几何题定性样例</td><td>—</td></tr>
+      <tr><td>图 25（p.43）</td><td>像素解码器 vs 加 refiner 的重建对比</td><td>§09 文字</td></tr>
+    </tbody></table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本文基于 <a href="https://arxiv.org/abs/2603.27538" target="_blank" rel="noopener">LongCat-Next: Lexicalizing Modalities as Discrete Tokens（arXiv:2603.27538）</a>，Meituan LongCat Team，v1 发布于 2026-03-29，本页依据 v1 全文核对。文中数字均来自原文，标注 <span class="src calc">推算</span> 的为本页自行计算；标为「迁移建议」的内容是本页观点，不是论文内容。论文图片版权归原作者所有，仅用于学习交流。
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

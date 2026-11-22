@@ -592,6 +592,54 @@
       "one_liner": "fully-open 的 7B/32B 家族（Base → Think / Instruct / RL-Zero）。Base 预训练最多约 5.9T token（Dolma 3 Mix；7B 满 1 epoch，32B 在 5.5T 截断）。架构相对 OLMo 2 改动不大：8K 预训练窗口、每 4 层中 3 层 SWA。数据、代码与中间 checkpoint 全部开放；许可证原文未披露。本页核对 v2（2026-04-14），含 Olmo 3.1。",
       "path": "reports/llm/olmo-3/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "keye-vl-2.0",
+      "title": "Keye-VL-2.0",
+      "subtitle": "Kwai Keye-VL-2.0 Technical Report",
+      "vendor": "Keye Team, Kuaishou Group",
+      "vendor_key": "kuaishou",
+      "category": "vlm",
+      "date": "2026-06-09",
+      "paper": "https://arxiv.org/abs/2606.10651",
+      "arxiv": "2606.10651",
+      "open_weights": true,
+      "params": "30B-A3B（激活 3B）",
+      "one_liner": "开源 MoE 30B-A3B（激活 3B）。作者称首次把 DeepSeek Sparse Attention（DSA）接到 GQA 多模态骨干：MQA 式 Lightning Indexer，k=2048，并宣称可无损处理 256K 上下文。后训练引入跨模态 Multi-Teacher On-Policy Distillation（MOPD）。主打 TimeLens 细粒度时序定位与 Video-MME-v2 / LongVideoBench 长视频理解。权重已发布（Hugging Face Kwai-Keye），许可证原文未披露。PDF 首页印 June 10, 2026，日期取 arXiv v1（2026-06-09）。",
+      "path": "reports/vlm/keye-vl-2.0/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "nemotron-3-nano-omni",
+      "title": "Nemotron 3 Nano Omni",
+      "subtitle": "Nemotron 3 Nano Omni: Efficient and Open Multimodal Intelligence",
+      "vendor": "NVIDIA",
+      "vendor_key": "nvidia",
+      "category": "vlm",
+      "date": "2026-04-27",
+      "paper": "https://arxiv.org/abs/2604.24954",
+      "arxiv": "2604.24954",
+      "open_weights": true,
+      "params": "30B-A3B MoE 混合底座",
+      "one_liner": "把 Nemotron Nano V2 VL 的 12B 稠密底座换成 Nemotron 3 Nano 30B-A3B MoE，接 C-RADIOv4-H 视觉编码器与 Parakeet-TDT-0.6B-v2 音频编码器，首次原生支持音频；上下文 128K → 256K。训练为图 2 中的 7 段（Vision/Omni SFT，含 projector warmup，合计 466.9B token）+ 5 段 RL。权重以 BF16 / FP8 / NVFP4 发布，并开放部分训练数据与代码；许可证原文未披露。本页依据 v2（2026-05-11；PDF 页眉 2026-5-12）。摘要一度写作 C-RADIOv4-H1，正文与 Hugging Face 均为 C-RADIOv4-H。",
+      "path": "reports/vlm/nemotron-3-nano-omni/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "longcat-next",
+      "title": "LongCat-Next",
+      "subtitle": "LongCat-Next: Lexicalizing Modalities as Discrete Tokens",
+      "vendor": "Meituan LongCat Team",
+      "vendor_key": "meituan",
+      "category": "vlm",
+      "date": "2026-03-29",
+      "paper": "https://arxiv.org/abs/2603.27538",
+      "arxiv": "2603.27538",
+      "open_weights": true,
+      "params": "68.5B / A3B（激活约 3B，范围 2.9B–4.5B）",
+      "one_liner": "DiNA 框架把图像、语音都当成离散 token：dNaViT（冻结的 Qwen2.5-ViT + 8 级残差向量量化）把任意分辨率图像变成离散 ID，再和文本、音频一起喂给 68.5B 总参、平均约 3B 激活（2.9B–4.5B）的 LongCat-Flash-Lite MoE，单一 next-token 目标同时做理解与生成。训练超过 2T token。模型与 tokenizer 已发布（Hugging Face / GitHub meituan-longcat/LongCat-Next），许可证原文未披露。",
+      "path": "reports/vlm/longcat-next/",
+      "added": "2026-11-22"
     }
   ]
 }

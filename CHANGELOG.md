@@ -41,4 +41,7 @@
   - [STEP3-VL-10B](./reports/vlm/step3-vl-10b/)（VLM）
   - [Seed2.0](./reports/llm/seed2.0/)（LLM · 模型卡）
   - [Olmo 3](./reports/llm/olmo-3/)（LLM）
-- 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。
+  - [Keye-VL-2.0](./reports/vlm/keye-vl-2.0/)（VLM）
+  - [Nemotron 3 Nano Omni](./reports/vlm/nemotron-3-nano-omni/)（VLM / Omni）
+  - [LongCat-Next](./reports/vlm/longcat-next/)（VLM · 统一多模态）
+- 后续批次将补上 4 篇短记（Gemini 3 Pro / GPT-5.5 / Claude Opus 5.5 系统卡，以及 FLUX.2 官方博客）。

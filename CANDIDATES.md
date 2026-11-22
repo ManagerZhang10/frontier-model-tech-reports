@@ -27,9 +27,9 @@
 | VLM | 2026-04 | Zhipu | GLM-5V-Turbo | [arXiv:2604.26752](https://arxiv.org/abs/2604.26752) | 已发布 |
 | VLM | 2026-01 | StepFun | STEP3-VL-10B | [arXiv:2601.09668](https://arxiv.org/abs/2601.09668) | 已发布 |
 | VLM | 2026-04 | Qwen | Qwen3.5-Omni | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) | 已发布 |
-| VLM | 2026-06 | Kuaishou | Keye-VL-2.0 | [arXiv:2606.10651](https://arxiv.org/abs/2606.10651) | 待写 |
-| VLM | 2026-04 | NVIDIA | Nemotron 3 Nano Omni | [arXiv:2604.24954](https://arxiv.org/abs/2604.24954) | 待写 |
-| VLM | 2026-03 | Meituan | LongCat-Next | [arXiv:2603.27538](https://arxiv.org/abs/2603.27538) | 待写 |
+| VLM | 2026-06 | Kuaishou | Keye-VL-2.0 | [arXiv:2606.10651](https://arxiv.org/abs/2606.10651) | 已发布 |
+| VLM | 2026-04 | NVIDIA | Nemotron 3 Nano Omni | [arXiv:2604.24954](https://arxiv.org/abs/2604.24954) | 已发布 |
+| VLM | 2026-03 | Meituan | LongCat-Next | [arXiv:2603.27538](https://arxiv.org/abs/2603.27538) | 已发布 |
 | VLM | 2026-11 | Kuaishou Kling | Behind Video Generation (multimodal understanding) | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) | 已发布 |
 | Image | 2025-11 | Alibaba Tongyi | Z-Image | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) | 已发布 |
 | Image | 2025-12 | Meituan | LongCat-Image | [arXiv:2512.07584](https://arxiv.org/abs/2512.07584) | 已发布 |

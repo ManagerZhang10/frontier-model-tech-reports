@@ -41,6 +41,9 @@
 | VLM | [Kimi K2.5](./reports/vlm/kimi-k2.5/) | Kimi Team, Moonshot AI | 2026-02-02 | [arXiv:2602.02276](https://arxiv.org/abs/2602.02276) |
 | VLM | [GLM-5V-Turbo](./reports/vlm/glm-5v-turbo/) | Z.ai & Tsinghua University | 2026-04-29 | [arXiv:2604.26752](https://arxiv.org/abs/2604.26752) |
 | VLM | [STEP3-VL-10B](./reports/vlm/step3-vl-10b/) | StepFun | 2026-01-14 | [arXiv:2601.09668](https://arxiv.org/abs/2601.09668) |
+| VLM | [Keye-VL-2.0](./reports/vlm/keye-vl-2.0/) | Keye Team, Kuaishou Group | 2026-06-09 | [arXiv:2606.10651](https://arxiv.org/abs/2606.10651) |
+| VLM（Omni） | [Nemotron 3 Nano Omni](./reports/vlm/nemotron-3-nano-omni/) | NVIDIA | 2026-04-27 | [arXiv:2604.24954](https://arxiv.org/abs/2604.24954) |
+| VLM（统一多模态） | [LongCat-Next](./reports/vlm/longcat-next/) | Meituan LongCat Team | 2026-03-29 | [arXiv:2603.27538](https://arxiv.org/abs/2603.27538) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |
