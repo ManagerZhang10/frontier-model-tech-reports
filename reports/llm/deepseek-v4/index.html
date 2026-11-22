@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek-V4 中文深读 · CSA / HCA 混合压缩注意力 + mHC + Muon，百万 token 上下文 | 前沿模型技术报告</title>
+<meta name="description" content="DeepSeek arXiv 2606.19348 中文深读：V4-Pro（1.6T / 49B 激活）与 V4-Flash（284B / 13B 激活），原生 1M 上下文；CSA + HCA 混合压缩注意力使 1M 时 V4-Pro 单 token FLOPs 为 V3.2 的 27%、KV cache 为 10%；mHC 残差、Muon 优化器、多教师全词表 On-Policy Distillation。附数据、训练配方、评测口径，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: CSA/HCA schematic, layer stack, formulas, small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-good { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.3; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .lane { font: 700 10.5px var(--f-mono); fill: var(--muted); letter-spacing: .08em; }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.archsvg .ln-warm { stroke: var(--warm); stroke-width: 1.4; fill: none; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-acc { fill: var(--accent); }
+.archsvg .ah-warm { fill: var(--warm); }
+.archsvg .blk-acc { fill: var(--accent); opacity: .85; }
+.archsvg .blk-warm { fill: var(--warm); opacity: .85; }
+.archsvg .blk-good { fill: var(--good); opacity: .8; }
+.archsvg .bt { font: 700 10.5px var(--f-mono); fill: #fff; }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.algo { font: 500 .8rem/1.7 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+.rd { font: 600 .68rem/1.5 var(--f-mono); padding: 0 .45em; border-radius: 6px; background: var(--bg-accent); color: var(--muted); border: 1px dashed var(--line); margin-left: 3px; white-space: nowrap; }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.chip small { color: var(--muted); }
+.cell-legend { margin-top: 4px; font-size: .78rem; }
+.chart-legend .l3x::before { background: var(--bar-other); }
+.fig-narrow img { max-width: 560px; margin: 0 auto; display: block; }
+.mod code { word-break: break-all; }
+.g22 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 760px) { .g22 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>DeepSeek-V4<span class="sub">CSA / HCA 混合压缩注意力 + mHC + Muon：把百万 token 上下文变成日常配置</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>DeepSeek-AI</b></span>
+      <span>发布 <b>2026-04-26</b>（arXiv v1）</span>
+      <span>arXiv <b>2606.19348</b></span>
+      <span>版本 <b>preview</b>（原文自称「预览版」）</span>
+    </div>
+    <p class="lede">两款 MoE：<b>V4-Pro 1.6T 总参 / 49B 激活</b>、<b>V4-Flash 284B / 13B 激活</b>，都原生支持 1M token 上下文<span class="src">摘要 · §4.2.1</span>。核心是把注意力换成两种「先压缩 KV 再算」的层交错使用：CSA 每 4 个 token 压成 1 条再做 top-k 稀疏，HCA 每 128 个 token 压成 1 条做稠密注意力。1M 上下文时，V4-Pro 的单 token 推理 FLOPs 只有 V3.2 的 <b>27%</b>、KV cache 只有 <b>10%</b><span class="src">§1 · 图 1</span>。同时换上 mHC 残差和 Muon 优化器；后训练把 V3.2 的混合 RL 整段替换成<b>多教师 On-Policy Distillation</b><span class="src">§5.1</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>开源权重 + 推理实现（HF，原文摘要 / 脚注 1）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>Pro 1.6T / 49B · Flash 284B / 13B</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>三档推理：Non-think / High / Max</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>LLM · MoE · 1M 上下文</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2606.19348" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2606.19348</a>
+      <a href="https://arxiv.org/pdf/2606.19348" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://huggingface.co/collections/deepseek-ai/deepseek-v4" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>权重（HF collection）</a>
+      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/tree/main/inference" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>开源推理实现（脚注 1）</a>
+      <a href="https://github.com/deepseek-ai/DeepGEMM/pull/304" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.8c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>MegaMoE kernel（脚注 2）</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构 · CSA / HCA / mHC</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#index">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自 arXiv v1 原文（PDF 首页水印 2606.19348v1）；<span class="src calc">推算</span> 为本页自行计算。</div>
+</nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">注意力、残差、优化器三处同时换掉；MoE 和 MTP 基本沿用 V3。后训练从「混合 RL」换成「多教师 OPD」。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">V4-Pro</span><span class="stat-num sm">1.6T 总参 · 49B 激活</span><span class="stat-sub">61 层，d = 7168，384 个路由专家激活 6 个</span><span class="src">§4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">V4-Flash</span><span class="stat-num sm">284B 总参 · 13B 激活</span><span class="stat-sub">43 层，d = 4096，256 个路由专家激活 6 个</span><span class="src">§4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">1M</span><span class="stat-sub">预训练末段把序列长度扩到 1M，原生支持</span><span class="src">§1 · §4.2.2</span></div>
+    <div class="card stat"><span class="stat-k">预训练 token</span><span class="stat-num sm">Flash 32T · Pro 33T</span><span class="stat-sub">语料总量「超过 32T」</span><span class="src">§4.1 · §4.2.2</span></div>
+    <div class="card stat"><span class="stat-k">1M 时单 token FLOPs（vs V3.2）</span><span class="stat-num sm">Pro 27% · Flash 10%</span><span class="stat-sub">按等效 FP8 FLOPs 估算；图 1 标为 3.7× / 9.8× 更低</span><span class="src">§1 · 图 1</span></div>
+    <div class="card stat"><span class="stat-k">1M 时 KV cache（vs V3.2）</span><span class="stat-num sm">Pro 10% · Flash 7%</span><span class="stat-sub">图 1 标为 9.5× / 13.7× 更小</span><span class="src">§1 · 图 1</span></div>
+    <div class="card stat"><span class="stat-k">注意力</span><span class="stat-num sm">CSA m=4 · HCA m′=128</span><span class="stat-sub">两者都另带 128 token 的滑窗分支；CSA top-k：Flash 512 / Pro 1024</span><span class="src">§4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">残差 / 优化器</span><span class="stat-num sm">mHC n<sub>hc</sub>=4 · Muon</span><span class="stat-sub">Sinkhorn 迭代 20 次；embedding、head、RMSNorm 仍用 AdamW</span><span class="src">§2.2 · §2.4</span></div>
+    <div class="card stat"><span class="stat-k">后训练</span><span class="stat-num sm">专家 SFT + GRPO → OPD</span><span class="stat-sub">超过 10 个教师模型，全词表 reverse KL</span><span class="src">§5.1.2</span></div>
+    <div class="card stat"><span class="stat-k">V4-Pro-Max · 知识</span><span class="stat-num sm">SimpleQA-V 57.9</span><span class="stat-sub">Gemini-3.1-Pro 75.6；K2.6 36.9、GLM-5.1 38.1</span><span class="src">表 6</span></div>
+    <div class="card stat"><span class="stat-k">V4-Pro-Max · 代码</span><span class="stat-num sm">LCB 93.5 · CF 3206</span><span class="stat-sub">表 6 两行均为最高；CF 为内部 14 场比赛估算</span><span class="src">表 6 · §5.3.1</span></div>
+    <div class="card stat"><span class="stat-k">V4-Pro-Max · Agent</span><span class="stat-num sm">SWE-V 80.6 · TB2 67.9</span><span class="stat-sub">Opus-4.6 Max 80.8 / 65.4；GPT-5.4 TB2 75.1</span><span class="src">表 6</span></div>
+  </div>
+  <p class="footnote wide">版本说明：本页依据的文本为 arXiv v1（首页水印「arXiv:2606.19348v1 [cs.CL] 26 Apr 2026」）。arXiv 编号是 2606，但 v1 发布日期为 2026-04-26，本页以 v1 日期为准。</p>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>两种「压缩 KV」注意力交错使用</h3><p>CSA 每 m=4 个 token 压成 1 条 KV，再用 lightning indexer 选 top-k；HCA 每 m′=128 个 token 压成 1 条，不做稀疏。两者都另加 128 token 的未压缩滑窗分支<span class="src">§2.3 · §4.2.1</span>。相对 BF16 GQA8（head dim 128）基线，1M 时 KV cache 约为其 <b>2%</b><span class="src">§2.3.4</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>残差、优化器一起换</h3><p>mHC 把残差流扩成 4 路，残差映射用 Sinkhorn-Knopp 投到双随机矩阵上，谱范数 ≤ 1<span class="src">§2.2</span>，墙钟开销压到 1F1B 流水阶段的 <b>6.7%</b><span class="src">§3.4.2</span>。Muon 用 10 步两段式 Newton-Schulz；因为 Q / KV 有 RMSNorm，<b>不用 QK-Clip</b><span class="src">§2.4</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>稳住万亿 MoE 的两招</h3><p>loss spike 与 MoE 离群值相关。<b>Anticipatory Routing</b>：用 θ<sub>t−Δt</sub> 算路由，只在检测到 spike 时启用，启用期间额外耗时约 20%；<b>SwiGLU clamp</b>：linear 部分截到 [−10, 10]，gate 上限 10<span class="src">§4.2.3</span>。作者承认原理尚不清楚<span class="src">§6</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>后训练：混合 RL 换成多教师 OPD</h3><p>每个领域先 SFT 再 GRPO，训出各自的专家；然后用 <b>10 个以上教师</b>、<b>全词表 logit</b> 的 reverse KL 做 on-policy 蒸馏，合并成一个学生模型<span class="src">§5.1.2</span>。难验证的任务用 rubric + 生成式奖励模型，GRM 就是 actor 本身<span class="src">§5.1.1</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>开源最强，但知识类仍落后闭源</h3><p>表 6 的 22 行里，V4-Pro-Max 只有 LCB、Codeforces、Apex Shortlist 3 行是六个模型中最高<span class="src calc">推算</span>；HLE 37.7，低于三家闭源（40.0 / 39.8 / 44.4）<span class="src">表 6</span>。作者自估推理能力落后前沿闭源约 <b>3–6 个月</b><span class="src">§1</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：CSA / HCA 混合注意力 + DeepSeekMoE + mHC</h2>
+    <p class="sec-intro">每个 Transformer 块有两个子层：注意力用 CSA 或 HCA，FFN 用 DeepSeekMoE。普通残差换成 mHC 的 Pre-Block / Post-Block / Residual 三种 Mixing。MTP 与 V3 完全相同<span class="src">§2 · 图 2</span>。</p>
+  </div>
+
+  <figure class="fig card wide fig-narrow">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="DeepSeek-V4 总体架构：多路残差流先经 Pre-Block Mixing 进入 CSA/HCA，输出经 Post-Block Mixing 与 Residual Mixing 后的残差相加；再经 Pre-Block Mixing 进入 DeepSeekMoE，同样回到残差流；顶部为 Prediction Head（LM Loss）与 MTP Modules（MTP Loss）" loading="lazy"></div>
+    <figcaption><b>DeepSeek-V4 总体架构。</b>左侧堆叠的圆点条是被 mHC 扩宽的多路残差流。每个子层（CSA/HCA 或 DeepSeekMoE）的输入先经 Pre-Block Mixing 压回 d 维，输出经 Post-Block Mixing 写回多路残差；残差本身经 Residual Mixing 混合后相加（⊕）。顶部是 Prediction Head（LM Loss）和 MTP Modules（MTP Loss）。本裁图底部的 Embedding 被截掉一半，最底下的 Input Tokens 没裁进来。<span class="from">来源：论文图 2（p.6）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">3.1 CSA 与 HCA：先压缩 KV，再做注意力</h3>
+  <div class="grid2 wide">
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig3.jpg" alt="CSA 核心结构：Token-Level Compressor 产生压缩 KV，Lightning Indexer 用压缩 indexer keys 与 indexer queries 做多查询注意力得到 index scores，Top-k Selector 选出压缩 KV，与滑窗 KV 拼接后进入共享 KV 多查询注意力" loading="lazy"></div>
+      <figcaption><b>CSA。</b>KV 条数压到 1/m，再用 DSA 的 lightning indexer 选 top-k；选中的压缩 KV 和一小段滑窗 KV 拼接，进入共享 KV 的 MQA。本裁图底部的输入行（KV token 与 query token 的隐状态）被截掉。<span class="from">来源：论文图 3（p.9）</span></figcaption>
+    </figure>
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="HCA 核心结构：Token-Level Compressor 产生重度压缩 KV，与滑窗 KV 拼接后进入共享 KV 多查询注意力，没有 indexer 与 top-k" loading="lazy"></div>
+      <figcaption><b>HCA。</b>每 m′（≫ m）个 token 合成 1 条 KV，不做稀疏选择，同样拼接滑窗 KV。本裁图底部的输入行同样被截掉。<span class="from">来源：论文图 4（p.11）</span></figcaption>
+    </figure>
+  </div>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 330" role="img" aria-label="CSA 与 HCA 计算流程示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-acc" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-warm" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <text class="lane" x="200" y="11">CSA</text>
+      <text class="lane" x="200" y="179">HCA</text>
+      <text class="lane" x="200" y="263">两者共有</text>
+
+      <rect class="box" x="10" y="128" width="150" height="74" rx="10"/><text class="t" x="85" y="155" text-anchor="middle">KV token 隐状态</text><text class="s" x="85" y="174" text-anchor="middle">H ∈ R^(n×d)</text><text class="s" x="85" y="190" text-anchor="middle">n 为序列长度</text>
+
+      <rect class="box-acc" x="200" y="16" width="170" height="70" rx="10"/><text class="t" x="285" y="38" text-anchor="middle">CSA 压缩器</text><text class="m" x="285" y="57" text-anchor="middle">m=4：4 token → 1 条</text><text class="s" x="285" y="75" text-anchor="middle">C^a / C^b 两路，相邻块重叠</text>
+      <rect class="box" x="400" y="16" width="160" height="70" rx="10"/><text class="t" x="480" y="38" text-anchor="middle">压缩 KV ≈ n/4 条</text><text class="s" x="480" y="57" text-anchor="middle">每条同时当 K 和 V</text><text class="s" x="480" y="75" text-anchor="middle">RoPE 维 BF16，其余 FP8</text>
+      <rect class="box-acc" x="590" y="16" width="140" height="70" rx="10"/><text class="t" x="660" y="38" text-anchor="middle">Top-k 选择</text><text class="m" x="660" y="57" text-anchor="middle">Flash 512 / Pro 1024</text><text class="s" x="660" y="75" text-anchor="middle">每个 query 各自选</text>
+
+      <rect class="box-acc" x="400" y="100" width="300" height="66" rx="10"/><text class="t" x="550" y="122" text-anchor="middle">Lightning indexer</text><text class="m" x="550" y="141" text-anchor="middle">I(t,s) = Σ_h w_h · ReLU(q_h · K_s)</text><text class="s" x="550" y="158" text-anchor="middle">64 个头 × 128 维；QK 路径 FP4，分数 BF16</text>
+
+      <rect class="box-warm" x="200" y="184" width="170" height="66" rx="10"/><text class="t" x="285" y="206" text-anchor="middle">HCA 压缩器</text><text class="w" x="285" y="225" text-anchor="middle">m′=128：128 token → 1 条</text><text class="s" x="285" y="242" text-anchor="middle">不重叠</text>
+      <rect class="box" x="400" y="184" width="160" height="66" rx="10"/><text class="t" x="480" y="206" text-anchor="middle">压缩 KV ≈ n/128 条</text><text class="s" x="480" y="225" text-anchor="middle">同样 K = V 共享</text><text class="s" x="480" y="242" text-anchor="middle">全部参与注意力</text>
+      <rect class="box" x="590" y="184" width="140" height="66" rx="10"/><text class="t" x="660" y="206" text-anchor="middle">稠密注意力</text><text class="s" x="660" y="225" text-anchor="middle">不做 top-k</text><text class="s" x="660" y="242" text-anchor="middle">靠重度压缩省成本</text>
+
+      <rect class="box-good" x="200" y="268" width="530" height="50" rx="10"/><text class="t" x="465" y="289" text-anchor="middle">滑窗分支：最近 n_win = 128 个未压缩 KV + attention sink</text><text class="s" x="465" y="307" text-anchor="middle">补上「同一压缩块内看不到」的局部依赖；每个头可让注意力总和 &lt; 1</text>
+
+      <rect class="box" x="758" y="40" width="114" height="250" rx="12"/><text class="t" x="815" y="120" text-anchor="middle">共享 KV</text><text class="t" x="815" y="138" text-anchor="middle">MQA</text><text class="s" x="815" y="162" text-anchor="middle">Q / KV 先过</text><text class="s" x="815" y="177" text-anchor="middle">RMSNorm</text><text class="s" x="815" y="200" text-anchor="middle">→ 分组输出投影</text><text class="m" x="815" y="218" text-anchor="middle">g = 8 / 16</text>
+
+      <path class="ln" d="M160 150 C180 150 180 51 196 51" marker-end="url(#ah)"/>
+      <path class="ln" d="M160 165 C280 165 300 140 396 140" marker-end="url(#ah)"/>
+      <path class="ln" d="M160 180 C180 180 180 217 196 217" marker-end="url(#ah)"/>
+      <path class="ln" d="M160 195 C175 195 175 293 196 293" marker-end="url(#ah)"/>
+      <path class="ln-acc" d="M370 51H396" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M560 51H586" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M660 100V90" marker-end="url(#aha)"/>
+      <path class="ln-acc" d="M730 51 C745 51 745 90 754 90" marker-end="url(#aha)"/>
+      <path class="ln-warm" d="M370 217H396" marker-end="url(#ahw)"/>
+      <path class="ln-warm" d="M560 217H586" marker-end="url(#ahw)"/>
+      <path class="ln-warm" d="M730 217H754" marker-end="url(#ahw)"/>
+      <path class="ln" d="M730 293 C745 293 745 270 754 270" marker-end="url(#ah)"/>
+    </svg>
+    <p class="cap"><b>示意</b>：依据 §2.3 式 (9)–(27)、§2.3.3–2.3.4 与 §4.2.1 绘制。一层要么是 CSA 要么是 HCA，图中上下两条路径并不在同一层里同时出现。query 侧的低秩投影（c<sup>Q</sup><sub>t</sub> 同时供 indexer query 和注意力 query 使用）、partial RoPE（最后 64 维，输出端再乘位置 −i 的 RoPE）没有画。「≈ n/4」「≈ n/128」按原文压缩率换算。精确实现以开源代码为准，原文也这么建议<span class="src">§2.3.3</span>。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>CSA 的三个细节 <span class="tag">§2.3.1</span></h4>
+      <ul>
+        <li><b>重叠压缩</b>：每条压缩 KV 由 2m 个原始条目加权得到（本块的 C<sup>a</sup> + 上一块的 C<sup>b</sup>），softmax 在 2m 个元素上归一；但有效压缩率仍是 1/m。</li>
+        <li><b>indexer 也在压缩键上跑</b>：indexer 键用同样的压缩得到；indexer query 低秩生成，和主注意力共享 c<sup>Q</sup><sub>t</sub>。</li>
+        <li><b>分组输出投影</b>：c·n<sub>h</sub> 很大（Pro 为 512 × 128），先把 n<sub>h</sub> 个头分 g 组各投到 d<sub>g</sub> 维，再投回 d。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>效率从哪来 <span class="tag">§2.3.4</span></h4>
+      <ul>
+        <li>KV 混合精度存储：RoPE 维 BF16、其余 FP8，比纯 BF16 小近一半。</li>
+        <li>lightning indexer 内的注意力计算用 FP4。</li>
+        <li>attention top-k 比 V3.2 更小，短、中长度文本也更快。</li>
+        <li>最主要的还是压缩 + 混合：1M 时 KV 约为 BF16 GQA8 基线的 <b>2%</b>。</li>
+        <li>按 10<sup>6</sup> 个 token 计，一层 CSA 约 25 万条压缩 KV，从中选 512 / 1024 条；一层 HCA 约 7,800 条<span class="src calc">推算</span>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 118" role="img" aria-label="V4-Flash 与 V4-Pro 的层排布示意">
+      <text class="t" x="0" y="34">V4-Flash · 43 层</text>
+      <rect class="blk-good" x="150" y="18" width="40" height="26" rx="5"/><text class="bt" x="170" y="35" text-anchor="middle">SWA</text>
+      <rect class="blk-good" x="194" y="18" width="40" height="26" rx="5"/><text class="bt" x="214" y="35" text-anchor="middle">SWA</text>
+      <rect class="blk-acc" x="238" y="18" width="634" height="26" rx="5"/><text class="bt" x="555" y="35" text-anchor="middle">CSA / HCA 交错 · 其余 41 层</text>
+      <text class="t" x="0" y="84">V4-Pro · 61 层</text>
+      <rect class="blk-warm" x="150" y="68" width="40" height="26" rx="5"/><text class="bt" x="170" y="85" text-anchor="middle">HCA</text>
+      <rect class="blk-warm" x="194" y="68" width="40" height="26" rx="5"/><text class="bt" x="214" y="85" text-anchor="middle">HCA</text>
+      <rect class="blk-acc" x="238" y="68" width="634" height="26" rx="5"/><text class="bt" x="555" y="85" text-anchor="middle">CSA / HCA 交错 · 其余 59 层</text>
+      <text class="s" x="150" y="112">所有层的 FFN 都是 MoE，前 3 个 MoE 层用 Hash 路由（按 token ID 固定分配专家）</text>
+    </svg>
+    <p class="cap"><b>示意</b>：前两层的类型来自 §4.2.1（Flash 用纯滑窗注意力，Pro 用 HCA）。原文只说之后「CSA 与 HCA 交错」，没写具体比例和顺序，所以本图不画逐层排布。41 / 59 为本页用总层数减 2 得到<span class="src calc">推算</span>。</p>
+  </div>
+
+  <h3 class="prose">3.2 mHC：受流形约束的超连接</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>公式 <span class="tag">§2.2 式 (1)–(8)</span></h4>
+<div class="algo"># 残差流从 R^d 扩到 R^(n_hc × d)，n_hc = 4
+X_{l+1} = B_l · X_l + C_l · F_l( A_l · X_l )
+# B_l 约束在双随机矩阵（Birkhoff 多面体）上
+B_l = SinkhornKnopp( exp(B~_l) ), t_max = 20
+A_l = σ(A~_l),   C_l = 2σ(C~_l)
+# A~, B~, C~ = α · (RMSNorm(vec X_l) · W) + S
+#   动态分量 + 静态偏置；α 为门控，初始化为小值</div>
+    </div>
+    <div class="card mod">
+      <h4>为什么要约束</h4>
+      <ul>
+        <li>原版 Hyper-Connections 叠很多层后经常数值不稳，难以放大<span class="src">§2.2</span>。</li>
+        <li>双随机矩阵的谱范数 ≤ 1，残差变换不放大信号；这类矩阵乘起来仍是双随机矩阵，所以层数再深也保持稳定。</li>
+        <li>A、C 用 Sigmoid 保证非负且有界，避免信号互相抵消。</li>
+        <li>工程代价：激活显存和流水线通信都会变大。用融合 kernel、选择性重计算、改 DualPipe 1F1B 把墙钟开销压到 <b>6.7%</b><span class="src">§3.4.2</span>。mHC 方法本身出自 Xie et al. 2026（同为 DeepSeek 作者）。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="prose">3.3 相对 DeepSeek-V3 / V3.2 改了什么</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>部件</th><th>V3 / V3.2</th><th>V4</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>注意力</td><td>V3.2：MLA + DSA（lightning indexer 选 top-k）</td><td>CSA（压缩 + DSA）与 HCA（重度压缩、稠密）交错，外加 SWA 分支、attention sink、Q/KV RMSNorm、partial RoPE</td><td><span class="src">§2.3</span></td></tr>
+        <tr><td>残差</td><td>普通残差</td><td>mHC（n<sub>hc</sub> = 4，Sinkhorn 20 次）</td><td><span class="src">§2.2 · §4.2.1</span></td></tr>
+        <tr><td>MoE 打分</td><td>Sigmoid(·)</td><td>Sqrt(Softplus(·))</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>负载均衡</td><td>无辅助损失策略</td><td>沿用无辅助损失策略，另加很轻的序列级平衡损失（权重 0.0001）</td><td><span class="src">§2.1 · §4.2.2</span></td></tr>
+        <tr><td>路由约束</td><td>限制路由目标节点数</td><td>取消该限制，重新设计并行策略</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>前几层 FFN</td><td>稠密 FFN</td><td>换成 Hash 路由的 MoE 层（前 3 个 MoE 层）</td><td><span class="src">§2.1 · §4.2.1</span></td></tr>
+        <tr><td>MTP</td><td>深度 1</td><td>与 V3 完全相同，深度 1</td><td><span class="src">§2.1 · §4.2.1</span></td></tr>
+        <tr><td>优化器</td><td>AdamW</td><td>大部分模块用 Muon（混合 Newton-Schulz），不用 QK-Clip</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>专家精度</td><td>—</td><td>路由专家参数 FP4（后训练阶段做 MXFP4 QAT）</td><td><span class="src">§1 · §5.2.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据</h2>
+    <p class="sec-intro">预训练数据只有一段文字描述（§4.1），<b>没有任何配比、来源占比或过滤阈值</b>。后训练数据同样只讲做法、不给条数。真正给了 n 的，是 DeepSeek 自建的几套内部评测集。</p>
+  </div>
+
+  <h3 class="prose">4.1 已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>项目</th><th>原文数字</th><th>备注</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>预训练语料总量</td><td>超过 32T token</td><td>类别：数学、代码、网页、长文档及「其他高质量类别」</td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>实际训练 token</td><td>Flash 32T · Pro 33T</td><td>两者数据是否完全相同：<span class="nd">原文未披露</span></td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>稠密注意力阶段</td><td>Flash 前 1T token</td><td>Pro「更长」，具体 token 数<span class="nd">原文未披露</span></td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>词表</td><td>128K</td><td>V3 tokenizer + 少量用于上下文构造的特殊 token</td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>各类数据配比</td><td colspan="2"><span class="nd">原文未披露</span>（数学 / 代码 / 网页 / 长文档 / 多语种均无比例）</td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>mid-training 的 Agent 数据</td><td colspan="2">只说「在 mid-training 阶段加入 agentic 数据」；量、来源<span class="nd">原文未披露</span>，§4.2 也没有单列 mid-training 阶段</td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>专家 SFT 数据</td><td colspan="2">「高质量、领域特定数据」；条数、来源<span class="nd">原文未披露</span></td><td><span class="src">§1 · §5.1.1</span></td></tr>
+        <tr><td>RL prompt / rubric 数据</td><td colspan="2">「rubric-guided RL data」，只需「少量、多样的人工标注」；规模<span class="nd">原文未披露</span></td><td><span class="src">§5.1.1</span></td></tr>
+        <tr><td>OPD 教师数</td><td>&gt; 10</td><td>覆盖多个领域；权重 w<sub>i</sub>「通常按专家相对重要性定」，具体值<span class="nd">原文未披露</span></td><td><span class="src">§5.1.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">没有比例，所以本节不画配比条形图。</p>
+
+  <h3 class="prose">4.2 预训练语料：在 V3 数据上做了什么</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>来源</span><span>处理</span><span>目的 / 产出</span></div>
+    <div class="pipe-row"><span class="lbl">网页</span>
+      <span class="chip">V3 预训练数据中的网页部分 + 新增网页</span>
+      <span class="chip m">过滤<b>批量自动生成</b>和<b>模板化</b>的内容</span>
+      <span class="chip o">降低 model collapse 风险（引 Zhu et al. 2024）<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">数学 / 代码</span>
+      <span class="chip">仍是核心组成</span>
+      <span class="chip m">在 <b>mid-training</b> 阶段加入 agentic 数据</span>
+      <span class="chip o">增强编码能力<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">多语种</span>
+      <span class="chip">比 V3 更大的多语种语料</span>
+      <span class="chip m">规模、语种列表<span class="nd">原文未披露</span></span>
+      <span class="chip o">覆盖不同文化的长尾知识<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">长文档</span>
+      <span class="chip">科学论文、技术报告等「有独特学术价值」的材料</span>
+      <span class="chip m"><b>重点整理</b>，优先保留</span>
+      <span class="chip o">提供「更长的有效上下文」，服务 1M 训练<span class="src">§4.1</span></span></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>预处理与打包 <span class="tag">§4.1</span></h4>
+      <ul>
+        <li>预处理「大体沿用 V3」；继承 token-splitting 与 Fill-in-Middle（FIM）。</li>
+        <li>参考 Ding et al. 2024，把不同来源的文档打包成合适长度的序列，<b>尽量少截断样本</b>。</li>
+        <li><b>与 V3 不同</b>：预训练用<b>样本级 attention mask</b>，同一序列里打包的不同文档互相看不到。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>序列长度课程 <span class="tag">§4.2.2</span></h4>
+      <dl class="kv">
+        <dt>长度</dt><dd>4K → 16K → 64K → 1M（Flash、Pro 相同）</dd>
+        <dt>稀疏引入</dt><dd>在 64K 长度时引入，之后一直保持稀疏</dd>
+        <dt>indexer 预热</dt><dd>引入稀疏前先有一个「短」阶段只预热 lightning indexer，长度<span class="nd">未披露</span></dd>
+        <dt>各长度 token 数</dt><dd><span class="nd">原文未披露</span></dd>
+      </dl>
+    </div>
+  </div>
+
+  <h3 class="prose">4.3 后训练数据：格式比条数写得清楚</h3>
+  <div class="grid2 g22 wide">
+    <div class="card mod">
+      <h4>三档推理的数据格式 <span class="tag">表 2 · 表 3</span></h4>
+      <ul>
+        <li><b>Non-think</b>：<code>&lt;/think&gt; summary</code></li>
+        <li><b>Think High</b>：<code>&lt;think&gt; 思考 &lt;/think&gt; summary</code></li>
+        <li><b>Think Max</b>：system prompt 开头额外注入一段指令（表 3：「Reasoning Effort: Absolute maximum with no shortcuts permitted…」），再接 think 格式</li>
+        <li>三档分别用不同的长度惩罚和上下文窗口做 RL，具体数值<span class="nd">原文未披露</span><span class="src">§5.1.1</span></li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>工具调用 schema：改用 XML <span class="tag">表 4</span></h4>
+      <ul>
+        <li>新增特殊 token <code>|DSML|</code>，工具调用写成 XML 块：<code>&lt;|DSML|invoke name=…&gt;</code> / <code>&lt;|DSML|parameter name=… string="true|false"&gt;</code>。</li>
+        <li>字符串参数原样写入并标 <code>string="true"</code>；其余类型用 JSON 并标 <code>string="false"</code>。</li>
+        <li>作者称 XML 格式能「有效减少转义失败和工具调用错误」，但<b>没给数字</b><span class="src">§5.1.1</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Quick Instruction：辅助任务 token <span class="tag">表 5</span></h4>
+      <p>把对话产品里的辅助任务（要不要搜索、生成标题、生成搜索 query、权威性需求、领域、URL 是否需要读取）变成追加在输入后的特殊 token：<code>&lt;|action|&gt;</code> <code>&lt;|title|&gt;</code> <code>&lt;|query|&gt;</code> <code>&lt;|authority|&gt;</code> <code>&lt;|domain|&gt;</code> <code>&lt;|extracted_url|&gt;&lt;|read_url|&gt;</code>。这样<b>直接复用已算好的 KV cache</b>，不必再维护一个单独的小模型重新 prefill<span class="src">§5.1.1</span>。训练数据量<span class="nd">未披露</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>奖励数据：rubric + GRM <span class="tag">§5.1.1</span></h4>
+      <ul>
+        <li>易验证任务：规则验证器或测试用例。</li>
+        <li>难验证任务：<b>不再训练标量奖励模型</b>，改为整理带 rubric 的 RL 数据，用生成式奖励模型（GRM）给轨迹打分。</li>
+        <li>GRM 就是 actor 网络本身，评判能力和生成能力在同一个 RL 里一起优化；作者称因此只需「少量、多样的人工标注」。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="prose">4.4 自建评测集：本文给了 n 的数据</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>集合</th><th>构造</th><th>规模</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>内部 Codeforces</td><td>2025-05 至 2025-11 的 Division 1 比赛；测试集由领域专家构造；每题生成 32 个候选</td><td>14 场 · 114 题</td><td><span class="src">§5.3.1</span></td></tr>
+        <tr><td>R&amp;D Coding</td><td>来自真实内部研发工作：功能开发、修 bug、重构、诊断；技术栈含 PyTorch、CUDA、Rust、C++；每题带原仓库、执行环境、人工标注评分 rubric</td><td>50+ 名工程师提供约 200 题 → 严格质量过滤后留 <b>30</b> 题</td><td><span class="src">§5.4.4</span></td></tr>
+        <tr><td>白领任务</td><td>中文专业任务：深度信息分析、文档生成、文档编辑；内部 harness 带 Bash 与 web search；人工盲评 4 个维度</td><td>30 题 · 13 个行业</td><td><span class="src">§5.4.3</span></td></tr>
+        <tr><td>中文功能写作</td><td>日常写作请求，prompt 通常简短直接；与 Gemini-3.1-Pro 成对比较</td><td>3,170 条，6 大类</td><td><span class="src">表 12</span></td></tr>
+        <tr><td>中文创意写作</td><td>按「指令遵循」「写作质量」两个轴成对比较</td><td>2,837 条，18 个文体</td><td><span class="src">表 13</span></td></tr>
+        <tr><td>复杂指令 / 多轮写作</td><td>高复杂约束与多轮场景，对比 Claude Opus 4.5</td><td>49 + 147 = 196 条</td><td><span class="src">表 14</span></td></tr>
+        <tr><td>搜索：Agentic vs RAG</td><td>按 Easy / Hard × 客观 / 主观分桶</td><td>869 条</td><td><span class="src">表 9</span></td></tr>
+        <tr><td>搜索：V4 vs V3.2</td><td>客观 3 个子类、主观 7 个子类</td><td>956 条</td><td><span class="src">表 11</span></td></tr>
+        <tr><td>开发者问卷</td><td>日常用 V4-Pro 做 agentic coding 的 DeepSeek 开发者与研究员</td><td>N = 85</td><td><span class="src">§5.4.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">写作与搜索的成对比较由谁判定（人工还是模型）：<span class="nd">原文未说明</span>；白领任务明确为人工盲评<span class="src">§5.4.3</span>。</p>
+</section>
+
+<!-- ============ 5 训练配方 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING RECIPE</div>
+    <h2>训练配方</h2>
+    <p class="sec-intro">预训练超参写得很全；后训练只说 GRPO 超参「与先前工作接近」，具体数值没给。</p>
+  </div>
+
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>预训练</h4>
+      <dl><dt>token</dt><dd>Flash 32T / Pro 33T</dd><dt>长度</dt><dd>4K → 1M</dd><dt>注意力</dt><dd>先稠密，64K 时转稀疏</dd><dt>优化器</dt><dd>Muon + AdamW</dd></dl>
+      <p>产出 V4-Flash-Base / V4-Pro-Base<span class="src">§4.2.2</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>专家 SFT</h4>
+      <dl><dt>领域</dt><dd>数学、代码、Agent、指令遵循等</dd><dt>数据</dt><dd>高质量领域数据</dd><dt>条数</dt><dd>未披露</dd></dl>
+      <p>每个领域单独训练一个专家<span class="src">§1 · §5.1.1</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 3</span><h4>专家 RL（GRPO）</h4>
+      <dl><dt>奖励</dt><dd>规则 / 测试 + rubric GRM</dd><dt>档位</dt><dd>Non-think / High / Max</dd><dt>超参</dt><dd>「接近先前工作」</dd></dl>
+      <p>不同档位用不同长度惩罚和上下文窗口<span class="src">§5.1.1</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 4</span><h4>多教师 OPD 合并</h4>
+      <dl><dt>教师</dt><dd>&gt; 10 个</dd><dt>损失</dt><dd>Σ w<sub>i</sub> · KL(π<sub>θ</sub> ‖ π<sub>E<sub>i</sub></sub>)</dd><dt>粒度</dt><dd>全词表 logit</dd></dl>
+      <p>完全替代 V3.2 的混合 RL 阶段<span class="src">§5.1 · §5.1.2</span>。</p></div>
+  </div>
+
+  <h3 class="prose">5.1 预训练超参（Flash vs Pro）</h3>
+  <div class="tbl-wrap tall wide">
+    <table>
+      <thead><tr><th>超参</th><th>V4-Flash</th><th class="q">V4-Pro</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">结构</td></tr>
+        <tr><td>层数 / 隐藏维 d</td><td>43 / 4096</td><td class="q">61 / 7168</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>前两层注意力</td><td>纯滑窗注意力</td><td class="q">HCA</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>CSA 压缩率 m / top-k</td><td>4 / 512</td><td class="q">4 / 1024</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>indexer 头数 / 头维度</td><td>64 / 128</td><td class="q">64 / 128</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>HCA 压缩率 m′</td><td>128</td><td class="q">128</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>query 头数 n<sub>h</sub> / 头维度 c</td><td>64 / 512</td><td class="q">128 / 512</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>query 压缩维 d<sub>c</sub></td><td>1024</td><td class="q">1536</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>输出投影组数 g / d<sub>g</sub></td><td>8 / 1024</td><td class="q">16 / 1024</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>滑窗 n<sub>win</sub></td><td>128</td><td class="q">128</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>MoE：共享 + 路由专家</td><td>1 + 256</td><td class="q">1 + 384</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>专家中间维 / 激活专家数</td><td>2048 / 6</td><td class="q">3072 / 6</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>Hash 路由层</td><td>前 3 个 MoE 层</td><td class="q">前 3 个 MoE 层</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>MTP 深度 · mHC n<sub>hc</sub> · t<sub>max</sub></td><td>1 · 4 · 20</td><td class="q">1 · 4 · 20</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr><td>总参 / 激活</td><td>284B / 13B</td><td class="q">1.6T / 49B</td><td><span class="src">§4.2.1</span></td></tr>
+        <tr class="grp"><td colspan="4">训练</td></tr>
+        <tr><td>训练 token</td><td>32T</td><td class="q">33T</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>batch（token）</td><td>由小增到 75.5M，之后保持</td><td class="q">最大 94.4M</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>LR：预热 / 峰值 / 末值</td><td>2000 步线性预热 / 2.7e-4 / 2.7e-5（cosine）</td><td class="q">「大体相同」/ 2.0e-4 / 2.0e-5</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>稠密注意力阶段</td><td>前 1T token</td><td class="q">更长（未给数）</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>AdamW</td><td colspan="2">β1 = 0.9，β2 = 0.95，ε = 1e-20，weight decay = 0.1（用于 embedding、预测头、RMSNorm 权重；§2.4 另列 mHC 的静态偏置与门控因子）</td><td><span class="src">§2.4 · §4.2.2</span></td></tr>
+        <tr><td>Muon</td><td colspan="2">momentum 0.95，weight decay 0.1，更新矩阵 RMS 缩放到 0.18 以复用 AdamW 学习率；Nesterov；混合 Newton-Schulz 10 步：前 8 步系数 (3.4445, −4.7750, 2.0315)，后 2 步 (2, −1.5, 0.5)</td><td><span class="src">§2.4 · §4.2.2</span></td></tr>
+        <tr><td>负载均衡</td><td colspan="2">无辅助损失的 bias 更新速度 0.001；序列级平衡损失权重 0.0001</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>MTP 损失权重</td><td colspan="2">大部分训练 0.3，开始 LR 衰减时降到 0.1</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>SwiGLU clamp</td><td colspan="2">linear 分量 [−10, 10]，gate 上限 10（两款模型全程使用）</td><td><span class="src">§4.2.3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">5.2 训练稳定性</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Anticipatory Routing <span class="tag">§4.2.3</span></h4><p>观察：loss spike 总伴随 MoE 层的离群值，路由机制会放大离群值。做法：第 t 步用当前参数 θ<sub>t</sub> 算特征，但用历史参数 θ<sub>t−Δt</sub> 算路由索引。实现上在 t−Δt 步提前取第 t 步的数据、预算路由并缓存。启用时墙钟额外开销约 <b>20%</b>，所以只在<b>自动检测到 spike</b> 时触发短回滚并启用，一段时间后切回常规训练。Δt 取值<span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>SwiGLU Clamping <span class="tag">§4.2.3</span></h4><p>经验上能消除离群值、稳定训练，且「不损性能」，但<b>没有给对照曲线或数值</b>。作者在结论里承认这两招的原理「尚未被充分理解」<span class="src">§6</span>。</p></div>
+  </div>
+
+  <h3 class="prose">5.3 后训练细节</h3>
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">OPD</span><h4>全词表多教师蒸馏</h4>
+      <ul><li>学生在自己采样的轨迹上，对每个教师优化 reverse KL，按 w<sub>i</sub> 加权<span class="src">式 (29)</span></li><li>不用常见的「token 级 KL 估计当 advantage」，因为那样梯度方差大、训练不稳；改为<b>保留完整 logit 分布</b><span class="src">§5.1.2</span></li><li>工程：教师权重放中心化存储、按需加载；只缓存教师<b>最后一层 hidden state</b>，训练时再过对应预测头重建 logit；样本按教师排序，保证显存里同时最多一个教师预测头<span class="src">§5.2.2</span></li></ul></div>
+    <div class="card stage"><span class="sid">FP4 QAT</span><h4>后训练阶段的量化感知训练</h4>
+      <ul><li>MXFP4 量化两处：MoE 专家权重、CSA indexer 的 QK 路径<span class="src">§5.2.1</span></li><li>index score 由 FP32 降到 BF16：top-k selector 提速 <b>2×</b>，KV 条目召回率 <b>99.7%</b></li><li>FP4 → FP8 反量化无损（E4M3 比 E2M1 多 2 位指数），可直接复用 FP8 训练框架；反向相当于 STE</li><li>推理和 RL rollout 直接用原生 FP4 权重，采样行为与线上部署一致</li></ul></div>
+    <div class="card stage"><span class="sid">RL INFRA</span><h4>rollout 与沙盒</h4>
+      <ul><li>token 级 Write-Ahead Log：被抢占的请求从断点续写。作者指出<b>从头重生成在数学上不对</b>：短回答更容易熬过中断，重来会让模型偏向短输出<span class="src">§5.2.3</span></li><li>百万 token RL：rollout 数据拆成轻量元数据与重量级逐 token 字段，按 mini-batch 用完即释放<span class="src">§5.2.4</span></li><li>DSec 沙盒：Function Call / Container / microVM / fullVM 四种执行底座共用一套 API，单集群管理数十万个并发沙盒<span class="src">§5.2.5</span></li></ul></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Interleaved Thinking 的变化 <span class="tag">§5.1.1 · 图 7</span></h4><ul><li>V3.2：只在新用户消息到来时丢弃历史推理。</li><li>V4 工具调用场景：<b>全部推理内容在整段对话中保留</b>，跨用户消息也不丢，依靠 1M 上下文。</li><li>普通对话场景：沿用旧规则，新用户消息到来就丢弃。</li><li>Terminus 这类用 user 消息模拟工具交互的框架触发不了该路径，作者仍建议用 non-think 模式。</li></ul></div>
+    <div class="card mod"><h4>基础设施（与数据 / 评测相关的部分）<span class="tag">§3</span></h4><ul><li>MoE 通信与计算融合进一个流水线 kernel（MegaMoE，已开源）：通用推理提速 1.50–1.73×，RL rollout 等延迟敏感场景最高 1.96×<span class="src">§3.1</span></li><li>batch-invariant + 确定性 kernel：任一 token 的输出与它在 batch 中的位置无关，预训练、后训练、推理逐位对齐<span class="src">§3.3</span></li><li>CSA/HCA 的 KV 存盘复用共享前缀；SWA 的 KV 约为压缩 KV 的 8 倍，提供全量、周期 checkpoint、零缓存三种策略<span class="src">§3.5.2</span></li></ul></div>
+  </div>
+
+  <details class="more wide">
+    <summary>原文给了什么、没给什么<span class="hint">§4.2 · §5.1</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table class="txt">
+          <thead><tr><th>项</th><th>状态</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td>预训练结构与优化器超参</td><td>完整给出（见 5.1 表）</td><td><span class="src">§4.2</span></td></tr>
+            <tr><td>Pro 的稠密阶段长度、indexer 预热长度</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.2.2</span></td></tr>
+            <tr><td>各序列长度阶段的 token 数</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.2.2</span></td></tr>
+            <tr><td>Anticipatory Routing 的 Δt、检测阈值</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.2.3</span></td></tr>
+            <tr><td>GRPO 的 ε、β、组大小、学习率</td><td><span class="nd">原文未披露</span>（只说「与先前工作接近」）</td><td><span class="src">§5.1.1</span></td></tr>
+            <tr><td>三档推理的长度惩罚、RL 上下文窗口</td><td><span class="nd">原文未披露</span>（评测时窗口为 8K / 128K / 384K）</td><td><span class="src">§5.1.1 · §5.3.1</span></td></tr>
+            <tr><td>OPD 教师名单、权重 w<sub>i</sub>、步数</td><td><span class="nd">原文未披露</span></td><td><span class="src">§5.1.2</span></td></tr>
+            <tr><td>后训练总算力</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测</h2>
+    <p class="sec-intro">主对比对象：Claude-Opus-4.6（Max）、GPT-5.4（xHigh）、Gemini-3.1-Pro（High）、Kimi K2.6 Thinking、GLM-5.1 Thinking。知识与推理任务温度 1.0，上下文窗口 Non-think / High / Max 分别为 8K / 128K / 384K<span class="src">§5.3.1</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1：左为 DeepSeek-V4-Pro-Max 与 Claude-Opus-4.6-Max、GPT-5.4-xHigh、Gemini-3.1-Pro-High 在 SimpleQA Verified、HLE、Apex Shortlist、Codeforces、SWE Verified、Terminal Bench 2.0、Toolathlon 上的柱状图；右为随 token 位置增长的单 token FLOPs 与累计 KV cache，V4-Pro 相对 V3.2 低 3.7 倍和小 9.5 倍，V4-Flash 低 9.8 倍和小 13.7 倍" loading="lazy"></div>
+    <figcaption><b>首页总览。</b>左：V4-Pro-Max 与三家闭源模型的 7 项基准（Codeforces 为 rating，柱高另按刻度）。右上：单 token 推理 FLOPs 随 token 位置增长，1M 处 V4-Pro 比 V3.2 低 3.7×、V4-Flash 低 9.8×；右下：累计 KV cache，V4-Pro 小 9.5×、V4-Flash 小 13.7×。本裁图右下面板的横轴标签被截掉（正文为 Sequence Length (K)）。<span class="from">来源：论文图 1（p.1）</span></figcaption>
+  </figure>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 134" role="img" aria-label="1M 上下文时单 token FLOPs 与 KV cache 相对 V3.2 的比例">
+        <text class="ch-t" x="0" y="14">1M 上下文时的成本（V3.2 = 100%）</text><text class="ch-src" x="360" y="14" text-anchor="end">§1</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="114"/>
+        <text class="ch-lbl" x="94" y="49" text-anchor="end">单 token FLOPs</text>
+        <rect class="bar-o" x="100" y="32" width="200" height="10" rx="2"/><text class="ch-val" x="305" y="41">100%</text>
+        <rect class="bar-q" x="100" y="44" width="54" height="10" rx="2"/><text class="ch-val" x="159" y="53">27%</text>
+        <rect class="bar-qi" x="100" y="56" width="20" height="10" rx="2"/><text class="ch-val" x="125" y="65">10%</text>
+        <text class="ch-lbl" x="94" y="93" text-anchor="end">KV cache</text>
+        <rect class="bar-o" x="100" y="76" width="200" height="10" rx="2"/><text class="ch-val" x="305" y="85">100%</text>
+        <rect class="bar-q" x="100" y="88" width="20" height="10" rx="2"/><text class="ch-val" x="125" y="97">10%</text>
+        <rect class="bar-qi" x="100" y="100" width="14" height="10" rx="2"/><text class="ch-val" x="119" y="109">7%</text>
+        <text class="ch-ax" x="100" y="127">0</text><text class="ch-ax" x="300" y="127" text-anchor="end">100%</text>
+      </svg>
+      <div class="chart-legend cell-legend"><span class="l3">V3.2</span><span class="l1">V4-Pro</span><span class="l2">V4-Flash</span></div>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 164" role="img" aria-label="1M 长上下文基准：V4-Pro-Max、V4-Flash-Max、Opus-4.6、Gemini-3.1-Pro">
+        <text class="ch-t" x="0" y="14">1M 长上下文</text><text class="ch-src" x="360" y="14" text-anchor="end">表 6 · 表 7</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="144"/>
+        <text class="ch-lbl" x="94" y="53" text-anchor="end">MRCR 1M (MMR)</text>
+        <rect class="bar-q" x="100" y="32" width="167" height="10" rx="2"/><text class="ch-val" x="272" y="41">83.5</text>
+        <rect class="bar-qi" x="100" y="44" width="157.4" height="10" rx="2"/><text class="ch-val" x="262" y="53">78.7</text>
+        <rect class="bar-o" x="100" y="56" width="185.8" height="10" rx="2"/><text class="ch-val" x="291" y="65">92.9</text>
+        <rect class="bar-o2" x="100" y="68" width="152.6" height="10" rx="2"/><text class="ch-val" x="258" y="77">76.3</text>
+        <text class="ch-lbl" x="94" y="113" text-anchor="end">CorpusQA 1M (ACC)</text>
+        <rect class="bar-q" x="100" y="92" width="124" height="10" rx="2"/><text class="ch-val" x="229" y="101">62.0</text>
+        <rect class="bar-qi" x="100" y="104" width="121" height="10" rx="2"/><text class="ch-val" x="226" y="113">60.5</text>
+        <rect class="bar-o" x="100" y="116" width="143.4" height="10" rx="2"/><text class="ch-val" x="249" y="125">71.7</text>
+        <rect class="bar-o2" x="100" y="128" width="107.6" height="10" rx="2"/><text class="ch-val" x="213" y="137">53.8</text>
+        <text class="ch-ax" x="100" y="157">0</text><text class="ch-ax" x="300" y="157" text-anchor="end">100</text>
+      </svg>
+      <div class="chart-legend cell-legend"><span class="l1">V4-Pro-Max</span><span class="l2">V4-Flash-Max</span><span class="l3">Opus-4.6 Max</span><span class="l4">Gemini-3.1-Pro High</span></div>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 222" role="img" aria-label="V4-Pro 三档推理：Max、High、Non-think">
+        <text class="ch-t" x="0" y="14">V4-Pro 推理档位</text><text class="ch-src" x="360" y="14" text-anchor="end">表 7</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="202"/>
+        <text class="ch-lbl" x="94" y="49" text-anchor="end">HLE</text>
+        <rect class="bar-q" x="100" y="32" width="75.4" height="10" rx="2"/><text class="ch-val" x="180" y="41">37.7</text>
+        <rect class="bar-qi" x="100" y="44" width="69" height="10" rx="2"/><text class="ch-val" x="174" y="53">34.5</text>
+        <rect class="bar-o" x="100" y="56" width="15.4" height="10" rx="2"/><text class="ch-val" x="120" y="65">7.7</text>
+        <text class="ch-lbl" x="94" y="93" text-anchor="end">Apex Shortlist</text>
+        <rect class="bar-q" x="100" y="76" width="180.4" height="10" rx="2"/><text class="ch-val" x="285" y="85">90.2</text>
+        <rect class="bar-qi" x="100" y="88" width="171" height="10" rx="2"/><text class="ch-val" x="276" y="97">85.5</text>
+        <rect class="bar-o" x="100" y="100" width="18.4" height="10" rx="2"/><text class="ch-val" x="123" y="109">9.2</text>
+        <text class="ch-lbl" x="94" y="137" text-anchor="end">Terminal Bench 2.0</text>
+        <rect class="bar-q" x="100" y="120" width="135.8" height="10" rx="2"/><text class="ch-val" x="241" y="129">67.9</text>
+        <rect class="bar-qi" x="100" y="132" width="126.6" height="10" rx="2"/><text class="ch-val" x="232" y="141">63.3</text>
+        <rect class="bar-o" x="100" y="144" width="118.2" height="10" rx="2"/><text class="ch-val" x="223" y="153">59.1</text>
+        <text class="ch-lbl" x="94" y="181" text-anchor="end">SWE Verified</text>
+        <rect class="bar-q" x="100" y="164" width="161.2" height="10" rx="2"/><text class="ch-val" x="266" y="173">80.6</text>
+        <rect class="bar-qi" x="100" y="176" width="158.8" height="10" rx="2"/><text class="ch-val" x="264" y="185">79.4</text>
+        <rect class="bar-o" x="100" y="188" width="147.2" height="10" rx="2"/><text class="ch-val" x="252" y="197">73.6</text>
+        <text class="ch-ax" x="100" y="215">0</text><text class="ch-ax" x="300" y="215" text-anchor="end">100</text>
+      </svg>
+      <div class="chart-legend cell-legend"><span class="l1">Max</span><span class="l2">High</span><span class="l3">Non-think</span></div>
+    </div>
+  </div>
+  <p class="tbl-note wide">三图横轴均从 0 开始，满刻度为 100（第一图为百分比）。GPT-5.4 没有长上下文成绩：API 对大部分请求无响应，作者未评测<span class="src">§5.3.1</span>。规律：知识与推理类（HLE、Apex Shortlist）对档位极敏感；代码 Agent 类（SWE Verified）即便 Non-think 也有 73.6。</p>
+
+  <h3 class="prose">6.1 主表：V4-Pro-Max vs 闭源 / 开源（表 6）</h3>
+  <div class="tbl-wrap tall wide">
+    <table>
+      <thead><tr><th>基准（指标）</th><th>Opus-4.6 Max</th><th>GPT-5.4 xHigh</th><th>Gemini-3.1-Pro High</th><th>K2.6 Thinking</th><th>GLM-5.1 Thinking</th><th class="q">DS-V4-Pro Max</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">Knowledge &amp; Reasoning</td></tr>
+        <tr><td>MMLU-Pro (EM)</td><td>89.1</td><td>87.5</td><td class="best">91.0</td><td>87.1</td><td>86.0</td><td class="q">87.5</td></tr>
+        <tr><td>SimpleQA-Verified (Pass@1)</td><td>46.2</td><td>45.3</td><td class="best">75.6</td><td>36.9</td><td>38.1</td><td class="q">57.9</td></tr>
+        <tr><td>Chinese-SimpleQA (Pass@1)</td><td>76.4</td><td>76.8</td><td class="best">85.9</td><td>75.9</td><td>75.0</td><td class="q">84.4</td></tr>
+        <tr><td>GPQA Diamond (Pass@1)</td><td>91.3</td><td>93.0</td><td class="best">94.3</td><td>90.5</td><td>86.2</td><td class="q">90.1</td></tr>
+        <tr><td>HLE (Pass@1)</td><td>40.0</td><td>39.8</td><td class="best">44.4</td><td>36.4</td><td>34.7</td><td class="q">37.7</td></tr>
+        <tr><td>LiveCodeBench (Pass@1)</td><td>88.8</td><td>-</td><td>91.7</td><td>89.6</td><td>-</td><td class="q best">93.5</td></tr>
+        <tr><td>Codeforces (Rating)</td><td>-</td><td>3168</td><td>3052</td><td>-</td><td>-</td><td class="q best">3206</td></tr>
+        <tr><td>HMMT 2026 Feb (Pass@1)</td><td>96.2</td><td class="best">97.7</td><td>94.7</td><td>92.7</td><td>89.4</td><td class="q">95.2</td></tr>
+        <tr><td>IMOAnswerBench (Pass@1)</td><td>75.3</td><td class="best">91.4</td><td>81.0</td><td>86.0</td><td>83.8</td><td class="q">89.8</td></tr>
+        <tr><td>Apex (Pass@1)</td><td>34.5</td><td>54.1</td><td class="best">60.9</td><td>24.0</td><td>11.5</td><td class="q">38.3</td></tr>
+        <tr><td>Apex Shortlist (Pass@1)</td><td>85.9</td><td>78.1</td><td>89.1</td><td>75.5</td><td>72.4</td><td class="q best">90.2</td></tr>
+        <tr class="grp"><td colspan="7">Long（1M）</td></tr>
+        <tr><td>MRCR 1M (MMR)</td><td class="best">92.9</td><td>-</td><td>76.3</td><td>-</td><td>-</td><td class="q">83.5</td></tr>
+        <tr><td>CorpusQA 1M (ACC)</td><td class="best">71.7</td><td>-</td><td>53.8</td><td>-</td><td>-</td><td class="q">62.0</td></tr>
+        <tr class="grp"><td colspan="7">Agentic</td></tr>
+        <tr><td>Terminal Bench 2.0 (Acc)</td><td>65.4</td><td class="best">75.1</td><td>68.5</td><td>66.7</td><td>63.5</td><td class="q">67.9</td></tr>
+        <tr><td>SWE Verified (Resolved)</td><td class="best">80.8</td><td>-</td><td>80.6</td><td>80.2</td><td>-</td><td class="q">80.6</td></tr>
+        <tr><td>SWE Pro (Resolved)</td><td>57.3</td><td>57.7</td><td>54.2</td><td class="best">58.6</td><td>58.4</td><td class="q">55.4</td></tr>
+        <tr><td>SWE Multilingual (Resolved)</td><td class="best">77.5</td><td>-</td><td>-</td><td>76.7</td><td>73.3</td><td class="q">76.2</td></tr>
+        <tr><td>BrowseComp (Pass@1)</td><td>83.7</td><td>82.7</td><td class="best">85.9</td><td>83.2</td><td>79.3</td><td class="q">83.4</td></tr>
+        <tr><td>HLE w/ tools (Pass@1)</td><td>53.1</td><td>52.0</td><td>51.6</td><td class="best">54.0</td><td>50.4</td><td class="q">48.2</td></tr>
+        <tr><td>GDPval-AA (Elo)</td><td>1619</td><td class="best">1674</td><td>1314</td><td>1482</td><td>1535</td><td class="q">1554</td></tr>
+        <tr><td>MCPAtlas Public (Pass@1)</td><td class="best">73.8</td><td>67.2</td><td>69.2</td><td>66.6</td><td>71.8</td><td class="q">73.6</td></tr>
+        <tr><td>Toolathlon (Pass@1)</td><td>47.2</td><td class="best">54.6</td><td>48.8</td><td>50.0</td><td>40.7</td><td class="q">51.8</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">本行最高（本页按表 6 数值标注）</span><span class="k-q">DeepSeek-V4-Pro-Max</span></div>
+  <ul class="prose" style="font-size:.92rem">
+    <li><b>「-」</b>：K2.6、GLM-5.1 的空格是因为它们的 API 太忙、没返回结果；GPT-5.4 长上下文空格是 API 对大部分请求无响应<span class="src">§5.3.1</span>。</li>
+    <li><b>Max / xHigh / High</b>：各模型的推理强度档位，不是同一个刻度。</li>
+    <li><b>Codeforces</b>：内部基准，14 场 Div.1、114 题；每题 32 个候选中随机抽 10 个、随机排序作为提交序列，按人类同题同失败次数的中位得分计分，再换算 rating，对所有抽法求期望后取 14 场平均<span class="src">§5.3.1</span>。V4-Pro-Max 在 Codeforces 人类榜单上当前排第 23<span class="src">§5.3.2</span>。</li>
+    <li><b>代码 Agent</b>（SWE 系列、Terminal Bench）：内部框架，只给 bash 和文件编辑两个工具，最多 500 步、512K 上下文<span class="src">§5.3.1</span>。Terminal-Bench 2.0 原始集有环境问题（作者引 GLM-5.1 的说明），在 Verified 子集上 V4-Pro 约 <b>72.0</b>。</li>
+    <li><b>搜索 Agent</b>（BrowseComp、HLE w/ tools）：内部 harness（web search + Python），500 步、512K；BrowseComp 沿用 V3.2 的 discard-all 上下文管理<span class="src">§5.3.1</span>。</li>
+    <li><b>数学模板</b>：V4-Pro-Max 做数学题时换用一段要求「严格证明」的专用模板，其余模型 / 档位用常规 boxed 模板<span class="src">§5.3.1</span>。</li>
+    <li><b>长上下文</b>：Opus 4.6 与 Gemini 3.1 Pro 的 MRCR / CorpusQA 由 DeepSeek 统一配置重测<span class="src">§5.3.1</span>。</li>
+  </ul>
+
+  <h3 class="prose">6.2 Base 模型（表 1，内部框架统一设置）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准（指标 · shots）</th><th>V3.2-Base<br><small>37B / 671B</small></th><th>V4-Flash-Base<br><small>13B / 284B</small></th><th class="q">V4-Pro-Base<br><small>49B / 1.6T</small></th></tr></thead>
+      <tbody>
+        <tr><td>MMLU-Pro (EM · 5)</td><td>65.5</td><td>68.3</td><td class="q best">73.5</td></tr>
+        <tr><td>Simple-QA verified (EM · 25)</td><td>28.3</td><td>30.1</td><td class="q best">55.2</td></tr>
+        <tr><td>FACTS Parametric (EM · 25)</td><td>27.1</td><td>33.9</td><td class="q best">62.6</td></tr>
+        <tr><td>SuperGPQA (EM · 5)</td><td>45.0</td><td>46.5</td><td class="q best">53.9</td></tr>
+        <tr><td>MultiLoKo (EM · 5)</td><td>38.7</td><td>42.2</td><td class="q best">51.1</td></tr>
+        <tr><td>HumanEval (Pass@1 · 0)</td><td>62.8</td><td>69.5</td><td class="q best">76.8</td></tr>
+        <tr><td>BigCodeBench (Pass@1 · 3)</td><td class="best">63.9</td><td>56.8</td><td class="q">59.2</td></tr>
+        <tr><td>MATH (EM · 4)</td><td>60.5</td><td>57.4</td><td class="q best">64.5</td></tr>
+        <tr><td>LongBench-V2 (EM · 1)</td><td>40.2</td><td>44.7</td><td class="q best">51.5</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">表头小字为激活 / 总参数<span class="src">表 1</span>。原文规定差距不超过 0.3 视为同一水平。V4-Flash-Base 激活参数只有 V3.2-Base 的约 1/3<span class="src calc">推算</span>，多数知识类和长上下文仍更高（TriviaQA 例外：82.8 vs 83.3）；但 BigCodeBench、MATH 低于 V3.2-Base。V4-Pro-Base 的 BigCodeBench（59.2）、CMath（90.9）也低于 V3.2-Base（63.9、92.6）<span class="src">表 1</span>。</p>
+
+  <details class="more wide">
+    <summary>表 1 全部 24 行<span class="hint">表 1</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>类别</th><th>基准（指标）</th><th>shots</th><th>V3.2-Base</th><th>V4-Flash-Base</th><th class="q">V4-Pro-Base</th></tr></thead>
+          <tbody>
+            <tr><td>World Knowl.</td><td>AGIEval (EM)</td><td>0</td><td>80.1</td><td>82.6</td><td class="q">83.1</td></tr>
+            <tr><td></td><td>MMLU (EM)</td><td>5</td><td>87.8</td><td>88.7</td><td class="q">90.1</td></tr>
+            <tr><td></td><td>MMLU-Redux (EM)</td><td>5</td><td>87.5</td><td>89.4</td><td class="q">90.8</td></tr>
+            <tr><td></td><td>MMLU-Pro (EM)</td><td>5</td><td>65.5</td><td>68.3</td><td class="q">73.5</td></tr>
+            <tr><td></td><td>MMMLU (EM)</td><td>5</td><td>87.9</td><td>88.8</td><td class="q">90.3</td></tr>
+            <tr><td></td><td>C-Eval (EM)</td><td>5</td><td>90.4</td><td>92.1</td><td class="q">93.1</td></tr>
+            <tr><td></td><td>CMMLU (EM)</td><td>5</td><td>88.9</td><td>90.4</td><td class="q">90.8</td></tr>
+            <tr><td></td><td>MultiLoKo (EM)</td><td>5</td><td>38.7</td><td>42.2</td><td class="q">51.1</td></tr>
+            <tr><td></td><td>Simple-QA verified (EM)</td><td>25</td><td>28.3</td><td>30.1</td><td class="q">55.2</td></tr>
+            <tr><td></td><td>SuperGPQA (EM)</td><td>5</td><td>45.0</td><td>46.5</td><td class="q">53.9</td></tr>
+            <tr><td></td><td>FACTS Parametric (EM)</td><td>25</td><td>27.1</td><td>33.9</td><td class="q">62.6</td></tr>
+            <tr><td></td><td>TriviaQA (EM)</td><td>5</td><td>83.3</td><td>82.8</td><td class="q">85.6</td></tr>
+            <tr><td>Lang. &amp; Reas.</td><td>BBH (EM)</td><td>3</td><td>87.6</td><td>86.9</td><td class="q">87.5</td></tr>
+            <tr><td></td><td>DROP (F1)</td><td>1</td><td>88.2</td><td>88.6</td><td class="q">88.7</td></tr>
+            <tr><td></td><td>HellaSwag (EM)</td><td>0</td><td>86.4</td><td>85.7</td><td class="q">88.0</td></tr>
+            <tr><td></td><td>WinoGrande (EM)</td><td>0</td><td>78.9</td><td>79.5</td><td class="q">81.5</td></tr>
+            <tr><td></td><td>CLUEWSC (EM)</td><td>5</td><td>83.5</td><td>82.2</td><td class="q">85.2</td></tr>
+            <tr><td>Code &amp; Math</td><td>BigCodeBench (Pass@1)</td><td>3</td><td>63.9</td><td>56.8</td><td class="q">59.2</td></tr>
+            <tr><td></td><td>HumanEval (Pass@1)</td><td>0</td><td>62.8</td><td>69.5</td><td class="q">76.8</td></tr>
+            <tr><td></td><td>GSM8K (EM)</td><td>8</td><td>91.1</td><td>90.8</td><td class="q">92.6</td></tr>
+            <tr><td></td><td>MATH (EM)</td><td>4</td><td>60.5</td><td>57.4</td><td class="q">64.5</td></tr>
+            <tr><td></td><td>MGSM (EM)</td><td>8</td><td>81.3</td><td>85.7</td><td class="q">84.4</td></tr>
+            <tr><td></td><td>CMath (EM)</td><td>3</td><td>92.6</td><td>93.6</td><td class="q">90.9</td></tr>
+            <tr><td>Long Context</td><td>LongBench-V2 (EM)</td><td>1</td><td>40.2</td><td>44.7</td><td class="q">51.5</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details class="more wide">
+    <summary>表 7：Flash / Pro × Non-Think / High / Max 全表<span class="hint">表 7</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>基准（指标）</th><th>Flash Non-Think</th><th>Flash High</th><th>Flash Max</th><th>Pro Non-Think</th><th>Pro High</th><th class="q">Pro Max</th></tr></thead>
+          <tbody>
+            <tr><td>MMLU-Pro (EM)</td><td>83.0</td><td>86.4</td><td>86.2</td><td>82.9</td><td>87.1</td><td class="q">87.5</td></tr>
+            <tr><td>SimpleQA-Verified (Pass@1)</td><td>23.1</td><td>28.9</td><td>34.1</td><td>45.0</td><td>46.2</td><td class="q">57.9</td></tr>
+            <tr><td>Chinese-SimpleQA (Pass@1)</td><td>71.5</td><td>73.2</td><td>78.9</td><td>75.8</td><td>77.7</td><td class="q">84.4</td></tr>
+            <tr><td>GPQA Diamond (Pass@1)</td><td>71.2</td><td>87.4</td><td>88.1</td><td>72.9</td><td>89.1</td><td class="q">90.1</td></tr>
+            <tr><td>HLE (Pass@1)</td><td>8.1</td><td>29.4</td><td>34.8</td><td>7.7</td><td>34.5</td><td class="q">37.7</td></tr>
+            <tr><td>LiveCodeBench (Pass@1-COT)</td><td>55.2</td><td>88.4</td><td>91.6</td><td>56.8</td><td>89.8</td><td class="q">93.5</td></tr>
+            <tr><td>Codeforces (Rating)</td><td>-</td><td>2816</td><td>3052</td><td>-</td><td>2919</td><td class="q">3206</td></tr>
+            <tr><td>HMMT 2026 Feb (Pass@1)</td><td>40.8</td><td>91.9</td><td>94.8</td><td>31.7</td><td>94.0</td><td class="q">95.2</td></tr>
+            <tr><td>IMOAnswerBench (Pass@1)</td><td>41.9</td><td>85.1</td><td>88.4</td><td>35.3</td><td>88.0</td><td class="q">89.8</td></tr>
+            <tr><td>Apex (Pass@1)</td><td>1.0</td><td>19.1</td><td>33.0</td><td>0.4</td><td>27.4</td><td class="q">38.3</td></tr>
+            <tr><td>Apex Shortlist (Pass@1)</td><td>9.3</td><td>72.1</td><td>85.7</td><td>9.2</td><td>85.5</td><td class="q">90.2</td></tr>
+            <tr><td>MRCR 1M (MMR)</td><td>37.5</td><td>76.9</td><td>78.7</td><td>44.7</td><td>83.3</td><td class="q">83.5</td></tr>
+            <tr><td>CorpusQA 1M (ACC)</td><td>15.5</td><td>59.3</td><td>60.5</td><td>35.6</td><td>56.5</td><td class="q">62.0</td></tr>
+            <tr><td>Terminal Bench 2.0 (Acc)</td><td>49.1</td><td>56.6</td><td>56.9</td><td>59.1</td><td>63.3</td><td class="q">67.9</td></tr>
+            <tr><td>SWE Verified (Resolved)</td><td>73.7</td><td>78.6</td><td>79.0</td><td>73.6</td><td>79.4</td><td class="q">80.6</td></tr>
+            <tr><td>SWE Pro (Resolved)</td><td>49.1</td><td>52.3</td><td>52.6</td><td>52.1</td><td>54.4</td><td class="q">55.4</td></tr>
+            <tr><td>SWE Multilingual (Resolved)</td><td>69.7</td><td>70.2</td><td>73.3</td><td>69.8</td><td>74.1</td><td class="q">76.2</td></tr>
+            <tr><td>BrowseComp (Pass@1)</td><td>-</td><td>53.5</td><td>73.2</td><td>-</td><td>80.4</td><td class="q">83.4</td></tr>
+            <tr><td>HLE w/ tools (Pass@1)</td><td>-</td><td>40.3</td><td>45.1</td><td>-</td><td>44.7</td><td class="q">48.2</td></tr>
+            <tr><td>MCPAtlas Public (Pass@1)</td><td>64.0</td><td>67.4</td><td>69.0</td><td>69.4</td><td>74.2</td><td class="q">73.6</td></tr>
+            <tr><td>GDPval-AA (Elo)</td><td>-</td><td>-</td><td>1395</td><td>-</td><td>-</td><td class="q">1554</td></tr>
+            <tr><td>Toolathlon (Pass@1)</td><td>40.7</td><td>43.5</td><td>47.8</td><td>46.3</td><td>49.0</td><td class="q">51.8</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">注意两处 Max 不如 High：Flash 的 MMLU-Pro（86.2 &lt; 86.4）、Pro 的 MCPAtlas（73.6 &lt; 74.2）<span class="src">表 7</span>。</p>
+    </div>
+  </details>
+
+  <h3 class="prose">6.3 形式化数学（图 8，未裁图）</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Putnam-200 Pass@8（实用设定）<span class="tag">图 8 左</span></h4><p>PutnamBench 的固定随机子集，沿用 Seed-Prover 协议，但把专有搜索工具换成开源 LeanExplore。V4-Flash-Max <b>81.00</b>；Seed-2.0-Pro 35.50，Seed-1.5-Prover 与 Gemini-3-Pro 均为 26.50<span class="src">图 8</span>。Lean v4.28.0-rc1，最多 500 次工具调用<span class="src">§5.3.1</span>。</p></div>
+    <div class="card mod"><h4>Putnam-2025（重算力设定）<span class="tag">图 8 右</span></h4><p>先生成自然语言解并自验证过滤，再交给形式化 agent 证明 Lean 命题；只有严格验证器 Comparator 接受才算对。DeepSeek-V4 <b>120/120</b>，与 Axiom（120/120）持平；Seed-1.5-Prover 110/120，Aristotle 100/120<span class="src">图 8 · §5.3.1</span>。</p></div>
+  </div>
+
+  <h3 class="prose">6.4 真实场景评测（内部集，不可复现）</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>场景</th><th>对比</th><th>n</th><th>结果（V4 胜 / 对方胜 / 平）</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>中文功能写作</td><td>V4-Pro vs Gemini-3.1-Pro</td><td>3,170</td><td>62.65% / 34.10% / 3.25%</td><td><span class="src">表 12</span></td></tr>
+        <tr><td>中文创意写作 · 指令遵循</td><td>V4-Pro vs Gemini-3.1-Pro</td><td>2,837</td><td>60.03% / 39.44% / 0.53%</td><td><span class="src">表 13</span></td></tr>
+        <tr><td>中文创意写作 · 写作质量</td><td>V4-Pro vs Gemini-3.1-Pro</td><td>2,837</td><td>77.48% / 22.35% / 0.18%</td><td><span class="src">表 13</span></td></tr>
+        <tr><td>复杂指令 + 多轮写作</td><td>V4-Pro vs Claude-Opus-4.5</td><td>196</td><td>45.9% / <b>52.0%</b> / 2.0%（V4 落后）</td><td><span class="src">表 14</span></td></tr>
+        <tr><td>搜索：两种模式</td><td>Agentic Search vs RAG（均为 V4-Pro）</td><td>869</td><td>61.7% / 18.3% / 20.0%</td><td><span class="src">表 9</span></td></tr>
+        <tr><td>搜索：版本</td><td>V4-Pro vs V3.2</td><td>956</td><td>28.1% / 10.4% / <b>61.5%</b></td><td><span class="src">表 11</span></td></tr>
+        <tr><td>白领任务（人工盲评）</td><td>V4-Pro-Max vs Opus-4.6-Max</td><td>30 题</td><td>53% / 37% / 10%，「不输率」63%</td><td><span class="src">§5.4.3 · 图 11</span></td></tr>
+        <tr><td>R&amp;D Coding（pass rate）</td><td>V4-Pro-Max vs Claude 系列</td><td>30 题</td><td>V4-Pro-Max 67；Haiku 4.5 13、Sonnet 4.5 47、Opus 4.5 70、Opus 4.5 Thinking 73、Opus 4.6 Thinking 80</td><td><span class="src">表 8</span></td></tr>
+        <tr><td>开发者问卷</td><td>V4-Pro 能否当默认编码模型</td><td>85 人</td><td>是 52%，倾向是 39%，否 &lt; 9%</td><td><span class="src">§5.4.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">白领任务分项（图 11）：分析 55 / 8 / 37，生成 52 / 10 / 38，编辑 47 / 18 / 35（胜 / 平 / 负，%）。文字结论：V4 在任务完成度、内容质量上占优，指令遵循略逊 Opus，PPT 视觉设计「仍有很大提升空间」<span class="src">§5.4.3</span>。Agentic Search 每次平均 16.2 次工具调用，prefill 13,649 token、输出 1,526 token；RAG 为 10,453 / 1,308<span class="src">表 10</span>。</p>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig11.jpg" alt="白领任务示例输出：为奶茶品牌与北京地铁联合营销方案生成的四页 PPT，包括 UGC 传播与社交裂变设计、全年营销排期总览、站点使用频次与全域覆盖分析、分波段投资拆解与资源配置" loading="lazy"></div>
+    <figcaption><b>白领任务示例输出（节选 4 页）：为奶茶品牌与北京地铁起草联合营销方案。</b>页面包括 UGC 传播飞轮、全年 12 个月营销排期、各站点使用频次，以及按季度拆解的 500 万预算表。注意：素材清单把这张图标为「图 11」，核对原文后实为<b>图 13</b>（p.43）的示例输出，不是图 11 的胜率柱状图（图 11、12 本页未裁图）。<span class="from">来源：论文图 13</span></figcaption>
+  </figure>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">只列能在原文核对、且不是常规工程的点。Muon、OPD、mHC 都不是本文首提，新的是规模化的具体做法。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>CSA + HCA：两种压缩率的 KV 压缩注意力层交错</h4><p>CSA 在 DSA 之前先把 KV 压到 1/4（带重叠的加权压缩），HCA 压到 1/128 后直接做稠密注意力；两者共享「K = V 的单头 MQA + 分组输出投影 + 滑窗分支 + attention sink」，输出端还乘位置 −i 的 RoPE 以保留相对位置<span class="src">§2.3</span>。1M 时 V4-Pro 的 FLOPs / KV 分别为 V3.2 的 27% / 10%<span class="src">§1</span>。</p><p class="why">没有和「纯 DSA」或「只用 CSA」的同规模消融，压缩对质量的影响只能从表 1 / 表 6 的总体结果间接看。</p></div>
+    <div class="card nv"><h4>mHC 首次用到万亿参数 MoE 的预训练</h4><p>残差映射约束在双随机矩阵上，输入、输出映射用 Sigmoid 限幅；工程上墙钟开销 6.7%，mHC 里输出维度只有 24 的小矩阵乘也专门做了确定性 split-k<span class="src">§2.2 · §3.3 · §3.4.2</span>。</p><p class="why">方法来自 DeepSeek 自己的 mHC 论文（Xie et al. 2026）；本文没有 V4 规模的「有 / 无 mHC」对照。</p></div>
+    <div class="card nv"><h4>Muon 在 1.6T MoE 上的落地方案</h4><p>两段式混合 Newton-Schulz（8 + 2 步）；用 Q/KV RMSNorm 代替 QK-Clip；ZeRO 下用背包算法给稠密参数分桶（填充开销通常 &lt; 10%）；MoE 梯度随机舍入到 BF16 后先 all-to-all、再在本地用 FP32 求和，同步通信量减半<span class="src">§2.4 · §3.4.1</span>。</p><p class="why">「收敛更快、更稳」没有给出与 AdamW 的对照曲线。</p></div>
+    <div class="card nv"><h4>用全词表多教师 OPD 完全替代混合 RL</h4><p>10 个以上专家教师，保留完整 logit 分布计算 reverse KL；靠「只缓存教师最后一层 hidden state、按需重建 logit」「样本按教师排序」让全词表蒸馏在万亿参数教师上跑得起来<span class="src">§5.1.2 · §5.2.2</span>。</p><p class="why">没有和 V3.2 式混合 RL、或 token 级 OPD 的同底座对比。</p></div>
+    <div class="card nv"><h4>Anticipatory Routing：路由与主干错开更新</h4><p>用 Δt 步之前的参数算路由，打破「路由放大离群值 → loss spike」的循环；只在检测到 spike 时启用，平均额外开销「可忽略」<span class="src">§4.2.3</span>。</p><p class="why">作者明说原理未被充分理解；没有 spike 频率或 loss 曲线的定量对比。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这是纯文本 LLM 报告，没有图像，也没有 caption 流水线。可借鉴的在三处：预训练数据的「去模板化」过滤、后训练的格式与奖励设计、以及一整套带 n、分子类、含平局的内部评测。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>先过滤「批量生成、模板化」的内容</h4><p class="paper">论文：网页数据专门过滤批量自动生成和模板化内容，理由是降低 model collapse 风险<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据爬回来的源图里，AIGC 图、同一模板批量出的商品图、套版海报占比会越来越高。按版式 / 构图 embedding 聚类，同一簇只留少量；每个数据版本单独记录 AIGC 检测命中率，看它有没有悄悄上涨。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>按信息密度挑「长样本」</h4><p class="paper">论文：重点整理长文档，优先科学论文、技术报告等「有独特学术价值」的材料，以支撑 1M 上下文训练<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑源图按「保持难度」分层：多主体、含文字、有人脸、细纹理的复杂场景最考验非编辑区保持，应该优先进入数据。给每张源图打一个复杂度字段（主体数、OCR 文本量、人脸数），配比时按字段调权重，而不是按来源调。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>打包而不截断，并加样本级 mask</h4><p class="paper">论文：把不同来源的文档打包成序列以减少截断；与 V3 不同，预训练改用样本级 attention mask<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多图参考编辑、多轮编辑做序列打包时，同一序列里的不同样本必须用块对角 mask 隔开，否则参考图会被别的样本「看到」。长 caption 宁可单独成包也不要截断，截断会让「保持」类条款系统性缺失。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>失败样本不是随机丢的</h4><p class="paper">论文：rollout 被抢占时如果从头重生成，会引入长度偏差，因为短回答更容易熬过中断；所以用 token 级 WAL 断点续写<span class="src">§5.2.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>调编辑 API 或 VLM 打 caption 时，超时、报错、被限流的请求往往集中在大分辨率、复杂指令上。直接丢掉会让数据偏向简单样本。要记录失败并重试到底，再比较「请求分布」和「最终入库分布」在分辨率、指令长度、类别上的差异。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>从真实工作流采题，再狠狠过滤</h4><p class="paper">论文：R&amp;D Coding 集从 50+ 名工程师的真实工作里收了约 200 题，每题带原仓库、环境和人工 rubric，严格过滤后只留 30 题<span class="src">§5.4.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>内部编辑评测集从线上真实请求（脱敏后）里采，每条配「必须发生的变化」和「必须保持的内容」两段 rubric；留存率低没关系，30 条判得准的题胜过 300 条口径含糊的题。同时记录采样数和留存数。</p></div>
+    </div>
+
+    <div class="impl-group">caption 与指令格式</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>结构化格式要避开转义陷阱</h4><p class="paper">论文：工具调用改成 XML 式 <code>|DSML|</code> 块，字符串参数原样写入并用 <code>string="true"</code> 标注；作者称这样减少了转义失败和调用错误<span class="src">表 4 · §5.1.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>JSON caption 里一旦出现「把招牌改成 "Joe's"」这类带引号、换行的文字编辑，就容易出现解析失败。对含原文文字的字段用标签分隔或显式标类型；把 caption 解析失败率当作数据版本的固定指标。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>粒度档位要显式标出来</h4><p class="paper">论文：三档推理用不同响应格式区分；Max 档在 system prompt 开头注入固定指令；各档 RL 的长度惩罚不同<span class="src">表 2 · 表 3 · §5.1.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>短指令、中等描述、稠密 caption 三种粒度，用显式控制 token 或固定前缀区分后一起训练，推理时按需选择；不要把三种粒度混在同一格式里，让模型自己猜该写多长。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>辅助标签复用同一次前向</h4><p class="paper">论文：Quick Instruction 把「要不要搜索、领域、权威性需求、标题」等辅助任务变成追加的特殊 token，直接复用已有 KV cache，省掉单独的小模型<span class="src">表 5 · §5.1.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>captioner 读完图像和编辑对之后，在同一上下文后面追加几个专用 token，分别输出操作类型、领域、难度、是否涉及人像 / 文字，共享前缀的 KV，不必为每个元数据再跑一遍 VLM。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>判官用 rubric，并跟生成一起训</h4><p class="paper">论文：难验证任务不训标量奖励模型，改用带 rubric 的 RL 数据 + 生成式奖励模型；GRM 由 actor 自己担任，只需少量多样的人工标注<span class="src">§5.1.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑判官按逐条指令生成 rubric（变化项 + 保持项）再打分，比单一「整体分」更能定位失败。如果判官和被训模型共享参数，必须另留一份人工标注的判官校验集，定期检查判官和人工的一致率有没有下降。</p></div>
+    </div>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>用随机子集的期望，而不是 best-of-N</h4><p class="paper">论文：Codeforces 每题生成 32 个候选，随机抽 10 个、随机排序作为提交序列，对所有抽法求期望 rating<span class="src">§5.3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>每条编辑指令采 K 个 seed，报告「随机抽 k 个时的期望得分」和单 seed 均值，而不是挑最好的一张；展示样例如果是挑出来的，要写明挑选规则。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>成对比较要给每个子类的 n 和平局</h4><p class="paper">论文：写作、搜索的成对比较按子类列出条数和胜 / 负 / 平；V4 vs V3.2 搜索的平局率高达 61.5%<span class="src">表 9 · 表 11–13</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>GSB 盲测按编辑类别（加物、删物、换风格、改文字、人像）分别报 n 与 G/S/B。某类平局率很高时，要么两版真的没差别，要么这类题太容易，需要换更难的题。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>最难子集单独报</h4><p class="paper">论文：总体写作胜过 Gemini，但只看高复杂约束和多轮写作时，Opus 4.5 以 52.0% 对 45.9% 反超<span class="src">表 14 · §5.4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>维护一个「多约束 + 多轮编辑」的难题切片并单独报告；总体胜率很容易掩盖难题上的退步，而难题往往正是用户最在意的场景。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>人评拆维度，不要只给总分</h4><p class="paper">论文：白领任务人工盲评分 4 个维度：任务完成、指令遵循、内容质量、版式美观。结果 V4 完成度和质量占优，但指令遵循略逊<span class="src">§5.4.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑人评拆成指令完成、非编辑区保持、画质、美感四项分别打分。这几项经常此消彼长（改得多则完成度高、保持差），合成单一分数会把取舍藏起来。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>评测要能逐位复现</h4><p class="paper">论文：batch-invariant + 确定性 kernel 保证任一 token 的输出与它在 batch 中的位置无关，训练与推理逐位一致，用于调试和稳定性分析<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测固定 seed，并确认同一输入在不同 batch size 下输出一致；否则两次跑分的波动可能大于版本间的真实差异。先测一次「同版本重跑」的分差，作为判断改进是否显著的下限。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>几乎没有消融：</b>CSA/HCA、mHC、Muon、Anticipatory Routing、SwiGLU clamp、OPD 都没有同规模的「有 / 无」对照表；效率优势只有图 1 的估算曲线（等效 FP8 FLOPs）<span class="src">§1 · 图 1</span>。</li>
+    <li class="key"><b>数据配比全未披露：</b>只有「超过 32T」和定性描述；数学 / 代码 / 网页 / 长文档 / 多语种比例、过滤阈值、mid-training 的 Agent 数据量都没给，§4.2 也没有单列 mid-training 阶段<span class="src">§4.1 · §4.2</span>。</li>
+    <li class="key"><b>正文与表格不一致：</b>§5.3.2 说 V4-Pro-Max 在 MMLU-Pro、GPQA、HLE 上「略胜 Kimi 和 GLM」，但表 6 中 GPQA 为 90.1，低于 K2.6 的 90.5。「SimpleQA-Verified 领先所有开源基线 20 个百分点」：对 GLM-5.1 实际差 19.8<span class="src calc">推算</span><span class="src">表 6</span>。</li>
+    <li><b>「Base 全面领先」有例外：</b>正文称 V4-Pro-Base「几乎全面领先」，但 BigCodeBench（59.2 vs 63.9）、CMath（90.9 vs 92.6）低于 V3.2-Base；MGSM 也低于 V4-Flash-Base（84.4 vs 85.7）<span class="src">表 1 · §4.3.2</span>。</li>
+    <li><b>评测口径不统一：</b>代码 Agent 用内部框架（bash + 文件编辑，500 步，512K）；Terminal Bench 2.0 原始集有环境问题，Verified 子集分数约 72.0 只在正文提及；Codeforces 为内部集；V4-Pro-Max 做数学用专门模板；K2.6 / GLM-5.1 / GPT-5.4 多处空缺<span class="src">§5.3.1</span>。</li>
+    <li><b>Agent 搜索有短板：</b>HLE w/ tools 48.2 是表 6 六个模型里最低的；SWE Pro 55.4 低于 K2.6、GLM-5.1 和 GPT-5.4<span class="src">表 6</span>。</li>
+    <li><b>真实场景评测不可复现：</b>写作、搜索、白领、R&amp;D 集都是内部集，未公开；写作 / 搜索成对比较由谁判定没说明；白领任务只有 30 题，R&amp;D 集 30 题，开发者问卷 N = 85 且都是 DeepSeek 内部人员<span class="src">§5.4</span>。</li>
+    <li><b>后训练超参与规模缺失：</b>GRPO 超参只说「与先前工作接近」；各档长度惩罚、OPD 教师名单与权重、SFT / RL 数据量均未给<span class="src">§5.1</span>。</li>
+    <li><b>MRCR 的两个口径：</b>图 9 是 MRCR 8-needle 随输入长度的曲线（128K 内稳定，之后下降），表 6 / 表 7 是「MRCR 1M」单值，两者口径不同，不要直接对照<span class="src">图 9 · 表 6</span>。</li>
+    <li><b>作者自述：</b>预览版；为降低风险保留了很多「初步验证过」的组件，架构偏复杂；两项稳定性技巧原理不清；推理能力落后前沿闭源约 3–6 个月；尚无多模态能力，正在开发<span class="src">§1 · §6</span>。许可证全文未提及。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>首页基准柱状图 + 单 token FLOPs / KV cache 曲线（<code>figures/fig1.jpg</code>，p.1）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>图 2</td><td>V4 总体架构：CSA/HCA + DeepSeekMoE + mHC（<code>figures/fig2.jpg</code>，p.6）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 3</td><td>CSA 核心结构（<code>figures/fig3.jpg</code>，p.9）</td><td><a href="#arch">§03.1</a></td></tr>
+        <tr><td>图 4</td><td>HCA 核心结构（<code>figures/fig4.jpg</code>，p.11）</td><td><a href="#arch">§03.1</a></td></tr>
+        <tr><td>图 5</td><td>细粒度 EP 通信计算重叠示意（未裁图，仅文字引用）</td><td><a href="#train">§05.3</a></td></tr>
+        <tr><td>图 6</td><td>异构 KV cache 布局（未裁图，仅文字引用）</td><td><a href="#train">§05.3</a></td></tr>
+        <tr><td>图 7</td><td>Interleaved thinking 管理（未裁图，仅文字引用）</td><td><a href="#train">§05.3</a></td></tr>
+        <tr><td>图 8</td><td>形式化数学：Putnam-200 / Putnam-2025（未裁图，数字引自图中标注）</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>图 9</td><td>MRCR 8-needle 随输入长度变化（未裁图）</td><td><a href="#limits">§09</a></td></tr>
+        <tr><td>图 10</td><td>HLE / Terminal Bench 2.0 随推理档位与 token 数（未裁图）</td><td>—</td></tr>
+        <tr><td>图 11 / 12</td><td>白领任务胜率与分维度得分（未裁图；胜率数字引自图 11 标注）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>图 13</td><td>白领任务示例：奶茶品牌 × 北京地铁营销方案（<code>figures/fig11.jpg</code>，p.43；素材清单误标为图 11）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>图 14 / 15</td><td>白领任务示例：纳指定投策略对比、诺贝尔科学奖分析报告（未裁图）</td><td>—</td></tr>
+        <tr><td>表 1</td><td>Base 模型对比（V3.2 / V4-Flash / V4-Pro）</td><td><a href="#eval">§06.2</a></td></tr>
+        <tr><td>表 2 / 3</td><td>三档推理模式；Think Max 注入指令</td><td><a href="#data">§04.3</a></td></tr>
+        <tr><td>表 4</td><td>DSML 工具调用 schema</td><td><a href="#data">§04.3</a></td></tr>
+        <tr><td>表 5</td><td>Quick Instruction 特殊 token</td><td><a href="#data">§04.3</a></td></tr>
+        <tr><td>表 6</td><td>V4-Pro-Max vs 闭源 / 开源主表</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>表 7</td><td>Flash / Pro × 三档推理</td><td><a href="#eval">§06 图 · 折叠</a></td></tr>
+        <tr><td>表 8</td><td>R&amp;D Coding pass rate</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>表 9–11</td><td>搜索：Agentic vs RAG 胜率、成本；V4 vs V3.2</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>表 12–14</td><td>中文功能写作、创意写作、复杂指令 / 多轮写作</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>示意图</td><td>CSA / HCA 计算流程、层排布（本页绘制）；三张柱状图（本页据 §1、表 6、表 7 绘制）</td><td><a href="#arch">§03</a> · <a href="#eval">§06</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 DeepSeek-AI《DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence》（<a href="https://arxiv.org/abs/2606.19348" target="_blank" rel="noopener">arXiv:2606.19348</a> v1，2026-04-26）撰写。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

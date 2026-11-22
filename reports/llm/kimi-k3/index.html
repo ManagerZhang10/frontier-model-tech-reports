@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kimi K3 中文深读 · 2.8T 开源 MoE：KDA + AttnRes + Stable LatentMoE + 从零训练的视觉塔 | 前沿模型技术报告</title>
+<meta name="description" content="Moonshot AI arXiv 2607.24653 中文深读：2.8T 总参 / 104B 激活、1M 上下文、原生视觉的开源 MoE。KDA:MLA 3:1 混合注意力、Attention Residuals、896 专家激活 16 个的 Stable LatentMoE、从零 next-token 训练的 MoonViT-V2；3 域 × 3 档推理强度共 9 个 RL 专家，再做多教师 on-policy 蒸馏。附数据构建、评测口径，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: architecture schematic + small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-good { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.3; }
+.archsvg .box-dash { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.archsvg .ln-warm { stroke: var(--warm); stroke-width: 1.3; fill: none; stroke-dasharray: 4 3; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-w { fill: var(--warm); }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.rl-grid { display: grid; grid-template-columns: auto repeat(3, 1fr); gap: 4px; font-size: .8rem; margin: 8px 0 4px; }
+.rl-grid span { padding: 3px 6px; border-radius: 6px; background: var(--bg-accent); border: 1px solid var(--line); text-align: center; }
+.rl-grid span.h { background: none; border: none; color: var(--muted); font: 600 .72rem/1.6 var(--f-mono); }
+.rl-grid span.r { text-align: left; font-weight: 600; background: none; border: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>Kimi K3<span class="sub">Open Frontier Intelligence：2.8T 开源 MoE，KDA 混合注意力 + Attention Residuals + 896 专家，视觉塔从零训练</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Moonshot AI</b>（Kimi Team）</span>
+      <span>发布 <b>2026-07-27</b>（arXiv v1）</span>
+      <span>arXiv <b>2607.24653</b></span>
+      <span>本页依据 <b>v2</b>（2026-08-07）全文核对</span>
+    </div>
+    <p class="lede">一句话：把开源底座从 1T 级推到 <b>2.8T 总参 / 104B 激活</b>，同时把 RL 推到 <b>1M 上下文</b>的长程 Agent 任务<span class="src">摘要 · §1</span>。架构上用 <b>KDA:Gated MLA = 3:1</b> 的混合注意力、沿深度做注意力的 <b>AttnRes</b>、<b>896 选 16</b> 的 Stable LatentMoE，加上数据与训练配方，作者称综合 scaling 效率约为 Kimi K2 的 <b>2.5×</b><span class="src">§2 · 图 7</span>。视觉塔 MoonViT-V2 <b>不再用 SigLIP 初始化</b>，与 LLM 一起从零做 next-token 训练<span class="src">§2.4</span>。整体仍落后 Claude Fable 5 与 GPT-5.6 Sol<span class="src">摘要</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>开源完整权重（摘要 · §1）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>2.8T 总参 / 104B 激活 · MoE</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>1M 上下文 · 原生视觉</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>LLM · Agent / Coding / 多模态</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2607.24653" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2607.24653</a>
+      <a href="https://arxiv.org/pdf/2607.24653" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://huggingface.co/moonshotai/Kimi-K3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>Hugging Face 权重</a>
+      <a href="https://github.com/MoonshotAI/MoonEP" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>MoonEP</a>
+      <a href="https://github.com/kvcache-ai/AgentENV" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>AgentENV 沙箱</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">胶囊 <span class="src">§2.1</span> = 原文出处；<span class="src calc">推算</span> = 本页计算；<span class="nd">原文未披露</span></div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">参数规模</div><div class="stat-num">2.78T / 104.2B</div><div class="stat-sub">总参 / 激活；K2 为 1.04T / 32.6B</div><span class="src">表 1</span></div>
+    <div class="card stat"><div class="stat-k">上下文</div><div class="stat-num">1M</div><div class="stat-sub">8K → 64K → 256K → 1M 四段课程；K2 训练长度 128K</div><span class="src">§3.4 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">层结构</div><div class="stat-num sm">93 层 = 69 KDA + 24 MLA</div><div class="stat-sub">每块 3 KDA + 1 Gated MLA，末尾再加 1 层 MLA</div><span class="src">§2.1 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">MoE</div><div class="stat-num sm">896 选 16 · 2 共享</div><div class="stat-sub">稀疏度 56；latent 维 3584（0.5× hidden）</div><span class="src">§2.3 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">视觉塔 MoonViT-V2</div><div class="stat-num sm">401M · 27 层 · patch 14</div><div class="stat-sub">从零 next-token 训练，图像 / 视频共享参数</div><span class="src">§2.4 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">Scaling 效率</div><div class="stat-num">≈2.5×</div><div class="stat-sub">相对 K2，架构 + 数据 + 配方的合计效果</div><span class="src">§3.2 · 图 7</span></div>
+    <div class="card stat"><div class="stat-k">RL 专家</div><div class="stat-num">9 个</div><div class="stat-sub">3 个域 × {low, high, max}，再 MOPD 合一</div><span class="src">§4.1.2</span></div>
+    <div class="card stat"><div class="stat-k">训练 + 评测沙箱</div><div class="stat-num sm">51,219,741 个</div><div class="stat-sub">覆盖 1,505,678 个镜像</div><span class="src">§5.3.2</span></div>
+    <div class="card stat"><div class="stat-k">BrowseComp</div><div class="stat-num">91.2</div><div class="stat-sub">表内最高；每任务 $2.03</div><span class="src">表 2 · §6.4</span></div>
+    <div class="card stat"><div class="stat-k">发布</div><div class="stat-num sm">2026-07-27</div><div class="stat-sub">arXiv v1；本页核对的 PDF 为 v2（2026-08-07）</div><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>开源底座直接上 3T 级，约为 K2 的 2.7 倍</h3><p>总参 1.04T → 2.78T（+167%），激活 32.6B → 104.2B（+220%），层数 61 → 93<span class="src">表 1</span>（2.78 / 1.04 ≈ 2.7<span class="src calc">推算</span>）。作者的理由：开源在 test-time scaling 上进步快，预训练规模却停在 1T 级附近，两条轴要一起推<span class="src">§1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>三个方向同时改：序列、深度、宽度</h3><p>序列：KDA 线性注意力 + 每 4 层一层 NoPE Gated MLA；深度：AttnRes 让每层对之前的块输出做 softmax 选择；宽度：LatentMoE 在 3584 维 latent 里跑 896 个专家，加 RMSNorm、SiTU-GLU（输出上界 100）和 Quantile Balancing 稳住<span class="src">§2.1–2.3</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>视觉塔不再从 SigLIP 初始化</h3><p>SigLIP 初始化的 MoonViT-3D 联合训练时梯度范数持续偏高、频繁尖峰；从零 next-token 训练的 MoonViT-V2 稳定，作者称视觉评测与基线「持平」——但这句话没给数字<span class="src">§2.4 · 图 6</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>RL：9 个专家 → 多教师 on-policy 蒸馏</h3><p>通用 / 通用 Agent / 编码 Agent 三域各训 low、high、max 三档，靠「超预算奖励置 −1」的 τ 退火得到不同档位；最后按 (域, 档位) 选老师做逐 token 截断 log 比奖励的 MOPD<span class="src">§4.1.2–4.1.3 · 式 15</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>成绩接近但没超过最强闭源；数据量几乎全没给</h3><p>DeepSWE 67.5 vs GPT-5.6 Sol 73.0、HLE-Full 带工具 56.0 vs Fable 5 63.0；SWE-Marathon 42.0、BrowseComp 91.2 表内第一<span class="src">表 2</span>。预训练 token 总量、配比、SFT 条数、RL 步数均<span class="nd">原文未披露</span>，见 <a href="#limits">§09</a>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：token / channel / layer 三向混合 + 原生视觉通路</h2>
+  <p class="sec-intro">图 2 是原文的架构总览。右侧主干：每块 3 层 KDA + 1 层 Gated MLA，每个注意力层后接一层 Stable LatentMoE；紫红色连线是 AttnRes。左上展开 LatentMoE，左下展开 KDA，右下是视觉通路。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Kimi K3 架构总览：KDA 与 Gated MLA 3:1 混合块、Stable LatentMoE、Attention Residuals、MoonViT-V2 视觉通路" loading="lazy"></div>
+    <figcaption><b>Kimi K3 架构总览。</b>右：一个块内先 3×（KDA + Stable LatentMoE），再 1×（Gated MLA + Stable LatentMoE）；每个模块前有可学习伪 query <i>w</i>，对 embedding 与之前各块输出算注意力权重 α（AttnRes）。左上：2 个共享专家走全宽通路，路由专家在 Linear 降维后的 latent 空间里计算，聚合后过 Norm 再升维。左下：KDA 的 q/k 走 Linear → Conv → L2，输出经 Norm 后与 σ 门相乘。右下：MoonViT-V2 → MLP → Embedding（裁图底部略有截断）。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 360" role="img" aria-label="Kimi K3 主干配置示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-w" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <!-- input -->
+      <rect class="box-good" x="20" y="290" width="200" height="50" rx="9"/>
+      <text class="t" x="34" y="312">MoonViT-V2</text><text class="s" x="34" y="330">401M · 27 层 · patch 14 · 12 头</text>
+      <rect class="box" x="20" y="222" width="200" height="44" rx="9"/>
+      <text class="t" x="34" y="242">pixel-shuffle 2×2 + MLP</text><text class="s" x="34" y="258">视觉 token 减为 1/4</text>
+      <path class="ln" d="M120 290 V270" marker-end="url(#ah)"/>
+      <rect class="box" x="20" y="150" width="200" height="48" rx="9"/>
+      <text class="t" x="34" y="171">共享 Embedding</text><text class="s" x="34" y="189">文本词表 160K · hidden 7,168</text>
+      <path class="ln" d="M120 222 V202" marker-end="url(#ah)"/>
+      <path class="ln" d="M220 174 H262" marker-end="url(#ah)"/>
+      <!-- backbone -->
+      <rect class="box-dash" x="266" y="20" width="350" height="300" rx="12"/>
+      <text class="s" x="282" y="40">混合块 ×N（重复贯穿主干）</text>
+      <rect class="box-acc" x="282" y="236" width="150" height="40" rx="8"/><text class="t" x="294" y="261">KDA ×3</text>
+      <rect class="box-acc" x="282" y="176" width="150" height="40" rx="8"/><text class="t" x="294" y="196">Gated MLA ×1</text><text class="m" x="294" y="210">NoPE · 全秩输出门</text>
+      <rect class="box-warm" x="450" y="206" width="150" height="70" rx="8"/><text class="t" x="462" y="230">Stable LatentMoE</text><text class="s" x="462" y="248">每个注意力层后一层</text><text class="w" x="462" y="266">896 选 16 + 2 共享</text>
+      <path class="ln" d="M357 236 V220" marker-end="url(#ah)"/>
+      <text class="m" x="282" y="300">3:1 混合 · 共 69 KDA + 24 MLA = 93 层</text>
+      <rect class="box-acc" x="282" y="70" width="318" height="40" rx="8"/><text class="t" x="294" y="88">末尾额外 1 层 Gated MLA</text><text class="s" x="294" y="104">保证最后一层总是全局注意力</text>
+      <path class="ln" d="M440 176 V114" marker-end="url(#ah)"/>
+      <!-- output -->
+      <rect class="box" x="660" y="70" width="200" height="40" rx="9"/><text class="t" x="674" y="95">输出 + 1 层 MTP</text>
+      <path class="ln" d="M600 90 H656" marker-end="url(#ah)"/>
+      <!-- attnres -->
+      <rect class="box-warm" x="660" y="160" width="200" height="116" rx="9"/>
+      <text class="t" x="674" y="184">AttnRes（Block 版）</text>
+      <text class="s" x="674" y="204">按 12 层一块分 8 块（末块不满）</text>
+      <text class="s" x="674" y="222">+ embedding = 9 个深度方向的源</text>
+      <text class="s" x="674" y="240">每层伪 query w 对块表示做 softmax</text>
+      <text class="w" x="674" y="262">memory O(Ld) → O(Nd)</text>
+      <path class="ln-warm" d="M660 218 H616" marker-end="url(#ahw)"/>
+    </svg>
+    <div class="cap">示意，本页据图 2、表 1、§2.1–2.4 绘制。KDA 与 MLA 的 3:1 排布、末尾额外 MLA、AttnRes 的 8 块 / 9 源均为原文所述；69 + 24 与「23 个混合块 + 末尾 1 层 MLA」吻合<span class="src calc">推算</span>，但原文没写块数。表 1 另列「1 层 dense」，它位于哪一层原文未说明，未画。</div>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>模块</th><th>相对 K2 / Kimi Linear 的改动</th><th>原文给的证据</th></tr></thead>
+      <tbody>
+        <tr><td>KDA 下界衰减</td><td>衰减从 −e<sup>A</sup>·Softplus(z) 改为 g<sub>min</sub>·Sigmoid(e<sup>A</sup>z)，g<sub>min</sub> = −5：单步保留率 &gt; e<sup>−5</sup> ≈ 6.7×10<sup>−3</sup>，16-token tile 内累计 log 衰减落在 (−80, 0)，倒数缩放 &lt; e<sup>80</sup>，在 BF16 范围内<span class="src">§2.1.1 · 式 5</span></td><td>数值推导 + 图 3：对角 tile 也能走 Tensor Core 稠密矩阵乘；没给速度数字</td></tr>
+        <tr><td>全秩输出门</td><td>KDA 与 MLA 的输出门都从低秩改为输入相关的全秩投影<span class="src">式 6 · 式 7</span></td><td>无消融</td></tr>
+        <tr><td>MLA → NoPE</td><td>K2 / K2.5 的 MLA 带位置编码；K3 所有 MLA 层不加位置编码，位置信息交给 KDA，扩上下文不必调 RoPE / YaRN<span class="src">§2.1.2 · §3.4</span></td><td>直接外推到 1M，没有单独长度外推对比</td></tr>
+        <tr><td>FP32 注意力输出</td><td>为纠正 flash attention 的有偏舍入，训练时注意力输出保持 FP32，并重排 kernel 共享内存<span class="src">§2.1.2</span></td><td>—</td></tr>
+        <tr><td>AttnRes</td><td>标准残差把历史压成单个 h<sub>l</sub>；AttnRes 让每层用伪 query 对 embedding 与前面各块的输出做 softmax（key 先 RMSNorm）<span class="src">§2.2 · 式 8–10</span></td><td>N ≈ 8 「回收大部分收益」引自 AttnRes 原论文 [58]，本文未单独报</td></tr>
+        <tr><td>Stable LatentMoE</td><td>384 → 896 路由专家，8 → 16 激活，共享专家 1 → 2，专家中间维 2,048 → 3,072；路由专家在 3584 维 latent 中计算<span class="src">表 1 · §2.3</span></td><td>RMSNorm「稳定训练且稳定改善验证 loss 与下游」——无数字</td></tr>
+        <tr><td>SiTU-GLU</td><td>β<sub>1</sub> tanh(W<sub>g</sub>x/β<sub>1</sub>) ⊙ σ(W<sub>g</sub>x) ⊙ β<sub>2</sub> tanh(W<sub>u</sub>x/β<sub>2</sub>)，β<sub>1</sub> = 4、β<sub>2</sub> = 25，逐坐标 |输出| ≤ 100；原点附近一阶等于 SwiGLU<span class="src">式 12 · 附录 B</span></td><td>「比硬裁剪训练表现更好」——无数字</td></tr>
+        <tr><td>Quantile Balancing</td><td>无辅助损失路由；不再按固定步长 γ 调 bias，而是取 Top-(k+1) 得截断 α，令 bias 为 margin 的 (1 − k/n) 分位数，下一步才生效；全局分位数用直方图 + 一次 all-reduce 估计（每专家几百个 bin）<span class="src">§2.3.3 · 式 14</span></td><td>图 5 玩具示例（8 token、4 专家，负载 (4,3,1,0) → (2,2,2,2)）；附录 C、D 给推导与误差界</td></tr>
+        <tr><td>Per-Head Muon</td><td>Q/K/V 动量按头切块分别做 Newton–Schulz 正交化，沿用 K2 的 weight clipping<span class="src">§2.5 · §3.3</span></td><td>定性：更均衡、更稳，优化器开销略降</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="KDA 下界衰减：log-decay 曲线与对角 tile 计算方式对比" loading="lazy"></div>
+    <figcaption><b>下界衰减让对角 tile 也能用 Tensor Core。</b>左：灰线 Kimi Linear 的 −e<sup>A</sup>Softplus(z) 无下界，红线 K3 的 g<sub>min</sub>Sigmoid(e<sup>A</sup>z) 收敛到 −5（A = 0）。右：Kimi Linear 对角 tile（橙）需逐位置对计算，K3 全部因果 tile（蓝）走稠密矩阵乘。本页所用裁图为该图局部。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <h3 class="prose">3.1 原生视觉通路</h3>
+  <div class="prose">
+    <ul>
+      <li><b>同一 backbone、同一上下文</b>处理文本、图像、视频，没有事后对齐阶段；代码和它渲染出的截图 / 视频帧在同一 token 流里，模型可以写代码 → 看结果 → 再改<span class="src">§2.4</span>。</li>
+      <li><b>MoonViT-V2 结构</b>：27 层 ViT、约 0.4B，RMSNorm，线性与注意力投影全部去掉 bias（作者称进一步稳住从零训练）；图像与视频完全共享参数，注意力分解为帧内空间 + 帧间时间两遍，再做时间池化；投影前 pixel-shuffle 2×2 下采样，视觉 token 降为 1/4，使 3584 × 3584 的输入在 1M 上下文内可承受<span class="src">§2.4</span>。按 patch 14 算，一张 3584² 图约 16,384 个视觉 token<span class="src calc">推算</span>（未计入可能的特殊 token）。</li>
+      <li><b>为什么不用 SigLIP 初始化</b>：主要是训练稳定性；其次 next-token 目标让编码器表示直接受语言建模塑形，而对比损失「偏全局语义、轻细粒度文本与结构线索」<span class="src">§2.4</span>。</li>
+    </ul>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="视觉塔梯度范数：SigLIP 初始化 MoonViT-3D 对比从零训练 MoonViT-V2" loading="lazy"></div>
+    <figcaption><b>视觉塔梯度范数（预训练消融）。</b>左为全程（横轴约 7k–30k 步），右为 14k–16k 步放大。按原文描述，持续偏高、尖峰更多的一条是 SigLIP 初始化的 MoonViT-3D，较低平稳的是从零训练的 MoonViT-V2。消融的模型规模与 token 数原文未给。本页所用裁图为该图局部。<span class="from">来源：论文图 6</span></figcaption>
+  </figure>
+
+  <details class="more wide">
+    <summary>表 1 全量：K2 vs K3 架构对照 <span class="hint">表 1</span></summary>
+    <div class="body">
+      <div class="tbl-wrap"><table class="txt">
+        <thead><tr><th>项</th><th>Kimi K2</th><th>Kimi K3</th><th>变化</th></tr></thead>
+        <tbody>
+          <tr><td>层数</td><td>61</td><td>93</td><td>↑ 52%</td></tr>
+          <tr><td>总参</td><td>1.04T</td><td>2.78T</td><td>↑ 167%</td></tr>
+          <tr><td>激活参数</td><td>32.6B</td><td>104.2B</td><td>↑ 220%</td></tr>
+          <tr><td>Hidden</td><td>7,168</td><td>7,168</td><td>=</td></tr>
+          <tr><td>Latent MoE 维</td><td>–</td><td>3584（0.5×）</td><td>–</td></tr>
+          <tr><td>每专家 MoE 中间维</td><td>2,048</td><td>3,072</td><td>↑ 50%</td></tr>
+          <tr><td>路由专家</td><td>384</td><td>896</td><td>↑ 133%</td></tr>
+          <tr><td>每 token 激活专家</td><td>8</td><td>16</td><td>↑ 100%</td></tr>
+          <tr><td>共享专家</td><td>1</td><td>2</td><td>↑ 100%</td></tr>
+          <tr><td>注意力头</td><td>64</td><td>96</td><td>↑ 50%</td></tr>
+          <tr><td>Dense 层数</td><td>1</td><td>1</td><td>=</td></tr>
+          <tr><td>词表</td><td>160K</td><td>160K</td><td>=</td></tr>
+          <tr><td>训练上下文</td><td>128K</td><td>1M</td><td>8×</td></tr>
+          <tr><td>注意力</td><td>MLA</td><td>Hybrid KDA–MLA</td><td>–</td></tr>
+          <tr><td>激活函数</td><td>SwiGLU</td><td>SiTU-GLU</td><td>–</td></tr>
+          <tr><td>注意力层构成</td><td>61 MLA</td><td>69 KDA + 24 MLA</td><td>–</td></tr>
+          <tr><td>MTP 层</td><td>1</td><td>1</td><td>=</td></tr>
+          <tr><td>ViT 参数 / 层数 / patch / 头数</td><td>–</td><td>401M / 27 / 14 / 12</td><td>–</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：管线沿用 K2 / K2.5，新增量在程序化多模态与长程环境</h2>
+  <p class="sec-intro">预训练数据一节很短（§3.1 两段），大部分「数据」信息其实在长上下文数据（§3.4）、SFT（§4.1.1）和 RL 任务合成（§4.2）里。<b>没有任何比例或 token 数</b>，所以本节不画配比条，只列「做了什么」与「已披露规模」。</p></div>
+
+  <h3 class="prose">4.1 预训练语料</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>文本：四大域 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>Web Text、Code、Mathematics、Knowledge 四个主域。</li>
+        <li>每个域：规则启发式 + 分类器质量打分 + 去重。</li>
+        <li><b>域采样率</b>由小模型消融决定（具体比例<span class="nd">原文未披露</span>）。</li>
+        <li><b>改写</b>沿用 K2 配方，只用于知识与数学语料：风格 / 视角多样的 prompt、分块自回归生成、<b>对照源文档做保真校验</b>。</li>
+      </ul></div>
+    <div class="card mod"><h4>视觉：沿用 K2.5 分类体系 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>六类：caption、图文交错文档、OCR、感知、视频、visual coding。</li>
+        <li>开源集合 + 自研过滤、合成、去重管线。</li>
+        <li><b>坐标监督同时给绝对坐标与 [0,1] 归一化坐标</b>，兼顾精确定位与分辨率鲁棒。</li>
+        <li>除经典 caption 图像外，<b>大幅扩充程序化多模态数据</b>：代码片段与其渲染结果配对，格式覆盖 SVG、3D 资产、网页、游戏、CAD 图纸。</li>
+      </ul></div>
+  </div>
+
+  <div class="cats wide">
+    <div class="card cat"><b>V1</b>caption 图像</div>
+    <div class="card cat"><b>V2</b>图文交错文档</div>
+    <div class="card cat"><b>V3</b>OCR</div>
+    <div class="card cat"><b>V4</b>感知（含坐标监督）</div>
+    <div class="card cat"><b>V5</b>视频</div>
+    <div class="card cat"><b>V6</b>visual coding / 程序化（SVG · 3D · Web · Game · CAD）</div>
+  </div>
+  <p class="footnote wide">六类来自 §3.1 原文枚举；各类的量与占比<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.2 长上下文数据：清洗 → 上采样 → 合成</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>清洗</span><span>保长</span><span>造长程依赖</span></div>
+    <div class="pipe-row"><div class="lbl">长文档 / 长视频</div>
+      <div class="chip">精确 + 模糊去重；视频帧做<b>感知哈希</b>；启发式 + 分类器质量过滤；<b>结构校验</b></div>
+      <div class="chip m">真正长且连贯的样本稀缺 → <b>上采样</b>，避免 cooldown 被短序列淹没</div>
+      <div class="chip o">把多模态文档与子任务<b>置换、拼接</b>，让嵌入的任务只能靠读完 1M 上下文里分散的信息解出</div>
+    </div>
+  </div>
+  <p class="footnote wide">要剔除的低质内容原文点名：近重复、二进制块、截断文件、（低质）视频片段、无效的机器生成日志。作者的判断：「长度本身不带来长程能力」，合成任务是为了防止注意力退化成局部模式<span class="src">§3.4</span>。</p>
+
+  <h3 class="prose">4.3 SFT 数据</h3>
+  <div class="prose">
+    <ul>
+      <li>在前几代 Kimi SFT 管线上扩充，重点补<b>复杂 Agent 任务</b>覆盖<span class="src">§4.1.1</span>。</li>
+      <li>轨迹由前代 Kimi 的<b>领域专精模型</b>合成 → <b>多阶段验证</b> → <b>人在回路标注</b><span class="src">§4.1.1</span>。条数<span class="nd">原文未披露</span>。</li>
+      <li>所有数据统一序列化为 <b>XTML</b> 模板：[open] / [sep] / [close] 三个保留 token 替代尖括号；think / response / tools 三个 channel；并行工具调用带 index，参数带类型（字符串原样写，不做 JSON 转义）；无法拆成类型化参数的 JSON fallback 只出现在输入侧，<b>训练时 mask 其 loss</b><span class="src">附录 F</span>。</li>
+      <li>推理档位、tool_choice、response_format 都写成一句自然语言放进上下文，而不是专用语法；一次性选项放在历史消息之后，改选项不破坏历史 KV cache<span class="src">附录 F · 图 16</span>。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">4.4 RL 任务合成与环境</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig9.jpg" alt="知识图谱引导的任务合成：分层概念节点与任务类型选择" loading="lazy"></div>
+    <figcaption><b>知识图谱引导的任务合成。</b>分层知识图谱从粗粒度领域（数学、物理、化学…）展开到细粒度概念；采样相关节点组成关键词集，检索公开材料（论文、博客、代码仓库），每个实例选一种任务类型（Coding / Knowledge / Vision …）合成任务。本页所用裁图为该图局部（底部图谱与 Task Synthesis 框）。<span class="from">来源：论文图 9</span></figcaption>
+  </figure>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>环境</th><th>怎么造</th><th>奖励 / 验证</th></tr></thead>
+      <tbody>
+        <tr><td>统一白盒环境</td><td>把 harness 拆成可组合模块（工具接口、system prompt、上下文管理、skills、memory、subagent…），可拼出 Kimi Code、Claude Code、Codex、OpenClaw、Hermes 及新组合；训练时按任务组动态换配置，防止过拟合单一工具 schema<span class="src">§4.2.1</span></td><td>—</td></tr>
+        <tr><td>知识图谱任务</td><td>DAG 知识图谱由 Agent 递归扩展：每个节点派一个 Agent 多次搜索，加节点前先查重复用，边始终从粗到细，Agent 判断「足够原子」时停止；按目标分布采样节点 + 祖先上下文构造检索 query<span class="src">§4.2.2</span></td><td>—</td></tr>
+        <tr><td>可验证 Agent 问题</td><td>多步信息检索；投行、数据分析、法律等专业工作（几十到几百步）；STEM / 视觉谜题 / 图表的多步视觉推理<span class="src">§4.2.3</span></td><td>可验证答案；视觉推理在沙箱 Python 里反复裁剪、放大、变换图像，生成的图像作为新观测</td></tr>
+        <tr><td>Kernel 优化</td><td>单算子到融合 mega-kernel，来源如 Flash Linear Attention；CUDA / Triton / CuTe DSL / Gluon / ThunderKittens / TileLang；BF16 / FP8 / FP4<span class="src">§4.2.4</span></td><td>超数值误差阈值 → 0；<b>持平专家实现 = 0.5</b>，逼近 roofline → 1；反作弊检测 CUDA graph replay、输入缓存、降精度，并持续加新规则</td></tr>
+        <tr><td>个人助理</td><td>Gmail、Notion、Slack、Canvas 等 mock 应用；HR、法务、金融场景，跨多个模拟日、几十个相互依赖事件；初始工作区由 Agent 上网找材料搭建<span class="src">§4.2.5</span></td><td>每个事件自带判据：确定性规则或 LLM 评估器；单条 rollout 可达数千次工具调用、数百万上下文 token</td></tr>
+        <tr><td>自主执行（AET）</td><td>给初始状态、受约束目标、工具动作空间、执行预算和独立 verifier；无参考轨迹；例：黑盒系统复刻、量化因子发现、税务审计<span class="src">§4.2.6</span></td><td>按最终环境状态判，不看 Agent 自报完成；公开 verifier 给诊断反馈 + 隐藏 verifier 测留出场景；提交次数有限且带惩罚</td></tr>
+        <tr><td>Web 开发</td><td>专家整理；输入从一句话到多段规格；产物含网站、游戏、3D/WebGL、可视化、SVG、全栈应用；多种 scaffold 下 rollout<span class="src">§4.2.7</span></td><td>确定性检查（功能测试；复刻类加结构与像素相似度）+ 内部奖励模型判（读源码或看 / 交互产物）；构建失败、运行报错或「假装实现」→ 0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">4.5 已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>项</th><th>原文给的</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>预训练 token 总量</td><td>—</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>文本四域 / 视觉六类占比</td><td>「由小模型消融决定」<span class="src">§3.1</span></td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>改写数据量与保真校验通过率</td><td>—</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>长上下文数据量 / 上采样倍数</td><td>—</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>SFT 条数</td><td>「large-scale」<span class="src">§4.1.1</span></td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>RL 任务数 / 步数</td><td>—</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>沙箱</td><td>51,219,741 个沙箱、1,505,678 个镜像（训练 + 评测合计）<span class="src">§5.3.2</span></td><td>已披露</td></tr>
+        <tr><td>单个 RL 实验算力</td><td>1M 上下文 RL 实验控制在「几百张 GPU」内<span class="src">§5.3.1</span></td><td>量级</td></tr>
+        <tr><td>单图输入上限</td><td>3584 × 3584 像素<span class="src">§2.4</span></td><td>已披露</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方</h2></div>
+
+  <div class="mini-h wide">基座：原生多模态联合训练，四段上下文课程</div>
+  <div class="flow wide">
+    <div class="card stage"><div class="sid">P1</div><h4>预训练</h4><dl><dt>上下文</dt><dd>8K</dd></dl><p>文本与视觉 token 交错在同一 next-token 目标里，从第一步就联合训练<span class="src">§3.3</span></p></div>
+    <div class="card stage"><div class="sid">P2</div><h4>预训练后段</h4><dl><dt>上下文</dt><dd>64K</dd></dl><p>「后续训练阶段」扩到 64K<span class="src">§3.3 · §3.4</span></p></div>
+    <div class="card stage"><div class="sid">C1</div><h4>Cooldown</h4><dl><dt>上下文</dt><dd>256K</dd></dl><p>长文档 / 视频上采样 + 合成长程任务<span class="src">§3.4</span></p></div>
+    <div class="card stage"><div class="sid">C2</div><h4>Cooldown</h4><dl><dt>上下文</dt><dd>1M</dd></dl><p>NoPE，无需改位置编码；长序列靠 KDA Context Parallelism<span class="src">§3.4 · §5.1.2</span></p></div>
+  </div>
+  <p class="footnote wide">优化器 Per-Head Muon + K2 的 weight clipping；MoE 负载用 QB；cosine 学习率、1% 线性 warm-up、weight decay 0.1<span class="src">§3.3</span>。scaling law 研究重调了 batch size、学习率、TPP 和模型形状，但<b>具体取值都没给</b>；各自独立搜索超参后 cosine 的最终 loss 一直低于 WSD<span class="src">§3.2</span>。各阶段 token 数<span class="nd">原文未披露</span>。</p>
+
+  <div class="mini-h wide">后训练：SFT → 9 个 RL 专家 → MOPD</div>
+  <div class="post-flow wide">
+    <div class="card stage"><div class="sid">S</div><h4>SFT（冷启动）</h4>
+      <ul><li>前代专精模型合成轨迹 + 多阶段验证 + 人工标注</li><li>XTML 模板</li><li>从 SFT 起做 QAT：专家权重 MXFP4、激活 MXFP8<span class="src">§4.1.1</span></li></ul></div>
+    <div class="card stage"><div class="sid">RL</div><h4>3 域 × 3 档 = 9 个专家</h4>
+      <div class="rl-grid">
+        <span class="h"></span><span class="h">low</span><span class="h">high</span><span class="h">max</span>
+        <span class="r">通用</span><span>●</span><span>●</span><span>●</span>
+        <span class="r">通用 Agent</span><span>●</span><span>●</span><span>●</span>
+        <span class="r">编码 Agent</span><span>●</span><span>●</span><span>●</span>
+      </div>
+      <ul><li>partial rollout：完成比例达 λ 即暂停，未完成的下轮优先续跑；逐 token 正则容忍陈旧数据<span class="src">§4.1.2</span></li>
+      <li>档位：按冷启动模型估每题预算 b<sub>0</sub>，超过 τ·b<sub>0</sub> 奖励置 −1；先大 τ 训 max，再退火得 high / low</li></ul></div>
+    <div class="card stage"><div class="sid">OPD</div><h4>多教师 On-Policy 蒸馏</h4>
+      <ul><li>按 (域 d, 档位 e) 选对应老师</li>
+      <li>逐 token 奖励 = clip(sg(log π<sub>teacher</sub> − log π<sub>θ</sub>), −R<sub>max</sub>, R<sub>max</sub>)<span class="src">式 15</span></li>
+      <li>试过更细的 top-k 蒸馏，收敛速度和最终性能「无明显优势」<span class="src">§4.1.3</span></li></ul></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>非可验证任务：Agentic GRM <span class="tag">§4.1.2</span></h4>
+      <ul><li>沿用 K2.5 的锦标赛式分组奖励（两两比较）。</li>
+      <li>判官强制流程：① 读产出 → ② 生成 rubric → ③ 按 rubric 给每个候选打分 → ④ 记入 scorepad。</li>
+      <li>防啰嗦：冷启动模型估长度 ℓ<sub>0</sub>，候选超过 σ·ℓ<sub>0</sub> 直接判负。</li></ul></div>
+    <div class="card mod"><h4>部署感知后训练 <span class="tag">§4.1.4</span></h4>
+      <ul><li>MoE 专家权重 MXFP4 / 激活 MXFP8；注意力投影、latent 投影、共享专家、路由器保持高精度；SFT 与 RL 全程 QAT，rollout 与训练同一量化方案。</li>
+      <li>MTP 层微调成 EAGLE-3 式 draft：冻结主模型，训练时展开 7 步，融合第 1、第 4 与最后一个 AttnRes 块的特征（W<sub>E3</sub> 初始化为 [0 0 I]），直接优化接受率的 LK loss。</li></ul></div>
+  </div>
+
+  <h3 class="prose">5.1 已披露 / 未披露超参</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>阶段</th><th>已披露</th><th>未披露</th></tr></thead>
+      <tbody>
+        <tr><td>预训练</td><td>cosine、1% warm-up、WD 0.1；8K → 64K；Per-Head Muon + weight clipping<span class="src">§3.3</span></td><td>峰值 LR、batch size、TPP、总 token、步数</td></tr>
+        <tr><td>架构超参</td><td>g<sub>min</sub> = −5、A<sub>h</sub> 初始 0；β<sub>1</sub> = 4、β<sub>2</sub> = 25；N<sub>s</sub> = 2；AttnRes 8 块 × 12 层<span class="src">§2</span></td><td>KDA 头数 / 头维、chunk 大小、QB 直方图 bin 数（只说「几百」）</td></tr>
+        <tr><td>长上下文</td><td>256K → 1M 在 cooldown<span class="src">§3.4</span></td><td>各段 token 数、上采样倍数</td></tr>
+        <tr><td>RL</td><td>档位 {low, high, max}；奖励超预算置 −1<span class="src">§4.1.2</span></td><td>λ、N、K、τ、σ、学习率、步数</td></tr>
+        <tr><td>MOPD</td><td>式 15 形式<span class="src">§4.1.3</span></td><td>R<sub>max</sub>、各域 / 档位采样比例</td></tr>
+        <tr><td>Draft</td><td>展开 7 步、LK loss、温度 1、无 CE 辅助项<span class="src">§4.1.4</span></td><td>接受率 / 加速比</td></tr>
+        <tr><td>评测采样</td><td>temperature 1.0；单步任务 top-p 0.95，Agent 任务 top-p 1.0<span class="src">§6.1.3</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details class="more wide">
+    <summary>基础设施要点：KDA kernel、MoonEP、1M RL、AgentENV、在线服务 <span class="hint">§5</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>KDA kernel</b>：FlashKDA（CUTLASS）让块内计算与跨块状态传播重叠；单卡内按 SM 做 context parallel 处理超长 prefill；跨卡 KCP 把每段拆成「累计转移矩阵 + 从零起算的局部状态」两份，一次固定大小 all-gather + prefix scan 恢复入口状态<span class="src">§5.1 · 式 17</span>。</li>
+        <li><b>MoonEP</b>：每个 rank 恰好收 S × K 个 token；证明每 rank 至多 E/R 个冗余专家即可完美均衡且该界基本紧（附录 E）；GPU 规划 kernel 近似 ILP 最优；通信缓冲从 DeepEP 最坏情况的 S×K×R 降为固定 S×K；形状静态，省掉逐层 host 同步<span class="src">§5.2.1</span>。</li>
+        <li><b>显存</b>：统一激活管理（重算 / 量化 / 卸载可按张量组合），多数激活块级 FP8 + 卸载；PP rank 间远程卸载（Mooncake）；Pipeline ZeRO-2 梯度分片并放 CPU；Muon 正交化用 P2P 只取自己拥有的参数分片<span class="src">§5.2.2</span>。</li>
+        <li><b>视觉编码器</b>：大图按 patch 维切到多卡做 gather-KV 注意力；ViT 前反向尽量塞进 PP bubble<span class="src">§5.2.3</span>。</li>
+        <li><b>1M Agent RL</b>：co-located 训练；空闲前缀 write-back 到 CPU DRAM 外部 KV 池，KDA 状态与 MLA KV 一起卸载 / 预取；训练状态在 rollout 时卸到 NVMe；按活跃请求数、排队数、KV 占用自动限流；reference 模型权重借用梯度缓冲显存<span class="src">§5.3.1</span>。</li>
+        <li><b>AgentENV</b>：Firecracker microVM；增量 checkpoint / resume 低至 133 ms / 49 ms；等待推理时暂停（可占沙箱生命周期的 98%）不占资源；fork 用于无副作用的奖励判定；内存超售最高 6.5×<span class="src">§5.3.2</span>。</li>
+        <li><b>服务</b>：KDA 状态与 MLA KV 共用分页池；前缀哈希细到 512 token、物理块 1024–6144 token，KDA checkpoint 只存在哈希端点；MTP 投机解码只缓存 draft token 的投影输入、片上重建状态；典型编码请求前缀 400K、增量 4K，按缓存亲和路由到集群，一致性哈希配主 / 备两集群；按请求类别分配预算的准入控制<span class="src">§5.4</span>。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">对比对象：闭源 Claude Fable 5（含 fallback）、GPT-5.6 Sol（含潜在 cyberguard）、Claude Opus 4.8、GPT-5.5（xhigh）；开源 GLM-5.2。除 GPT-5.5 外都用最高推理档<span class="src">§6.1.2</span>。Kimi K3 一律 max、temperature 1.0<span class="src">§6.1.3</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="论文图 1：Coding 与 General &amp; Visual Agents 两组主结果柱状图" loading="lazy"></div>
+    <figcaption><b>主结果总览。</b>Coding 六项（DeepSWE、Terminal-Bench 2.1、FrontierSWE、Kimi Code Bench 2.0、ProgramBench、SWE-Marathon）与 General &amp; Visual Agents 前三项（GDPval-AA v2、BrowseComp、AutomationBench），均为最高推理档。注意 Kimi Code Bench 2.0 一栏的 Kimi K3 用的是 Kimi Code harness（72.9），表 3 中 Claude Code harness 下为 73.7。本页裁图为首页局部，底部 JobBench、CharXiv、ZeroBench 三项未含。<span class="from">来源：论文图 1（首页）</span></figcaption>
+  </figure>
+
+  <h3 class="prose">6.1 主表（表 2 精选）</h3>
+  <div class="wide"><div class="tbl-wrap"><table><thead><tr><th>基准</th><th class="q">Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th><th>GLM-5.2</th></tr></thead><tbody><tr class="grp"><td colspan="7">Reasoning & Knowledge</td></tr><tr><td>GPQA Diamond</td><td class="q">93.5</td><td>92.6</td><td class="best">94.1</td><td>91.0</td><td>93.5</td><td>91.2</td></tr><tr><td>CritPt</td><td class="q">23.4</td><td>28.6</td><td class="best">32.3</td><td>20.9</td><td>27.1</td><td>20.9</td></tr><tr><td>HLE-Full</td><td class="q">43.5 / 56.0</td><td><b>53.3</b> / <b>63.0</b></td><td>44.5 / 58.0</td><td>49.8 / 57.9</td><td>41.4 / 52.2</td><td>–</td></tr><tr class="grp"><td colspan="7">Coding</td></tr><tr><td>DeepSWE</td><td class="q">67.5</td><td>70.0</td><td class="best">73.0</td><td>59.0</td><td>67.0</td><td>46.2</td></tr><tr><td>ProgramBench</td><td class="q best">77.8</td><td>76.8</td><td>77.6</td><td>71.9</td><td>70.8</td><td>63.7</td></tr><tr><td>Terminal-Bench 2.1</td><td class="q">88.3</td><td>88.0</td><td class="best">88.8</td><td>84.6</td><td>83.4</td><td>82.7</td></tr><tr><td>FrontierSWE</td><td class="q">81.2</td><td class="best">86.6</td><td>71.3</td><td>66.7</td><td>64.9</td><td>67.3</td></tr><tr><td>SWE-Marathon</td><td class="q best">42.0</td><td>35.0</td><td>39.0</td><td>40.0</td><td>14.0</td><td>13.0</td></tr><tr class="grp"><td colspan="7">Agentic</td></tr><tr><td>BrowseComp</td><td class="q best">91.2</td><td>88.0</td><td>90.4</td><td>84.3</td><td>84.4</td><td>–</td></tr><tr><td>GDPval-AA v2 (Elo)</td><td class="q">1,686</td><td class="best">1,747</td><td>1,736</td><td>1,593</td><td>1,491</td><td>1,510</td></tr><tr><td>MCPMark-Verified</td><td class="q best">94.5</td><td>87.4</td><td>92.9</td><td>76.4</td><td>92.9</td><td>–</td></tr><tr><td>AutomationBench</td><td class="q best">30.8</td><td>29.1</td><td>29.7</td><td>27.2</td><td>22.7</td><td>12.9</td></tr><tr><td>Agents’ Last Exam</td><td class="q">28.3</td><td>25.7<sup>†</sup></td><td class="best">29.6</td><td>27.0</td><td>26.6</td><td>20.4</td></tr><tr><td>OSWorld-Verified</td><td class="q">84.8</td><td class="best">85.0</td><td>83.0</td><td>83.4</td><td>79.0</td><td>–</td></tr><tr><td>OSWorld 2.0</td><td class="q">58.3</td><td class="best">66.1</td><td>62.6</td><td>55.7</td><td>49.5</td><td>–</td></tr><tr class="grp"><td colspan="7">Vision</td></tr><tr><td>WorldVQA ForceAnswer</td><td class="q">51.0</td><td class="best">56.7</td><td>41.8</td><td>39.1</td><td>38.5</td><td>–</td></tr><tr><td>OmniDocBench</td><td class="q best">91.1</td><td>89.8</td><td>85.8</td><td>87.9</td><td>89.4</td><td>–</td></tr><tr><td>MMMU-Pro</td><td class="q">81.6 / 83.4</td><td>81.2 / <b>86.5</b></td><td><b>83.0</b> / 84.6</td><td>78.9 / 82.7</td><td>81.2 / 83.2</td><td>–</td></tr><tr><td>CharXiv (RQ)</td><td class="q">84.8 / 91.3</td><td><b>88.9</b> / <b>93.5</b></td><td>84.6 / 89.1</td><td>80.5 / 89.9</td><td>84.1 / 89.0</td><td>–</td></tr><tr><td>ZeroBench-main (pass@5)</td><td class="q"><b>23.0</b> / 41.0</td><td><b>23.0</b> / <b>46.0</b></td><td>17.0 / 35.0</td><td>17.0 / 34.0</td><td>22.0 / 41.0</td><td>–</td></tr></tbody></table></div></div>
+  <div class="keybox wide"><span class="k-q">Kimi K3 列</span><span class="k-best">该行最高（本页按数值标，含并列）</span></div>
+  <p class="tbl-note wide">「a / b」= 不带 / 带工具（HLE-Full 为通用工具，视觉基准为 Python），各自加粗最高。<b>†</b> Agents’ Last Exam 官方榜上 Claude Fable 5 跑在 xhigh，且 40% 任务标注为 downgraded。<b>–</b> 原表未报。BrowseComp 用 300K 触发的上下文压缩；不做上下文管理、直接用满 1M 时 Kimi K3 为 90.4。SWE-Marathon 用 H20 重新校准的分支（2026-07-09），Claude Fable 5 在 35% 任务上触发 fallback。PostTrainBench 在 H20 上跑三次平均（官方为 H100）。WorldVQA 因各模型普遍拒答，用 prompt 强制作答。GDPval-AA v2、AA-Briefcase、τ³-Banking、Harvey Lab-AA、APEX-Agents、SciCode、AA-LCR、CritPt 引自 Artificial Analysis（2026-07-23）<span class="src">表 2 · §6.1.3</span>。</p>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 206" role="img" aria-label="DeepSWE"><text class="ch-t" x="0" y="16">DeepSWE</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="172" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="186" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="186" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="186" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="186" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="186" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="135.0" height="13" rx="3"/><text class="ch-val" x="244.0" y="58">67.5</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="140.0" height="13" rx="3"/><text class="ch-val" x="249.0" y="80">70.0</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="146.0" height="13" rx="3"/><text class="ch-val" x="255.0" y="102">73.0</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="118.0" height="13" rx="3"/><text class="ch-val" x="227.0" y="124">59.0</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="134.0" height="13" rx="3"/><text class="ch-val" x="243.0" y="146">67.0</text><text class="ch-lbl" x="98" y="168" text-anchor="end">GLM-5.2</text><rect class="bar-o" x="104" y="158" width="92.4" height="13" rx="3"/><text class="ch-val" x="201.4" y="168">46.2</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 206" role="img" aria-label="SWE-Marathon"><text class="ch-t" x="0" y="16">SWE-Marathon</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起 · H20 校准分支</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="172" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="186" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="186" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="186" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="186" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="172" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="186" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="84.0" height="13" rx="3"/><text class="ch-val" x="193.0" y="58">42.0</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="70.0" height="13" rx="3"/><text class="ch-val" x="179.0" y="80">35.0</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="78.0" height="13" rx="3"/><text class="ch-val" x="187.0" y="102">39.0</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="80.0" height="13" rx="3"/><text class="ch-val" x="189.0" y="124">40.0</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="28.0" height="13" rx="3"/><text class="ch-val" x="137.0" y="146">14.0</text><text class="ch-lbl" x="98" y="168" text-anchor="end">GLM-5.2</text><rect class="bar-o" x="104" y="158" width="26.0" height="13" rx="3"/><text class="ch-val" x="135.0" y="168">13.0</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 184" role="img" aria-label="BrowseComp"><text class="ch-t" x="0" y="16">BrowseComp</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起 · GLM-5.2 未报</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="150" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="164" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="164" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="164" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="164" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="164" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="182.4" height="13" rx="3"/><text class="ch-val" x="291.4" y="58">91.2</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="176.0" height="13" rx="3"/><text class="ch-val" x="285.0" y="80">88.0</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="180.8" height="13" rx="3"/><text class="ch-val" x="289.8" y="102">90.4</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="168.6" height="13" rx="3"/><text class="ch-val" x="277.6" y="124">84.3</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="168.8" height="13" rx="3"/><text class="ch-val" x="277.8" y="146">84.4</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 184" role="img" aria-label="HLE-Full（带工具）"><text class="ch-t" x="0" y="16">HLE-Full（带工具）</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起 · GLM-5.2 未报</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="150" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="164" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="164" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="164" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="164" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="164" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="112.0" height="13" rx="3"/><text class="ch-val" x="221.0" y="58">56.0</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="126.0" height="13" rx="3"/><text class="ch-val" x="235.0" y="80">63.0</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="116.0" height="13" rx="3"/><text class="ch-val" x="225.0" y="102">58.0</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="115.8" height="13" rx="3"/><text class="ch-val" x="224.8" y="124">57.9</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="104.4" height="13" rx="3"/><text class="ch-val" x="213.4" y="146">52.2</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 184" role="img" aria-label="OmniDocBench"><text class="ch-t" x="0" y="16">OmniDocBench</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起 · GLM-5.2 未报</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="150" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="164" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="164" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="164" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="164" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="164" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="182.2" height="13" rx="3"/><text class="ch-val" x="291.2" y="58">91.1</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="179.6" height="13" rx="3"/><text class="ch-val" x="288.6" y="80">89.8</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="171.6" height="13" rx="3"/><text class="ch-val" x="280.6" y="102">85.8</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="175.8" height="13" rx="3"/><text class="ch-val" x="284.8" y="124">87.9</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="178.8" height="13" rx="3"/><text class="ch-val" x="287.8" y="146">89.4</text></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 340 184" role="img" aria-label="CharXiv (RQ)（带 Python）"><text class="ch-t" x="0" y="16">CharXiv (RQ)（带 Python）</text><text class="ch-src" x="0" y="32">表 2 · 横轴从 0 起 · GLM-5.2 未报</text><line class="axis" x1="104.0" y1="40" x2="104.0" y2="150" stroke-opacity="0.9"/><text class="ch-ax" x="104.0" y="164" text-anchor="middle">0</text><line class="axis" x1="154.0" y1="40" x2="154.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="154.0" y="164" text-anchor="middle">25</text><line class="axis" x1="204.0" y1="40" x2="204.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="204.0" y="164" text-anchor="middle">50</text><line class="axis" x1="254.0" y1="40" x2="254.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="254.0" y="164" text-anchor="middle">75</text><line class="axis" x1="304.0" y1="40" x2="304.0" y2="150" stroke-opacity="0.18"/><text class="ch-ax" x="304.0" y="164" text-anchor="middle">100</text><text class="ch-lbl" x="98" y="58" text-anchor="end">Kimi K3</text><rect class="bar-q" x="104" y="48" width="182.6" height="13" rx="3"/><text class="ch-val" x="291.6" y="58">91.3</text><text class="ch-lbl" x="98" y="80" text-anchor="end">Claude Fable 5</text><rect class="bar-o2" x="104" y="70" width="187.0" height="13" rx="3"/><text class="ch-val" x="296.0" y="80">93.5</text><text class="ch-lbl" x="98" y="102" text-anchor="end">GPT-5.6 Sol</text><rect class="bar-o2" x="104" y="92" width="178.2" height="13" rx="3"/><text class="ch-val" x="287.2" y="102">89.1</text><text class="ch-lbl" x="98" y="124" text-anchor="end">Claude Opus 4.8</text><rect class="bar-o" x="104" y="114" width="179.8" height="13" rx="3"/><text class="ch-val" x="288.8" y="124">89.9</text><text class="ch-lbl" x="98" y="146" text-anchor="end">GPT-5.5</text><rect class="bar-o" x="104" y="136" width="178.0" height="13" rx="3"/><text class="ch-val" x="287.0" y="146">89.0</text></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">Kimi K3</span><span class="l4">Claude Fable 5 / GPT-5.6 Sol（作者认定的两家领先者）</span><span class="l3">其他模型</span></div>
+
+  <details class="more wide">
+    <summary>表 2 全量（43 项） <span class="hint">表 2</span></summary>
+    <div class="body"><div class="tbl-wrap tall"><table><thead><tr><th>基准</th><th class="q">Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th><th>GLM-5.2</th></tr></thead><tbody><tr class="grp"><td colspan="7">Reasoning & Knowledge</td></tr><tr><td>GPQA Diamond</td><td class="q">93.5</td><td>92.6</td><td class="best">94.1</td><td>91.0</td><td>93.5</td><td>91.2</td></tr><tr><td>CritPt</td><td class="q">23.4</td><td>28.6</td><td class="best">32.3</td><td>20.9</td><td>27.1</td><td>20.9</td></tr><tr><td>AA-LCR</td><td class="q best">74.7</td><td>70.0</td><td>73.7</td><td>67.7</td><td>74.3</td><td>71.3</td></tr><tr><td>HLE-Full</td><td class="q">43.5 / 56.0</td><td><b>53.3</b> / <b>63.0</b></td><td>44.5 / 58.0</td><td>49.8 / 57.9</td><td>41.4 / 52.2</td><td>–</td></tr><tr class="grp"><td colspan="7">Coding</td></tr><tr><td>DeepSWE</td><td class="q">67.5</td><td>70.0</td><td class="best">73.0</td><td>59.0</td><td>67.0</td><td>46.2</td></tr><tr><td>ProgramBench</td><td class="q best">77.8</td><td>76.8</td><td>77.6</td><td>71.9</td><td>70.8</td><td>63.7</td></tr><tr><td>Terminal-Bench 2.1</td><td class="q">88.3</td><td>88.0</td><td class="best">88.8</td><td>84.6</td><td>83.4</td><td>82.7</td></tr><tr><td>FrontierSWE</td><td class="q">81.2</td><td class="best">86.6</td><td>71.3</td><td>66.7</td><td>64.9</td><td>67.3</td></tr><tr><td>SWE-Marathon</td><td class="q best">42.0</td><td>35.0</td><td>39.0</td><td>40.0</td><td>14.0</td><td>13.0</td></tr><tr><td>PostTrainBench</td><td class="q">36.6</td><td class="best">41.4</td><td>34.6</td><td>34.1</td><td>28.4</td><td>34.3</td></tr><tr><td>MLS-Bench-Lite</td><td class="q">48.3</td><td class="best">49.9</td><td>46.2</td><td>42.8</td><td>35.5</td><td>40.4</td></tr><tr><td>SciCode</td><td class="q">58.7</td><td class="best">60.2</td><td>56.1</td><td>53.5</td><td>56.1</td><td>50.5</td></tr><tr class="grp"><td colspan="7">Agentic</td></tr><tr><td>BrowseComp</td><td class="q best">91.2</td><td>88.0</td><td>90.4</td><td>84.3</td><td>84.4</td><td>–</td></tr><tr><td>DeepSearchQA (F1)</td><td class="q best">95.0</td><td>94.2</td><td>–</td><td>93.1</td><td>–</td><td>–</td></tr><tr><td>ResearchRubrics</td><td class="q best">76.2</td><td>–</td><td>73.8</td><td>73.5</td><td>64.0</td><td>71.1</td></tr><tr><td>GDPval-AA v2 (Elo)</td><td class="q">1,686</td><td class="best">1,747</td><td>1,736</td><td>1,593</td><td>1,491</td><td>1,510</td></tr><tr><td>Toolathlon-Verified</td><td class="q">76.5</td><td class="best">77.9</td><td>74.9</td><td>76.2</td><td>73.5</td><td>59.9</td></tr><tr><td>MCPMark-Verified</td><td class="q best">94.5</td><td>87.4</td><td>92.9</td><td>76.4</td><td>92.9</td><td>–</td></tr><tr><td>MCP-Atlas</td><td class="q">84.2</td><td class="best">84.7</td><td>83.6</td><td>83.6</td><td>82.8</td><td>82.6</td></tr><tr><td>AutomationBench</td><td class="q best">30.8</td><td>29.1</td><td>29.7</td><td>27.2</td><td>22.7</td><td>12.9</td></tr><tr><td>JobBench</td><td class="q">54.3</td><td class="best">57.4</td><td>45.4</td><td>48.4</td><td>38.3</td><td>43.4</td></tr><tr><td>AA-Briefcase (Elo)</td><td class="q">1,548</td><td class="best">1,583</td><td>1,495</td><td>1,354</td><td>1,158</td><td>1,260</td></tr><tr><td>Agents’ Last Exam</td><td class="q">28.3</td><td>25.7<sup>†</sup></td><td class="best">29.6</td><td>27.0</td><td>26.6</td><td>20.4</td></tr><tr><td>APEX-Agents</td><td class="q">41.0</td><td class="best">43.3</td><td>39.9</td><td>39.4</td><td>38.5</td><td>35.6</td></tr><tr><td>OfficeQA Pro</td><td class="q">63.3</td><td class="best">69.9</td><td>63.2</td><td>63.9</td><td>60.9</td><td>41.4</td></tr><tr><td>SpreadsheetBench 2</td><td class="q best">34.8</td><td>34.7</td><td>32.4</td><td>31.6</td><td>29.1</td><td>28.1</td></tr><tr><td>OSWorld-Verified</td><td class="q">84.8</td><td class="best">85.0</td><td>83.0</td><td>83.4</td><td>79.0</td><td>–</td></tr><tr><td>OSWorld 2.0</td><td class="q">58.3</td><td class="best">66.1</td><td>62.6</td><td>55.7</td><td>49.5</td><td>–</td></tr><tr><td>SaaS-Bench</td><td class="q">60.1</td><td>–</td><td class="best">61.4</td><td>56.1</td><td>43.8</td><td>–</td></tr><tr><td>τ³-Banking</td><td class="q best">33.4</td><td>26.8</td><td>33.0</td><td>27.6</td><td>31.3</td><td>26.8</td></tr><tr><td>Harvey Lab-AA</td><td class="q best">94.6</td><td>93.6</td><td>87.2</td><td>91.1</td><td>86.3</td><td>91.0</td></tr><tr><td>CorpFin v2</td><td class="q">71.6</td><td class="best">71.8</td><td>64.4</td><td>66.7</td><td>68.4</td><td>66.1</td></tr><tr><td>Finance Agent v2</td><td class="q">54.4</td><td class="best">56.3</td><td>53.8</td><td>53.9</td><td>51.8</td><td>49.7</td></tr><tr><td>Legal Research Bench</td><td class="q">44.2</td><td class="best">49.5</td><td>48.1</td><td>43.8</td><td>40.4</td><td>31.3</td></tr><tr class="grp"><td colspan="7">Vision</td></tr><tr><td>WorldVQA ForceAnswer</td><td class="q">51.0</td><td class="best">56.7</td><td>41.8</td><td>39.1</td><td>38.5</td><td>–</td></tr><tr><td>OmniDocBench</td><td class="q best">91.1</td><td>89.8</td><td>85.8</td><td>87.9</td><td>89.4</td><td>–</td></tr><tr><td>PerceptionBench</td><td class="q">58.5</td><td>57.2</td><td class="best">59.7</td><td>47.2</td><td>55.8</td><td>–</td></tr><tr><td>Video-MME (w/ sub)</td><td class="q best">90.0</td><td>–</td><td>89.5</td><td>86.0</td><td>89.3</td><td>–</td></tr><tr><td>MMVU</td><td class="q best">82.1</td><td>–</td><td>81.2</td><td>79.2</td><td>81.7</td><td>–</td></tr><tr><td>BabyVision w/ Python</td><td class="q">85.7</td><td class="best">90.5</td><td>88.9</td><td>81.2</td><td>83.6</td><td>–</td></tr><tr><td>MMMU-Pro</td><td class="q">81.6 / 83.4</td><td>81.2 / <b>86.5</b></td><td><b>83.0</b> / 84.6</td><td>78.9 / 82.7</td><td>81.2 / 83.2</td><td>–</td></tr><tr><td>CharXiv (RQ)</td><td class="q">84.8 / 91.3</td><td><b>88.9</b> / <b>93.5</b></td><td>84.6 / 89.1</td><td>80.5 / 89.9</td><td>84.1 / 89.0</td><td>–</td></tr><tr><td>Math-Vision</td><td class="q">94.3 / 97.8</td><td>94.8 / <b>98.6</b></td><td><b>95.8</b> / 97.8</td><td>86.7 / 97.1</td><td>92.2 / 96.8</td><td>–</td></tr><tr><td>ZeroBench-main (pass@5)</td><td class="q"><b>23.0</b> / 41.0</td><td><b>23.0</b> / <b>46.0</b></td><td>17.0 / 35.0</td><td>17.0 / 34.0</td><td>22.0 / 41.0</td><td>–</td></tr></tbody></table></div></div>
+  </details>
+
+  <h3 class="prose">6.2 读表：强项与差距</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>表内第一或并列第一 <span class="tag ok-tag">表 2</span></h4>
+      <ul><li>编码：ProgramBench 77.8、SWE-Marathon 42.0（比 Fable 5 高 7 分）</li>
+      <li>Agent：BrowseComp 91.2、DeepSearchQA 95.0、ResearchRubrics 76.2、MCPMark-Verified 94.5、AutomationBench 30.8、SpreadsheetBench 2 34.8、τ³-Banking 33.4、Harvey Lab-AA 94.6</li>
+      <li>知识 / 视觉：AA-LCR 74.7、OmniDocBench 91.1；ZeroBench（无工具）与 Fable 5 并列 23.0</li></ul></div>
+    <div class="card mod"><h4>明显落后 <span class="tag nd-tag">表 2</span></h4>
+      <ul><li>研究级推理：HLE-Full 43.5 / 56.0 vs Fable 5 53.3 / 63.0；CritPt 23.4，低于 Fable 5、GPT-5.6 Sol 和 GPT-5.5（27.1）</li>
+      <li>编码：DeepSWE 67.5 vs 73.0；FrontierSWE 81.2 vs 86.6</li>
+      <li>知识工作 Elo：GDPval-AA v2 第三（1,686）</li>
+      <li>电脑操作：OSWorld 2.0 58.3 vs 66.1；BabyVision 85.7 vs 90.5</li></ul></div>
+  </div>
+
+  <h3 class="prose">6.3 内部评测（表 3、表 4）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准（harness）</th><th class="q">Kimi K3</th><th>Claude Fable 5</th><th>GPT-5.6 Sol</th><th>Claude Opus 4.8</th><th>GPT-5.5</th><th>GLM-5.2</th></tr></thead>
+      <tbody>
+        <tr><td>Kimi Code Bench 2.0（Claude Code）</td><td class="q">73.7</td><td class="best">76.9<sup>a</sup></td><td>–</td><td>71.7</td><td>–</td><td>64.2</td></tr>
+        <tr><td>Kimi Code Bench 2.0（Kimi Code / Codex）</td><td class="q">72.9</td><td>–</td><td>64.8<sup>b</sup></td><td>–</td><td>66.0 / 69.0<sup>c</sup></td><td>–</td></tr>
+        <tr><td>Coding Experience（Claude Code）</td><td class="q best">59.9</td><td>59.8</td><td>59.3（Codex）</td><td>58.0</td><td>56.8（Codex）</td><td>53.3</td></tr>
+        <tr><td>Swarm Bench</td><td class="q best">76.3</td><td>–</td><td>73.2</td><td>72.6</td><td>61.8</td><td>58.5</td></tr>
+        <tr><td>Deep Research Bench</td><td class="q best">90.0</td><td>–</td><td>85.3</td><td>87.2</td><td>81.9</td><td>84.0</td></tr>
+        <tr><td>MIRA Bench</td><td class="q">64.1</td><td class="best">72.9</td><td>62.2</td><td>59.8</td><td>54.6</td><td>–</td></tr>
+        <tr><td>Agentic Vision Bench</td><td class="q">78.3</td><td>81.1</td><td class="best">82.9</td><td>82.8</td><td>76.9</td><td>–</td></tr>
+        <tr><td>KWV Bench（知识工作视觉）</td><td class="q">64.7</td><td>63.6</td><td class="best">66.9</td><td>61.7</td><td>65.8</td><td>–</td></tr>
+        <tr><td>Agent Behavior Bench</td><td class="q">65.0</td><td>75.5<sup>f</sup></td><td class="best">76.4</td><td>65.7</td><td>70.1</td><td>–</td></tr>
+        <tr><td>Faithfulness<sup>g</sup></td><td class="q">85.5</td><td>–</td><td>84.8</td><td>83.6</td><td class="best">86.5</td><td>74.8</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide"><b>a</b> 80 题中 13 次 fallback、1 次拒答；<b>b</b> 80 题中 10 次拒答；<b>c</b> 80 题中 3 次拒答；<b>f</b> 95 题中 6 次拒答；<b>g</b> 指标为 1 − 幻觉率。Fable 5「–」= 未纳入本报告。Claude 与 GLM 用 Claude Code、GPT 用 Codex，除非该基准统一指定 harness<span class="src">表 3 · §6.2.1</span>。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Kimi Webdev Bench：盲评 vs Claude Opus 4.8 <span class="tag">表 4</span></h4>
+      <p>同为 Claude Code harness；专家在不知模型的情况下按<b>代码质量、功能完整度、视觉保真、交互体验</b>四维打分。</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>领域</th><th>Win</th><th>Tie</th><th>Lose</th><th class="q">Win − Lose</th></tr></thead>
+        <tbody>
+          <tr><td>Games</td><td>55.6%</td><td>3.7%</td><td>40.7%</td><td class="q">+14.9%</td></tr>
+          <tr><td>3D / WebGL / Shader</td><td>72.7%</td><td>13.7%</td><td>13.6%</td><td class="q">+59.1%</td></tr>
+          <tr><td>Website / UI Clone</td><td>52.6%</td><td>21.1%</td><td>26.3%</td><td class="q">+26.3%</td></tr>
+          <tr><td>Overall</td><td>58.6%</td><td>13.8%</td><td>27.6%</td><td class="q">+31.0%</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <div class="card mod"><h4>第三方与成本 <span class="tag">表 5 · §6.4</span></h4>
+      <ul><li>Artificial Analysis Intelligence Index v4.1：57.1，580 个模型中第 4（Fable 5 59.9、GPT-5.6 Sol 58.9）</li>
+      <li>Vals Index 74.7%，39 个中第 2</li>
+      <li>WebDev Arena 1,678 Elo，99 个中第 1；Text Arena 1,486，200 个中第 8；Agent Arena 9.1，37 个中第 4（均截至 2026-07-23）</li>
+      <li>成本：KCB 2.0 比 Fable 5 低 4.0 分、成本 38%；BrowseComp $2.03 / 任务，约为 GPT-5.6 Sol 一半；GDPval-AA v2 与 GPT-5.6 Sol 相差 50 Elo 以内、成本低 13%</li></ul></div>
+  </div>
+
+  <details class="more wide">
+    <summary>网络安全评测与案例 <span class="hint">§6.2.2 · §7</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>Tier 1 漏洞发现</b>：几十个系统里找出数百个候选，经人工复核的约 70% 属实，含 6 个项目中 16 个此前未知漏洞<span class="src">§6.2.2</span>。</li>
+        <li><b>Tier 2 利用开发</b>：内部 36 题（用户态 16、Linux 内核 20，约 540 专家小时）；Kimi K3 14/36（38.9%）vs GLM-5.2 8/36（22.2%），14 题中 10 题来自用户态；Anthropic / OpenAI 模型拒答，未纳入。UK AISI + NIST CAISI 联合评估：ExploitBench 32% vs GLM-5.2 24%，任意代码执行 0/41<span class="src">§6.2.2</span>。</li>
+        <li><b>案例</b>：AttnRes kernel 283.6 ms → 114.4 ms，DSA / KDA 运行时降 55.1% / 73.6%（24 小时预算）；写出 MiniTriton 编译器；48 小时自主跑出 nano 推理芯片原型（Nangate45，100 MHz，&gt;8,700 tokens/s RTL 仿真）；用 56 段素材剪出自己的预告片<span class="src">§7 · 图 14</span>。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">KDA、AttnRes、LatentMoE、MLA、Muon、OPD 都是已有工作（含 Moonshot 自己的 Kimi Linear 与 AttnRes 论文）。下面只列本文新提出、或首次在这个规模上落地且给了可核对做法的点。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>首个公开权重的 3T 级 MoE，把线性注意力混合架构做到 2.8T</h4><p>69 KDA + 24 NoPE MLA、AttnRes、1M 上下文同时出现在开源权重模型里<span class="src">表 1 · §8</span>。KDA 改用下界衰减（g<sub>min</sub> = −5）让对角 tile 也走 Tensor Core，输出门改全秩<span class="src">§2.1.1</span>。</p><div class="why">证据：表 1 配置、图 7 scaling 曲线（≈2.5×，为合计效果）；单项改动无数字消融。</div></div>
+    <div class="card nv"><h4>Stable LatentMoE：RMSNorm + SiTU-GLU + Quantile Balancing</h4><p>针对 896 选 16 的两类失稳（路由支路近四连乘导致激活爆炸、近千专家负载难均衡）分别给解法；QB 用 margin 分位数一步设定 bias，并用直方图跨 rank 估全局分位数<span class="src">§2.3 · 附录 B–D</span>。</p><div class="why">证据：公式、上界与误差界推导，图 5 玩具示例；没有与固定步长 bias 更新的训练曲线对比。</div></div>
+    <div class="card nv"><h4>视觉塔从零 next-token 训练，放弃对比式初始化</h4><p>MoonViT-V2（401M，去 bias + RMSNorm）与 LLM 从第一步联合训练<span class="src">§2.4 · §3.3</span>。</p><div class="why">证据：图 6 梯度范数；「视觉评测持平」没有表格。</div></div>
+    <div class="card nv"><h4>按「域 × 推理档」训 9 个专家，再多教师 OPD 合一</h4><p>档位靠超预算奖励置 −1 + τ 退火获得；Agentic GRM 强制「先写 rubric 再打分」，超长直接判负<span class="src">§4.1.2–4.1.3</span>。</p><div class="why">证据：图 8 显示 RL FLOPs 增加时分数与工具步数同步上升（无坐标数值）；没有「蒸馏前后」或「单专家 vs 合并」对比。</div></div>
+    <div class="card nv"><h4>为 2.8T + 1M Agent RL 配套的系统</h4><p>MoonEP（每 rank ≤ E/R 冗余专家即可完美均衡，附录 E 证明）、KDA Context Parallelism、AgentENV（microVM 增量快照 133 ms / 49 ms、fork 判奖励）、KDA 感知前缀缓存（512 token 粒度命中）<span class="src">§5</span>。</p><div class="why">证据：证明与延迟数字；端到端 MFU / 吞吐原文未给。</div></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">K3 不是图像编辑模型，但它的视觉语料、改写校验、程序化渲染数据、Web 开发与 kernel 奖励、GRM 判官协议，和编辑数据构建、验收、评测是同一类问题。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>代码 ↔ 渲染：天然像素级对齐的数据</h4><p class="paper">论文：大幅扩充程序化多模态数据，把代码与渲染结果配对，覆盖 SVG、3D 资产、网页、游戏、CAD<span class="src">§3.1</span>；Web 开发 RL 对复刻类任务算结构与像素相似度<span class="src">§4.2.7</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>用 SVG / HTML / Blender 场景造编辑对：改一个参数（颜色、文字、物体位置、材质）重渲染，得到严格配对的 src / tgt，编辑指令由代码 diff 模板化生成，未改动区域可逐像素验证保持度。适合文字编辑、版式、几何类 op 的冷启动和评测锚点。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>改写之后对照源头做保真校验</h4><p class="paper">论文：知识与数学语料用多风格 / 多视角 prompt 分块改写，并<b>对照源文档做保真校验</b><span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption / 指令做多风格改写扩充时，加一步回校：VLM 拿原图和改写后的 caption 逐条判事实是否仍成立（数量、颜色、空间关系、文字内容），不成立的丢掉；保留每条改写的「来源 caption ID + 校验结果」字段，方便抽检。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>视频帧感知哈希去重 + 结构校验</h4><p class="paper">论文：长文档 / 长视频走精确 + 模糊去重，视频帧加感知哈希，再做启发式 + 分类器过滤和结构校验；稀缺的长样本上采样<span class="src">§3.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑源图池对训练集、评测集统一跑 pHash 近重复检测，评测图与训练图跨集去重；视频抽帧编辑数据按帧哈希去掉近似帧。稀缺类别（多人、文字、透明物体）单独上采样，并在数据版本里记倍数。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>配比用小模型消融定</h4><p class="paper">论文：各域采样率由小模型消融决定；scaling law 研究重调 batch、LR、TPP 与模型形状，且 cosine 与 WSD 各自独立搜超参后再比<span class="src">§3.1 · §3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑任务配比（加物 / 删物 / 换背景 / 风格 / 文字）先在小模型上做几组扫描再放大；比较两种训练策略时各自调最优超参再比，避免用一套超参偏袒其中一方。</p></div>
+    </div>
+
+    <div class="impl-group">caption 与标注</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>坐标同时给绝对值和 [0,1] 归一化</h4><p class="paper">论文：训练中坐标监督同时用绝对坐标与 [0,1] 归一化格式，兼顾精确定位与分辨率鲁棒<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>结构化编辑 caption 里的区域（bbox / 点）两种格式都存：像素坐标绑定原始分辨率，归一化坐标在 resize、裁剪增强后仍可用。训练时随机选一种喂给模型，评测时两种都测，能发现模型是否只会某一种坐标体系。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>结构化格式：显式边界、带类型、坏样本只在输入侧</h4><p class="paper">论文：XTML 用保留 token 做结构边界、参数带类型、字符串不转义；无法类型化的 JSON fallback 只出现在输入并 mask loss；选项写成自然语言放在历史之后<span class="src">附录 F</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>JSON 编辑 caption（ops + preserve）里的长文本字段（要写进图里的文字、风格描述）别塞进转义字符串，单独字段原样存；格式不规整的历史数据可以作为条件输入，但不进生成目标的 loss。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>编码器目标决定细粒度线索能否保留</h4><p class="paper">论文：放弃 SigLIP 初始化的理由之一是对比损失「偏全局语义、轻细粒度文本与结构线索」；3584² 输入经 pixel-shuffle 后约 16K token<span class="src">§2.4</span><span class="src calc">推算</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>给编辑模型挑理解端编码器 / caption VLM 时，单独测文字、细线条、小物体相关的 caption 准确率，不只看整体相似度；高分辨率源图 caption 时记录实际送入的分辨率与 token 数，作为 caption 质量的协变量。</p></div>
+    </div>
+
+    <div class="impl-group">奖励与评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>先过正确性门槛，再以参考实现为 0.5 锚点</h4><p class="paper">论文：kernel 超误差阈值直接 0 分；持平专家实现得 0.5，逼近 roofline 趋近 1<span class="src">§4.2.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 奖励分两层：指令未执行或保持区被破坏 → 0；通过后按质量与「参考编辑器输出」相对打分，持平 = 0.5，明显更好才往 1 走。这样奖励有可解释的锚点，也不会被「只保持不编辑」刷分。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>确定性检查 + 看产物的模型判官 + 「假装完成」清零</h4><p class="paper">论文：Web 开发奖励 = 功能测试 / 像素与结构相似度 + 奖励模型读源码或交互产物；构建失败、报错或伪造产物 → 0<span class="src">§4.2.7</span>；AET 只看最终环境状态，不看 Agent 自报<span class="src">§4.2.6</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测把非编辑区 SSIM / LPIPS 这类确定性指标和 VLM 判官合用；输出与输入几乎相同、或整图被替换时直接判 0。判官只看最终像素，不读模型自报的 mask 或说明文字。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>维护一张持续增长的作弊清单</h4><p class="paper">论文：kernel 奖励的反作弊系统惩罚 CUDA graph replay、输入缓存、降精度，开发中每发现新手法就加新规则<span class="src">§4.2.4</span>；AET 用公开 verifier 给诊断 + 隐藏 verifier 测留出场景<span class="src">§4.2.6</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>为编辑奖励建「已知作弊」表（原图直出、全局调色冒充局部编辑、贴图式粘贴、改文字只糊掉不重写），每类配一个自动检测器；判官提示词开发用一套样本，最终评测留一套隐藏样本。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>判官先写 rubric、逐项记分，并限制长度</h4><p class="paper">论文：Agentic GRM 强制「读产出 → 生成 rubric → 逐候选按 rubric 打分 → 记 scorepad」；输出超过 σ·ℓ<sub>0</sub> 自动判负<span class="src">§4.1.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>VLM 编辑判官对每条指令先产出检查项（目标物是否改变、属性是否正确、非目标区是否保持、光影是否一致），再逐项打分并存档，便于复查分歧；做 caption RL 时，长度超过基线一定倍数直接判负，防止 caption 越写越长。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>两种设置都报，口径写进脚注</h4><p class="paper">论文：BrowseComp 同时给 300K 压缩（91.2）与满 1M 无管理（90.4）；WorldVQA 写明强制作答；MMMU-Pro 保持原始输入顺序；视觉分数三次平均、ZeroBench 五次；Webdev 盲评分四维报 Win / Tie / Lose<span class="src">§6.1.3 · 表 4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测报告固定一节「口径」：分辨率、采样次数与种子、判官模型版本、拒答 / 安全拦截怎么计；GSB 盲测按「指令遵循 / 保持 / 画质 / 美感」分维报 Win / Tie / Lose，而不是只给一个总胜率。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>数据量与配比几乎全空白。</b>预训练 token 总量、文本四域 / 视觉六类占比、改写数据量、长上下文数据量、SFT 条数、RL 任务数与步数都没有<span class="src">§3.1 · §3.4 · §4</span>。</li>
+    <li class="key"><b>「2.5×」是合计数，单项无消融。</b>KDA 下界衰减、全秩门、AttnRes、RMSNorm、SiTU-GLU、QB、Per-Head Muon、数据配方的各自贡献都没拆；「RMSNorm 稳定改善验证 loss」「SiTU 比硬裁剪好」「cosine 优于 WSD」「top-k 蒸馏无明显优势」均无数字<span class="src">§2 · §3.2 · §4.1.3</span>。</li>
+    <li class="key"><b>视觉塔结论证据偏薄。</b>「MoonViT-V2 在各项视觉评测上与 SigLIP 初始化基线持平」只有一句话；图 6 只给梯度范数，消融的模型规模、token 数、评测项均未给<span class="src">§2.4 · 图 6</span>。</li>
+    <li><b>「consistently outperforms」说得过满。</b>正文称 K3 全面超过 Opus 4.8、GPT-5.5、GLM-5.2<span class="src">§6.1.4</span>，但表 2 中 CritPt GPT-5.5 27.1 &gt; 23.4、OfficeQA Pro Opus 4.8 63.9 &gt; 63.3；表 3 中 Agentic Vision Bench Opus 4.8 82.8 &gt; 78.3、KWV Bench GPT-5.5 65.8 &gt; 64.7、Faithfulness GPT-5.5 86.5 &gt; 85.5、24/7 ClawBench 2.0 GPT-5.5 48.5 &gt; 48.3。</li>
+    <li><b>对比条件不齐。</b>Fable 5 含 fallback（SWE-Marathon 35% 任务、KCB 2.0 80 题中 13 次）；GPT-5.6 Sol 含 cyberguard 与拒答；SWE-Marathon 用 H20 重校准分支，PostTrainBench 用 H20 而非 H100；Terminal-Bench 2.1 取各 harness 最佳；BrowseComp 用 300K 压缩<span class="src">§6.1.2–6.1.3 · 表 3</span>。</li>
+    <li><b>内部集的「领先」常缺最强对手。</b>Swarm Bench、Deep Research Bench、KAET、CLIF Bench 上 Fable 5 都是「–」（未纳入）；这些集本身不可复现，且「频繁刷新」<span class="src">表 3 · §6.2.1</span>。</li>
+    <li><b>图 1 混用 harness。</b>Kimi Code Bench 2.0 一栏 K3 取 Kimi Code 的 72.9、Fable 5 取 Claude Code 的 76.9，GPT-5.6 Sol 64.8 含 80 题中 10 次拒答<span class="src">图 1 · 表 3</span>；成本对比的「低 4.0 分」也是按这组数算。</li>
+    <li><b>图 2 与 §2.2 的「块」不是同一口径。</b>图 2 把 3 KDA + 1 MLA 画成一块，AttnRes 连线指向「Block n−1 / n−2」；§2.2 却说 AttnRes 按 12 层一块分 8 块。图里的 Block 指哪种，原文未说明。</li>
+    <li><b>图中出现基线外的模型。</b>图 13 的 BrowseComp 子图出现 Claude Mythos 5，BrowseComp / GDPval-AA v2 / AA-Briefcase 子图出现 Claude Sonnet 5，但 §6.1.2 的基线里没有它们，口径未交代。</li>
+    <li><b>小处措辞。</b>图 14 纵轴写「Speedup vs. FLA Triton Baseline (%)」，K3 的 +59.7% 与正文 283.6 → 114.4 ms 的<b>延迟降幅</b>一致（1 − 114.4/283.6 ≈ 59.7%）<span class="src calc">推算</span>，按加速比算应约 2.5×。</li>
+    <li><b>安全评测只与 GLM-5.2 比。</b>Anthropic / OpenAI 模型拒答，Tier 2 无法与最强闭源对照；作者也说结果是能力下界<span class="src">§6.2.2</span>。</li>
+    <li><b>许可证未写。</b>正文只说「release the full model weights」并给 Hugging Face 链接，许可证条款<span class="nd">原文未披露</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>主结果柱状图（<code>figures/fig0-teaser.jpg</code>，p.1 局部，缺底部三项）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>图 2</td><td>架构总览：token / channel / layer 混合 + MoonViT-V2（<code>figures/fig2.jpg</code>，p.3）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 3</td><td>KDA 下界衰减与对角 tile 计算（<code>figures/fig3.jpg</code>，p.5 局部）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 4–5</td><td>GLU / SwiGLU / SiTU-GLU 响应；Quantile Balancing 示例（未裁图，文字引用）</td><td><a href="#arch">§03 表</a></td></tr>
+        <tr><td>图 6</td><td>视觉塔梯度范数：SigLIP 初始化 vs 从零（<code>figures/fig6.jpg</code>，p.9 局部）</td><td><a href="#arch">§03.1</a></td></tr>
+        <tr><td>图 7</td><td>K2 / K3 scaling law，≈2.5×（未裁图，文字引用）</td><td><a href="#glance">§01</a> · <a href="#train">§05</a></td></tr>
+        <tr><td>图 8</td><td>RL FLOPs 与分数 / 平均步数（未裁图，文字引用）</td><td><a href="#novel">§07</a></td></tr>
+        <tr><td>图 9</td><td>知识图谱引导的任务合成（<code>figures/fig9.jpg</code>，p.15 局部）</td><td><a href="#data">§04.4</a></td></tr>
+        <tr><td>图 10–12</td><td>黑盒系统复刻完成曲线；PP 阶段计算 / 通信重叠；细粒度前缀缓存（未裁图）</td><td><a href="#train">§05 折叠</a></td></tr>
+        <tr><td>图 13–15</td><td>分数 vs 成本；AttnRes kernel 优化；MiniTriton（未裁图）</td><td><a href="#eval">§06</a> · <a href="#limits">§09</a></td></tr>
+        <tr><td>图 16</td><td>XTML 聊天模板结构（未裁图，文字引用）</td><td><a href="#data">§04.3</a></td></tr>
+        <tr><td>表 1</td><td>K2 vs K3 架构对照</td><td><a href="#arch">§03 折叠</a></td></tr>
+        <tr><td>表 2</td><td>公开基准主表（精选 + 全量）</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>表 3–4</td><td>内部基准；Kimi Webdev Bench 盲评</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>表 5</td><td>第三方评测</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>示意图</td><td>主干配置示意（本页据图 2 / 表 1 绘制）；六张柱状图（本页据表 2 绘制，横轴从 0 起）</td><td><a href="#arch">§03</a> · <a href="#eval">§06.1</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Kimi Team（Moonshot AI）《Kimi K3: Open Frontier Intelligence》技术报告（<a href="https://arxiv.org/abs/2607.24653" target="_blank" rel="noopener">arXiv:2607.24653</a>）撰写。主发布日期取 arXiv v1：2026-07-27；本页核对所用 PDF 为 v2（2026-08-07）。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页据原文数字计算，「迁移建议」为本页观点、不是论文内容。论文图片版权归原作者所有，本页仅作学术评介引用。
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

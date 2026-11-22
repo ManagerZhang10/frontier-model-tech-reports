@@ -8,9 +8,9 @@
 | 类别 | 日期 | 厂商 | 报告 | 链接 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | LLM | 2025-12 | DeepSeek | DeepSeek-V3.2 | [arXiv:2512.02556](https://arxiv.org/abs/2512.02556) | 已发布 |
-| LLM | 2026-04 | DeepSeek | DeepSeek-V4 | [arXiv:2606.19348](https://arxiv.org/abs/2606.19348) | 旧稿待重做 |
+| LLM | 2026-04 | DeepSeek | DeepSeek-V4 | [arXiv:2606.19348](https://arxiv.org/abs/2606.19348) | 已发布 |
 | LLM | 2026-09 | DeepSeek | DeepSeek-V4.1-Flash | [arXiv:2609.19969](https://arxiv.org/abs/2609.19969) | 旧稿待重做 |
-| LLM | 2026-07 | Moonshot | Kimi K3 | [arXiv:2607.24653](https://arxiv.org/abs/2607.24653) | 旧稿待重做 |
+| LLM | 2026-07 | Moonshot | Kimi K3 | [arXiv:2607.24653](https://arxiv.org/abs/2607.24653) | 已发布 |
 | LLM | 2026-02 | Zhipu | GLM-5 | [arXiv:2602.15763](https://arxiv.org/abs/2602.15763) | 已发布 |
 | LLM | 2026-05 | MiniMax | MiniMax-M2 Series | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) | 旧稿待重做 |
 | LLM | 2026-06 | MiniMax | MiniMax Sparse Attention (M3) | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) | 旧稿待重做 |

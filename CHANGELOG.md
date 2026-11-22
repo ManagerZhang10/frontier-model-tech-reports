@@ -30,4 +30,6 @@
   - [GLM-5](./reports/llm/glm-5/)（LLM）
   - [ERNIE 5.0](./reports/llm/ernie-5/)（LLM · 原生多模态）
   - [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/)（VLM / Omni）
+  - [Kimi K3](./reports/llm/kimi-k3/)（LLM）
+  - [DeepSeek-V4](./reports/llm/deepseek-v4/)（LLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

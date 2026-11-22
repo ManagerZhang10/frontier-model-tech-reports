@@ -416,6 +416,38 @@
       "one_liner": "744B 总参 / 40B 激活 MoE，注意力改为 DSA，仅用 20B token 完成稀疏化适配（对比 DeepSeek-V3.2 的 943.7B）。后训练 Reasoning→Agentic→General RL，再跨阶段 on-policy 蒸馏。基座 28.5T token、200K 上下文。正文未写许可证，图 3 截图出现 MIT。",
       "path": "reports/llm/glm-5/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "kimi-k3",
+      "title": "Kimi K3",
+      "subtitle": "Kimi K3 Technical Report",
+      "vendor": "Kimi Team, Moonshot AI",
+      "vendor_key": "moonshot",
+      "category": "llm",
+      "date": "2026-07-27",
+      "paper": "https://arxiv.org/abs/2607.24653",
+      "arxiv": "2607.24653",
+      "open_weights": true,
+      "params": "2.8T / 104B 激活（表 1 为 2.78T / 104.2B）",
+      "one_liner": "2.8T 总参 / 104B 激活的原生多模态 MoE，KDA:Gated MLA = 3:1，Stable LatentMoE 896 选 16，视觉塔 MoonViT-V2 与 LLM 从零同训。作者称综合 scaling 效率约为 Kimi K2 的 2.5×。完整权重已发布，许可证原文未披露。摘要 2.8T/104B 与表 1 的 2.78T/104.2B 是同一规模的取整。",
+      "path": "reports/llm/kimi-k3/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "deepseek-v4",
+      "title": "DeepSeek-V4",
+      "subtitle": "DeepSeek-V4 Technical Report",
+      "vendor": "DeepSeek",
+      "vendor_key": "deepseek",
+      "category": "llm",
+      "date": "2026-04-26",
+      "paper": "https://arxiv.org/abs/2606.19348",
+      "arxiv": "2606.19348",
+      "open_weights": true,
+      "params": "Pro 1.6T / 49B 激活；Flash 284B / 13B 激活",
+      "one_liner": "V4-Pro 1.6T/49B 与 V4-Flash 284B/13B，均支持 1M 上下文。注意力改为 CSA/HCA 交错压缩 KV；1M 时 V4-Pro 单 token 推理 FLOPs 为 V3.2 的 27%、KV cache 为 10%。arXiv 编号是 2606，但 v1 发布日期为 2026-04-26。权重在 HF，许可证原文未披露。",
+      "path": "reports/llm/deepseek-v4/",
+      "added": "2026-11-22"
     }
   ]
 }
