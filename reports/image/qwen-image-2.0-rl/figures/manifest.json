@@ -1,0 +1,51 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig1.jpg",
+    "figure": 1,
+    "page": 2,
+    "caption_en": "Overview of the Qwen-Image-2.0-RL training pipeline. Starting from a shared base model,",
+    "caption_note": "来源：论文图 1"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 4,
+    "caption_en": "Qualitative comparison of RL training outcomes using pointwise vs. pairwise reward model",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig3.jpg",
+    "figure": 3,
+    "page": 6,
+    "caption_en": "Qualitative comparison of three CFG strategies during RL training. Left: CFG applied in both",
+    "caption_note": "来源：论文图 3"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 9,
+    "caption_en": "Human preference evaluation on arena. RL training consistently improves Elo ratings across all",
+    "caption_note": "来源：论文图 4"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 11,
+    "caption_en": "Qualitative comparison across T2I generation scenarios among three model variants: pre-trained",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 12,
+    "caption_en": "Qualitative comparison across portrait editing scenarios among three model variants. Qwen-",
+    "caption_note": "来源：论文图 6"
+  }
+]

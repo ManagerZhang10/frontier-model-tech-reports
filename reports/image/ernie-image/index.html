@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERNIE-Image 技术报告 · 中文深读 | 前沿模型技术报告</title>
+<meta name="description" content="ERNIE-Image（百度 ERNIE Team）技术报告中文深读：8B 单流 DiT、万类细分类 + 重 OCR caption + 自研美学分的分层采样、瑞士轮美学标注与 ERIA-1K、带 anchor loss 的 DPO、MT-DMD 蒸馏与评测。">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* 本页特有：架构示意 SVG、数据流水线 4 列、ERIA-1K 配比条 */
+  .ar-box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+  .ar-dash { fill: var(--card); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .ar-enc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.3; }
+  .ar-dit { fill: color-mix(in srgb, var(--accent) 22%, var(--card)); stroke: var(--accent); stroke-width: 1.8; }
+  .ar-vae { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 50%, var(--line)); stroke-width: 1.3; }
+  .ar-ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+  .ar-ln.d { stroke-dasharray: 5 4; }
+  .ar-ln.m { stroke: var(--accent); stroke-width: 2; }
+  .ar-ah { fill: var(--muted); }
+  .ar-ahm { fill: var(--accent); }
+  .ar-t { fill: var(--ink); font: 700 13.5px var(--f-body); }
+  .ar-s { fill: var(--muted); font: 500 11.5px var(--f-body); }
+  .ar-q { fill: var(--warn); font: 600 11px var(--f-body); }
+  .pipe-head.c4, .pipe-row.c4 { grid-template-columns: 112px repeat(4, minmax(0, 1fr)); }
+  .flow.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dist { display: grid; grid-template-columns: 168px 1fr 58px; gap: 6px 10px; align-items: center; font-size: .9rem; margin: 10px 0 4px; }
+  .dist .bar { height: 14px; border-radius: 4px; background: var(--bg-accent); overflow: hidden; }
+  .dist .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .dist .v { font: 600 .82rem/1 var(--f-mono); text-align: right; }
+  .ch-in { fill: var(--card); }
+  .note-tag { font: 600 .7rem/1.6 var(--f-mono); padding: 0 .55em; border-radius: 6px; background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+  .impl .do .note-tag { margin-left: 6px; }
+  @media (max-width: 960px) { .pipe-row.c4 { grid-template-columns: 1fr; } .flow.c3 { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { .dist { grid-template-columns: 112px 1fr 50px; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成</div>
+    <h1>ERNIE-Image<span class="sub">ERNIE-Image Technical Report · ERNIE Team, Baidu</span></h1>
+    <div class="hero-meta">
+      <span>发布 <b>2026-05-25</b>（arXiv v1）</span>
+      <span>arXiv <b>2605.25347</b></span>
+      <span>厂商 <b>ERNIE Team, Baidu</b></span>
+      <span>类别 <b>图像生成（文生图）</b></span>
+    </div>
+    <p class="lede">一个 <b>8B 单流 DiT</b> 文生图模型：不靠堆参数，而是把海量低质图池用「万类细分类 + 重 OCR 的 VLM caption + 自研美学分」重新组织成分层采样的预训练集，再用 SFT、带 anchor loss 的 DPO 和多教师蒸馏（MT-DMD）收尾。在人评中排在 Nano Banana 2.0 之后、居开源第一<span class="src">表 3</span>，另外开源了美学模型 ERNIE-Image-Aes 和基准 ERIA-1K。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源权重（4 个模型）</span>
+      <span class="badge">许可证：原文未披露</span>
+      <span class="badge">8B 单流 DiT</span>
+      <span class="badge">文本编码器 Ministral-3（3B）</span>
+      <span class="badge">FLUX.2 VAE</span>
+      <span class="badge">Turbo：8 NFE</span>
+      <span class="badge">文生图 · 中英文字渲染</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2605.25347" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7H3V3h7"/></svg>arXiv 2605.25347</a>
+      <a href="https://arxiv.org/pdf/2605.25347v1" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>PDF v1</a>
+      <a href="https://github.com/baidu/ernie-image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.7A5.2 5.2 0 0 0 20 4.8 4.8 4.8 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A4.8 4.8 0 0 0 5 4.8a5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/baidu/ERNIE-Image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8l-9-5-9 5v8l9 5z"/></svg>HF · ERNIE-Image</a>
+      <a href="https://huggingface.co/baidu/ERNIE-Image-Turbo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>HF · Turbo</a>
+      <a href="https://ernie.baidu.com/blog/posts/ernie-image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/></svg>Blog</a>
+      <a href="https://ernieimageprompt.com" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>Image Gallery</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#index">图表索引</a></li>
+    </ol>
+    <p class="toc-foot">数字均来自 arXiv v1 原文；胶囊标注出处，橙色「推算」为本页计算。</p>
+  </nav>
+
+<main>
+
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">主模型</span><span class="stat-num">8B</span><span class="stat-sub">单流 DiT，潜空间扩散</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">文本编码器</span><span class="stat-num sm">Ministral-3（3B）</span><span class="stat-sub">刻意选小编码器，降显存</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">VAE</span><span class="stat-num sm">FLUX.2 VAE</span><span class="stat-sub">直接沿用开源 VAE</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">预训练分辨率</span><span class="stat-num sm">256 → 512 → 1024</span><span class="stat-sub">三阶段，各阶段均多宽高比</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">数据细分类</span><span class="stat-num">10,000 类</span><span class="stat-sub">用于类间 / 类内两级采样</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">预训练数据量</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只说来自「内部数据池」</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">Turbo 步数</span><span class="stat-num">8 NFE</span><span class="stat-sub">MT-DMD 多教师蒸馏</span><span class="src">§1 · §2.2.3</span></div>
+    <div class="card stat"><span class="stat-k">Prompt Enhancer</span><span class="stat-num">3B</span><span class="stat-sub">短指令扩写成结构化描述</span><span class="src">§4.1</span></div>
+    <div class="card stat"><span class="stat-k">人评 Total HP</span><span class="stat-num">5.07</span><span class="stat-sub">第 2，仅次 Nano Banana 2.0（5.39）</span><span class="src">表 3</span></div>
+    <div class="card stat"><span class="stat-k">美学模型 ERIA-1K SRCC</span><span class="stat-num">0.7445</span><span class="stat-sub">次优 UniPercept 0.4533</span><span class="src">表 2</span></div>
+  </div>
+  <p class="footnote wide">版本说明：本页依据 arXiv <b>v1</b>（2026-05-25 提交）的全文文本，未发现更新版本信息。论文页眉写的是 <b>April 15, 2026</b>，与 arXiv 提交日期不同；本页主日期以 arXiv v1 为准。开源范围（ERNIE-Image、ERNIE-Image-Turbo、Prompt Enhancer、ERNIE-Image-Aes 权重 + ERIA-1K）<span class="src">§1</span>；许可证原文未写。</p>
+  <details class="more wide">
+    <summary>论文首页摘要区截图<span class="hint">含官方链接与页眉日期</span></summary>
+    <div class="body">
+      <figure class="fig card" style="margin:8px 0">
+        <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="ERNIE-Image 论文首页摘要区截图，列出 Blog、GitHub、Huggingface 与 Image Gallery 链接" loading="lazy" width="1286" height="652"></div>
+        <figcaption>首页摘要后半段与官方链接，底部日期 April 15, 2026；左侧可见 arXiv 编号 2605.25347v1。这是文字截图，不是示意图。<span class="from">来源：论文首页</span></figcaption>
+      </figure>
+    </div>
+  </details>
+</section>
+
+<!-- 02 TL;DR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话读完</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>小模型路线：8B DiT + 3B 编码器</h3><p>主干 8B 单流 DiT<span class="src">§1</span>，文本编码器只用 3B 的 Ministral-3，作者称小编码器仍能撑住长而复杂的指令<span class="src">§1</span>（没有给对照实验）。Turbo 版 8 NFE 出图<span class="src">§1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>真正的重点是数据组织</h3><p>预训练「自底向上」：先把内部原始图池分成 10,000 个细类，再用 VLM 写 caption（特别强调图中文字），然后用 ERNIE-Image-Aes 打美学分，最后做类间 + 类内两级采样<span class="src">§2.1</span>。各步数据量和比例都没给。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>开源里最强，离闭源头部还差一点</h3><p>人评 Total HP 5.07，Nano Banana 2.0 为 5.39<span class="src">表 3</span>。GenEval 0.89 排第一（w/o PE）<span class="src">表 4</span>；LongText 0.973 是开源最高，但低于 Seedream 4.5 的 0.988<span class="src">表 5</span>；OneIG-EN 0.575 排第三<span class="src">表 6</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>美学模型和标注协议值得抄</h3><p>采用瑞士轮两两比较，标注员先过校准测试，每人在自己的子集上独立跑完整个赛程，最后在数据集层面聚合<span class="src">§3.1</span>。ERNIE-Image-Aes 在 ERIA-1K 上的 SRCC 是 0.7445，ArtiMuse 是 0.4277<span class="src">表 2</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>读的时候注意：文字说法比表格更乐观</h3><p>正文说 LongText 和 OneIG「SOTA」，表格里其实都不是第一<span class="src">表 5–7</span>。全文没有任何消融（数据流水线、anchor loss、MT-DMD 都没有），超参只公开了 DPO 的 β 和 λ<span class="src">§2.2.2</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 架构 -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：三个现成组件 + 一个 8B 单流 DiT</h2>
+    <p class="sec-intro">原文没有架构图，也没给层数、隐藏维度和注意力细节。下面的示意只画原文写明的组件；文本条件怎么接进 DiT，原文没有展开。</p></div>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 900 290" role="img" aria-label="ERNIE-Image 组件示意：用户 prompt 可经 3B Prompt Enhancer 扩写，进入 Ministral-3 3B 文本编码器，作为条件送入 8B 单流 DiT；DiT 对噪声 latent 去噪后由 FLUX.2 VAE 解码成图像">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="ar-ah"/></marker>
+        <marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="ar-ahm"/></marker>
+      </defs>
+      <!-- prompt -->
+      <rect x="16" y="112" width="124" height="54" rx="10" class="ar-box"/>
+      <text x="78" y="135" text-anchor="middle" class="ar-t">用户 prompt</text>
+      <text x="78" y="153" text-anchor="middle" class="ar-s">常常很短</text>
+      <!-- PE -->
+      <rect x="182" y="20" width="176" height="58" rx="10" class="ar-dash"/>
+      <text x="270" y="44" text-anchor="middle" class="ar-t">Prompt Enhancer · 3B</text>
+      <text x="270" y="63" text-anchor="middle" class="ar-s">可选：扩写成结构化描述 §4.1</text>
+      <!-- text encoder -->
+      <rect x="182" y="112" width="176" height="54" rx="10" class="ar-enc"/>
+      <text x="270" y="135" text-anchor="middle" class="ar-t">Ministral-3（3B）</text>
+      <text x="270" y="153" text-anchor="middle" class="ar-s">文本编码器 §1</text>
+      <!-- DiT -->
+      <rect x="420" y="74" width="230" height="130" rx="14" class="ar-dit"/>
+      <text x="535" y="118" text-anchor="middle" class="ar-t" style="font-size:16px">8B 单流 DiT</text>
+      <text x="535" y="140" text-anchor="middle" class="ar-s">潜空间扩散（LDM）§1</text>
+      <text x="535" y="158" text-anchor="middle" class="ar-s">速度场 v 预测（Flow Matching，§2.2.2）</text>
+      <text x="535" y="184" text-anchor="middle" class="ar-q">层数 / 宽度：原文未披露</text>
+      <!-- latent -->
+      <rect x="450" y="234" width="170" height="40" rx="9" class="ar-box"/>
+      <text x="535" y="259" text-anchor="middle" class="ar-s">噪声 latent x_t</text>
+      <!-- VAE -->
+      <rect x="712" y="112" width="170" height="54" rx="10" class="ar-vae"/>
+      <text x="797" y="135" text-anchor="middle" class="ar-t">FLUX.2 VAE</text>
+      <text x="797" y="153" text-anchor="middle" class="ar-s">解码成图像 §1</text>
+      <!-- arrows -->
+      <path d="M140 139 H178" class="ar-ln" marker-end="url(#ah)"/>
+      <path d="M100 112 V49 H178" class="ar-ln d" marker-end="url(#ah)"/>
+      <path d="M270 78 V108" class="ar-ln d" marker-end="url(#ah)"/>
+      <path d="M358 139 H416" class="ar-ln m" marker-end="url(#ahm)"/>
+      <text x="387" y="128" text-anchor="middle" class="ar-s">文本条件</text>
+      <text x="387" y="160" text-anchor="middle" class="ar-q">接入方式未详述</text>
+      <path d="M535 234 V208" class="ar-ln" marker-end="url(#ah)"/>
+      <path d="M650 139 H708" class="ar-ln m" marker-end="url(#ahm)"/>
+      <text x="680" y="128" text-anchor="middle" class="ar-s">latent</text>
+      <text x="797" y="196" text-anchor="middle" class="ar-s">Turbo：同结构蒸馏到 8 NFE</text>
+      <text x="797" y="213" text-anchor="middle" class="ar-s">（MT-DMD，§2.2.3）</text>
+    </svg>
+    <p class="cap">示意，不是论文原图。只画原文 §1 / §4.1 写明的组件；虚线表示可选的 Prompt Enhancer。「单流」只是原文的称呼，token 怎么拼接、用什么注意力形式，原文都没说，这里不画。</p>
+  </div>
+
+  <div class="prose">
+    <h3>相对同类的取舍</h3>
+    <ul>
+      <li><b>不走加参数路线。</b>作者认为单纯扩参（引言里点名 Qwen-Image、HunyuanImage）边际收益递减；6B 的 Z-Image 在复杂指令和中文文字渲染上仍有短板<span class="src">§1</span>。8B 被定位成两者之间的折中。</li>
+      <li><b>小文本编码器。</b>原文说「不同于其他开源模型」，选 3B 的 Ministral-3 来降低显存和使用门槛，并称实验发现小编码器仍能支持长而复杂的指令<span class="src">§1</span>。这组实验没有放出来。</li>
+      <li><b>VAE 直接复用 FLUX.2。</b>没有自训 VAE<span class="src">§1</span>。</li>
+      <li><b>PE 作为配套组件。</b>3B 的 Prompt Enhancer 把短 prompt 扩写成长描述，因为模型「在长、详细、结构化的 prompt 下表现最好」<span class="src">§4.1</span>。PE 的基座和训练数据原文都没写。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 04 数据 -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：预训练自底向上，SFT 自顶向下</h2>
+    <p class="sec-intro">这是论文最有料的部分，但它只讲了「怎么做」，几乎没给「多少」：规模、比例、阈值都没有。</p></div>
+
+  <div class="wide">
+    <div class="legend-dots"><span>处理步骤</span><span class="m">用到模型</span><span class="o">产出</span></div>
+    <div class="pipe">
+      <div class="pipe-head c4"><span></span><span>来源 / 起点</span><span>结构化</span><span>标注</span><span>质量 &amp; 采样</span></div>
+      <div class="pipe-row c4">
+        <div class="lbl">预训练<br>自底向上</div>
+        <div class="chip">内部数据池的海量原始图像<span class="src">§2.1</span></div>
+        <div class="chip m">图像分类模型 → 10,000 个细类<span class="src">§2.1</span></div>
+        <div class="chip m">VLM 写 caption，重点是完整转写图中文字<span class="src">§2.1</span></div>
+        <div class="chip o">ERNIE-Image-Aes 打分 → 类间 + 类内两级采样<span class="src">§2.1</span></div>
+      </div>
+      <div class="pipe-row c4">
+        <div class="lbl">SFT<br>自顶向下</div>
+        <div class="chip">先定优先域：海报、游戏截图、人像、物体摄影、动漫等<span class="src">§2.2.1</span></div>
+        <div class="chip">每个域精选高质量、风格一致的数据<span class="src">§2.2.1</span></div>
+        <div class="chip m">VLM caption：内容、布局、属性、可见文字<span class="src">§2.2.1</span></div>
+        <div class="chip o">K2.5 把 caption 改写成多种用户 prompt<span class="src">§2.2.1</span></div>
+      </div>
+      <div class="pipe-row c4">
+        <div class="lbl">美学标注</div>
+        <div class="chip">从预训练集按类别均衡抽候选<span class="src">§3.1</span></div>
+        <div class="chip">标注员先过美学校准测试<span class="src">§3.1</span></div>
+        <div class="chip">每人独立跑完整瑞士轮，两两比较<span class="src">§3.1</span></div>
+        <div class="chip o">数据集层面聚合 → 微调 ArtiMuse（8B）成 ERNIE-Image-Aes<span class="src">§3.3</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>① 万类细分类：对付长尾</h3>
+    <p>先训练一个图像分类模型，把每张图分到 10,000 个细粒度视觉类别之一<span class="src">§2.1</span>。作用有两个：给全量数据做可扩展的语义切分，同时作为后续配平的依据，防止高频类别淹没预训练分布、保住长尾概念<span class="src">§2.1</span>。分类模型的结构、类目怎么来的，原文没说。</p>
+
+    <h3>② caption：VLM 全量重标，文字优先</h3>
+    <p>所有图都用 VLM 重写 caption。除了一般的视觉描述，<em>特别强调忠实识别并转写图中文字</em>，因为幻灯片、说明图、海报、界面截图、文档类图片一旦漏字或错字，图文对齐就会明显变差<span class="src">§2.1</span>。引言补充说，caption 模型是「微调过的强 VLM」，用来抽取结构化描述和图中文字<span class="src">§1</span>（引用的是 Yang et al., 2025，即 Qwen3 报告；具体基座和微调数据没说）。</p>
+    <p>作者的核心观察：<b>在训练早期就给详细描述，不仅能强化复杂指令遵循，还能明显丰富世界知识</b>，所以他们没有专门合成领域数据，而是在标注上下功夫<span class="src">§1</span>。这是观察，文中没有对照实验。</p>
+
+    <h3>③ 美学分 + 两级分层采样</h3>
+    <ul>
+      <li><b>类间：</b>每个类别的采样权重同时看语料规模和整体美学质量。高频类别不会独占，持续高质量的类别多分一些概率<span class="src">§2.1</span>。</li>
+      <li><b>类内：</b>按单张图的美学分采样，高分图出现得更频繁<span class="src">§2.1</span>。</li>
+      <li>美学分是「统一质量信号」，用于大规模过滤和采样，替代单纯依赖启发式规则<span class="src">§2.1</span>。权重公式、温度、过滤阈值都没有披露。</li>
+    </ul>
+
+    <h3>④ SFT：priority domain + prompt 多样化</h3>
+    <p>SFT 反过来走「自顶向下」：先定出优先域，再为每个域精选高质量、高一致性的数据。目前重点是 <em>海报设计、游戏截图、人像摄影、物体摄影、动漫风格</em>，以及其他高需求类别<span class="src">§2.2.1</span>。同样用 VLM 写结构化 caption<span class="src">§2.2.1</span>。</p>
+    <p>为了贴近真实用户输入，再用更大的 VLM <b>K2.5</b>（引用 Kimi K2.5）把每张图的 caption 改写、压缩成多种面向用户的 prompt，在风格、粒度和长度上拉开差异，包括：<em>关键词式短描述、自然语言请求、指令式 prompt、详细的构图说明</em><span class="src">§2.2.1</span>。作者说这一步能提升对不同表达方式的鲁棒性，并缓解 caption 模型带来的偏差<span class="src">§1 · §2.2.1</span>。每张图改写几条、按什么比例采样，原文没说。</p>
+
+    <h3>⑤ DPO 偏好数据</h3>
+    <p>只说用了「高质量人工标注」的偏好对<span class="src">§2.2.2</span>，规模、来源、标注协议都没有披露。</p>
+  </div>
+
+  <h3 class="wide">已披露规模一览</h3>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>项目</th><th>原文给出的信息</th><th>出处</th></tr></thead>
+      <tbody>
+        <tr><td>预训练原始图池规模</td><td><span class="nd">原文未披露</span>（只说是内部数据池）</td><td>§2.1</td></tr>
+        <tr><td>细分类类目数</td><td>10,000</td><td>§2.1</td></tr>
+        <tr><td>预训练采样后规模 / 各类配比</td><td><span class="nd">原文未披露</span></td><td>§2.1</td></tr>
+        <tr><td>caption 模型</td><td>微调过的 VLM（引用 Yang et al., 2025）；基座与规模不明</td><td>§1 · §2.1</td></tr>
+        <tr><td>SFT 数据规模</td><td><span class="nd">原文未披露</span>；已列出的域：海报、游戏截图、人像、物体摄影、动漫，另有「其他」</td><td>§2.2.1</td></tr>
+        <tr><td>prompt 改写模型 / 形态</td><td>K2.5；4 类形态（关键词、自然语言请求、指令式、详细构图）</td><td>§2.2.1</td></tr>
+        <tr><td>DPO 偏好对数量</td><td><span class="nd">原文未披露</span>（人工标注）</td><td>§2.2.2</td></tr>
+        <tr><td>美学训练集规模</td><td><span class="nd">原文未披露</span>；覆盖商业摄影、胶片、日常快照、动漫、设计图、海报等</td><td>§3.3</td></tr>
+        <tr><td>ERIA-1K</td><td>1,000 张，6 类，档位 1–10，公开</td><td>§3.2 · 表 1</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="wide">唯一给出比例的数据：ERIA-1K 类别分布</h3>
+  <div class="card wide" style="padding:14px 18px">
+    <p style="margin:0 0 4px;font-size:.92rem;color:var(--muted)">这是<b>评测基准</b>的构成，不是训练配比。作者有意按真实分布配比，而不是多放精品内容<span class="src">§3.2</span>。</p>
+    <div class="dist">
+      <span>Photography</span><span class="bar"><i style="width:49.28%"></i></span><span class="v">49.28%</span>
+      <span>Illustration / Anime</span><span class="bar"><i style="width:23.16%"></i></span><span class="v">23.16%</span>
+      <span>Graphic Design / Posters</span><span class="bar"><i style="width:11.14%"></i></span><span class="v">11.14%</span>
+      <span>Mixed Web Imagery</span><span class="bar"><i style="width:10.44%"></i></span><span class="v">10.44%</span>
+      <span>Film Photography</span><span class="bar"><i style="width:5.42%"></i></span><span class="v">5.42%</span>
+      <span>Product / Collectible</span><span class="bar"><i style="width:0.56%"></i></span><span class="v">0.56%</span>
+    </div>
+    <p class="tbl-note">条长 = 原表百分比（满宽 = 100%）。来源：表 1。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="美学标注结果预览：1 到 10 档，每档 10 张样例图，高档多为风光、人像和精致插画，低档多为文档截图、模糊照片和草图" loading="lazy" width="1110" height="1006"></div>
+    <figcaption><b>美学标注结果预览。</b>按 1–10 档排列（每行标 avg）。高档多是风光、人像、精致插画，低档是表格截图、模糊照片、草图和聊天截图。可以看出这套标注把「文字或文档类图片」整体压在了低档，这和预训练里重视文字类样本的做法有一定张力（见局限）。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>为什么不用现成美学模型 <span class="tag">§3.1 · §3.3</span></h4>
+      <ul>
+        <li>LAION-Aesthetic：给 AI 生成内容打分偏高，给动漫和随手拍也偏高</li>
+        <li>ArtiMuse / UniPercept：明显偏爱黑白照片；UniPercept 还会给日常随手拍打高分</li>
+        <li>作者结论：训练数据的多样性是泛化的关键，用窄分布训练出来的模型在分布外类别上会持续失效<span class="src">§3.3</span></li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>标注质量控制的两个关键 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li><b>先筛人：</b>个人审美敏感度差异很大，培训也难以可靠提升，所以必须先过校准测试</li>
+        <li><b>不混池：</b>多名标注员在同一个瑞士轮里协作标注会互相干扰标准，所以改成每人独立跑完自己的子集，最后在数据集层面聚合</li>
+        <li>ERIA-1K 的标注员来自美术、设计和摄影专业背景（中央美院、川美、中传等）<span class="src">§3.2</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 05 训练 -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+    <p class="sec-intro">只有 DPO 给了超参。学习率、batch、步数、token 数、算力，原文都没写。</p></div>
+
+  <h3 class="wide" style="margin-top:0">预训练：三阶段升分辨率</h3>
+  <div class="flow c3 wide">
+    <div class="card stage"><span class="sid">PT-1</span><h4>256 × 256</h4><dl><dt>宽高比</dt><dd>多种</dd><dt>步数 / 数据</dt><dd><span class="nd">未披露</span></dd></dl></div>
+    <div class="card stage"><span class="sid">PT-2</span><h4>512 × 512</h4><dl><dt>宽高比</dt><dd>多种</dd><dt>步数 / 数据</dt><dd><span class="nd">未披露</span></dd></dl></div>
+    <div class="card stage"><span class="sid">PT-3</span><h4>1024 × 1024</h4><dl><dt>宽高比</dt><dd>多种</dd><dt>步数 / 数据</dt><dd><span class="nd">未披露</span></dd></dl></div>
+  </div>
+  <p class="footnote wide">各阶段都用多宽高比训练，不只用方图。目的是在早期提高优化效率，同时保住高分辨率下灵活的构图和版式<span class="src">§2.1</span>。</p>
+
+  <h3 class="wide">后训练：SFT → DPO → MT-DMD（Turbo）</h3>
+  <div class="post-flow wide">
+    <div class="card stage">
+      <span class="sid">SFT</span><h4>优先域精调</h4>
+      <ul>
+        <li>自顶向下精选的域数据 + VLM caption<span class="src">§2.2.1</span></li>
+        <li>用 K2.5 做 prompt 多样化，对齐真实用户输入<span class="src">§2.2.1</span></li>
+        <li>超参：<span class="nd">未披露</span></li>
+      </ul>
+    </div>
+    <div class="card stage">
+      <span class="sid">DPO</span><h4>Flow Matching 上的 DPO + Anchor Loss</h4>
+      <ul>
+        <li>隐式奖励 = 速度预测的 L2 重建误差；比较 policy 和冻结 ref 在 win/lose 上的误差差值<span class="src">式 1–2</span></li>
+        <li>朴素 DPO 会被 reward hacking：模型把 lose 样本的误差无限放大，导致表征崩溃<span class="src">§2.2.2</span></li>
+        <li>修正：在 win 和 lose 上都加重建 loss 作锚点，<code>β = 0.05</code>、<code>λ<sub>win</sub> = 0.35</code>、<code>λ<sub>lose</sub> = 0.15</code><span class="src">式 3</span></li>
+        <li>「只需少量 DPO 步」，具体步数<span class="nd">未披露</span><span class="src">§1</span></li>
+      </ul>
+    </div>
+    <div class="card stage">
+      <span class="sid">MT-DMD</span><h4>多教师蒸馏 → Turbo（8 NFE）</h4>
+      <ul>
+        <li>建立在 DMD / Decoupled DMD（CA + DM 两个目标）/ DMD2 / DMDR 之上；DMDR 的余弦动态 guidance 见式 4<span class="src">§2.2.3</span></li>
+        <li>问题：单教师在异质数据上会出现 <b>capability drift</b>，排版文字、风格化等细分能力收敛不佳<span class="src">§2.2.3</span></li>
+        <li>做法：K 个专家教师（文字渲染、数字艺术、构图等），由门控 W<sub>k</sub>(x<sub>t</sub>, σ, c, O) 加权得到 x̂<sub>0</sub>；O ∈ {CA, DM}，所以两个目标可以问不同的专家<span class="src">式 5</span></li>
+        <li>高噪声阶段交给版式专家，低噪声阶段交给光照、材质等高频专家<span class="src">§2.2.3</span></li>
+        <li>K 值、专家怎么得到、门控怎么训练：<span class="nd">未披露</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <details class="more wide">
+    <summary>DPO 目标的原式（转写）<span class="hint">式 1–3</span></summary>
+    <div class="body">
+      <p style="font-family:var(--f-mono);font-size:.88rem;line-height:1.9">
+        Diff<sub>policy</sub> = ‖v<sub>pol</sub>(x<sub>t</sub><sup>win</sup>, h, t) − v<sub>t</sub><sup>win</sup>‖² − ‖v<sub>pol</sub>(x<sub>t</sub><sup>lose</sup>, h, t) − v<sub>t</sub><sup>lose</sup>‖²<br>
+        Diff<sub>ref</sub>&nbsp;&nbsp;&nbsp;= 同上，把 v<sub>pol</sub> 换成冻结的 v<sub>ref</sub><br>
+        L<sub>DPO</sub> = −E[ log σ( −β (Diff<sub>policy</sub> − Diff<sub>ref</sub>) ) ]<br>
+        L<sub>total</sub> = L<sub>DPO</sub> + λ<sub>win</sub>·E[ℓ<sup>win</sup><sub>policy</sub>] + λ<sub>lose</sub>·E[ℓ<sup>lose</sup><sub>policy</sub>]，ℓ = ‖v<sub>θ</sub>(x<sub>t</sub>, h, t) − v<sub>t</sub>‖²
+      </p>
+      <p class="tbl-note">h 是 prompt 的 hidden state。注意 lose 端也加了正向的重建 loss（λ<sub>lose</sub> = 0.15），目的是限制模型通过「把 lose 样本做烂」来拉开 margin<span class="src">§2.2.2</span>。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 06 评测 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+    <p class="sec-intro">四组证据：内部人评（表 3）、GenEval（表 4）、LongText-Bench（表 5）、OneIG-EN/ZH（表 6–7）。另外有美学模型评测（表 2）。不同表的对比对象不完全一样，下表的「—」表示原文没有在该基准上报告这个模型。</p></div>
+
+  <h3 class="wide" style="margin-top:0">一张表看定位（总分）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>开源权重</th><th class="q">GenEval</th><th class="q">LongText</th><th class="q">OneIG-EN</th><th class="q">OneIG-ZH</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="6">ERNIE 系列</td></tr>
+        <tr class="hl"><td>ERNIE-Image (w/ PE)</td><td>✓</td><td>0.87</td><td>0.973</td><td>0.575</td><td>0.554</td></tr>
+        <tr class="hl"><td>ERNIE-Image (w/o PE)</td><td>✓</td><td class="best">0.89</td><td>0.964</td><td>0.554</td><td>0.521</td></tr>
+        <tr class="hl"><td>ERNIE-Image-Turbo (w/ PE)</td><td>✓</td><td>0.85</td><td>0.966</td><td>0.566</td><td>0.544</td></tr>
+        <tr class="hl"><td>ERNIE-Image-Turbo (w/o PE)</td><td>✓</td><td>0.87</td><td>0.964</td><td>0.534</td><td>0.506</td></tr>
+        <tr class="grp"><td colspan="6">闭源</td></tr>
+        <tr><td>Nano Banana 2.0</td><td>–</td><td>—</td><td>0.965</td><td class="best">0.578</td><td class="best">0.567</td></tr>
+        <tr><td>Seedream 4.5</td><td>–</td><td>—</td><td class="best">0.988</td><td>0.576</td><td>0.551</td></tr>
+        <tr><td>GPT Image 1 <sup>†</sup></td><td>–</td><td>0.84</td><td>0.788</td><td>0.533</td><td>0.474</td></tr>
+        <tr class="grp"><td colspan="6">开源</td></tr>
+        <tr><td>GLM-Image</td><td>✓</td><td>—</td><td>0.966</td><td>0.528</td><td>0.511</td></tr>
+        <tr><td>Qwen-Image-2512</td><td>✓</td><td>—</td><td>0.960</td><td>0.530</td><td>0.515</td></tr>
+        <tr><td>Qwen-Image</td><td>✓</td><td>0.87</td><td>0.945</td><td>0.539</td><td>0.548</td></tr>
+        <tr><td>Z-Image</td><td>✓</td><td>0.84</td><td>0.936</td><td>0.546</td><td>0.535</td></tr>
+        <tr><td>Z-Image-Turbo</td><td>✓</td><td>0.82</td><td>0.922</td><td>0.528</td><td>0.507</td></tr>
+        <tr><td>FLUX.2-klein-9B</td><td>✓</td><td>0.85</td><td>0.541</td><td>0.532</td><td>0.430</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">该列在本表中的最大值</span><span class="k-q">总分列</span></div>
+  <p class="tbl-note wide">来源：表 4–7 的 Overall 列。✓ / – 照抄原表的「Open Weights」标记。<sup>†</sup> GenEval 里写的是「GPT Image 1」，LongText / OneIG 里写的是「GPT Image 1 [High]」，原文没说明是不是同一设置。OneIG-ZH 上 Seedream 4.0 也是 0.554，与 ERNIE-Image (w/ PE) 持平（未列入本表）<span class="src">表 7</span>。原表用加粗表示最优、下划线表示次优，纯文本里丢失了，本页按数值重新标注。</p>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 300 200" role="img" aria-label="ERIA-1K 上美学模型 SRCC 对比">
+        <text x="0" y="14" class="ch-t">美学模型 · ERIA-1K SRCC</text>
+        <text x="300" y="14" text-anchor="end" class="ch-src">表 2</text>
+        <g transform="translate(0,34)">
+          <text x="0" y="16" class="ch-lbl">ERNIE-Image-Aes</text><rect x="104" y="5" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="5" width="119.1" height="16" rx="3" class="bar-q"/><text x="227" y="17" class="ch-val">0.7445</text>
+          <text x="0" y="46" class="ch-lbl">UniPercept</text><rect x="104" y="35" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="35" width="72.5" height="16" rx="3" class="bar-o"/><text x="181" y="47" class="ch-val">0.4533</text>
+          <text x="0" y="76" class="ch-lbl">ArtiMuse</text><rect x="104" y="65" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="65" width="68.4" height="16" rx="3" class="bar-o"/><text x="177" y="77" class="ch-val">0.4277</text>
+          <text x="0" y="106" class="ch-lbl">LAION AES</text><rect x="104" y="95" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="95" width="47.1" height="16" rx="3" class="bar-o"/><text x="156" y="107" class="ch-val">0.2944</text>
+          <line x1="104" y1="122" x2="264" y2="122" class="axis"/>
+          <text x="104" y="136" text-anchor="middle" class="ch-ax">0</text><text x="184" y="136" text-anchor="middle" class="ch-ax">0.5</text><text x="264" y="136" text-anchor="middle" class="ch-ax">1.0</text>
+        </g>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 300 230" role="img" aria-label="LongText-Bench 总分对比">
+        <text x="0" y="14" class="ch-t">LongText-Bench · Overall</text>
+        <text x="300" y="14" text-anchor="end" class="ch-src">表 5</text>
+        <g transform="translate(0,34)">
+          <text x="0" y="16" class="ch-lbl">Seedream 4.5</text><rect x="104" y="5" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="5" width="158.1" height="16" rx="3" class="bar-o2"/><text x="262" y="17" text-anchor="end" class="ch-val ch-in">0.988</text>
+          <text x="0" y="46" class="ch-lbl">ERNIE (w/ PE)</text><rect x="104" y="35" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="35" width="155.7" height="16" rx="3" class="bar-q"/><text x="258" y="47" text-anchor="end" class="ch-val ch-in">0.973</text>
+          <text x="0" y="76" class="ch-lbl">GLM-Image</text><rect x="104" y="65" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="65" width="154.6" height="16" rx="3" class="bar-o"/><text x="256" y="77" text-anchor="end" class="ch-val">0.966</text>
+          <text x="0" y="106" class="ch-lbl">Nano Banana 2.0</text><rect x="104" y="95" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="95" width="154.4" height="16" rx="3" class="bar-o2"/><text x="256" y="107" text-anchor="end" class="ch-val ch-in">0.965</text>
+          <text x="0" y="136" class="ch-lbl">Qwen-Image-2512</text><rect x="104" y="125" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="125" width="153.6" height="16" rx="3" class="bar-o"/><text x="255" y="137" text-anchor="end" class="ch-val">0.960</text>
+          <text x="0" y="166" class="ch-lbl">Z-Image</text><rect x="104" y="155" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="155" width="149.8" height="16" rx="3" class="bar-o"/><text x="251" y="167" text-anchor="end" class="ch-val">0.936</text>
+          <line x1="104" y1="182" x2="264" y2="182" class="axis"/>
+          <text x="104" y="196" text-anchor="middle" class="ch-ax">0</text><text x="184" y="196" text-anchor="middle" class="ch-ax">0.5</text><text x="264" y="196" text-anchor="middle" class="ch-ax">1.0</text>
+        </g>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 300 230" role="img" aria-label="OneIG-EN 总分对比">
+        <text x="0" y="14" class="ch-t">OneIG-EN · Overall</text>
+        <text x="300" y="14" text-anchor="end" class="ch-src">表 6</text>
+        <g transform="translate(0,34)">
+          <text x="0" y="16" class="ch-lbl">Nano Banana 2.0</text><rect x="104" y="5" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="5" width="154.1" height="16" rx="3" class="bar-o2"/><text x="255" y="17" text-anchor="end" class="ch-val ch-in">0.578</text>
+          <text x="0" y="46" class="ch-lbl">Seedream 4.5</text><rect x="104" y="35" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="35" width="153.6" height="16" rx="3" class="bar-o2"/><text x="255" y="47" text-anchor="end" class="ch-val ch-in">0.576</text>
+          <text x="0" y="76" class="ch-lbl">ERNIE (w/ PE)</text><rect x="104" y="65" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="65" width="153.3" height="16" rx="3" class="bar-q"/><text x="254" y="77" text-anchor="end" class="ch-val ch-in">0.575</text>
+          <text x="0" y="106" class="ch-lbl">ERNIE-Turbo (w/ PE)</text><rect x="104" y="95" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="95" width="150.9" height="16" rx="3" class="bar-qi"/><text x="252" y="107" text-anchor="end" class="ch-val">0.566</text>
+          <text x="0" y="136" class="ch-lbl">Z-Image</text><rect x="104" y="125" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="125" width="145.6" height="16" rx="3" class="bar-o"/><text x="246" y="137" text-anchor="end" class="ch-val">0.546</text>
+          <text x="0" y="166" class="ch-lbl">Qwen-Image</text><rect x="104" y="155" width="160" height="16" rx="3" class="bar-bg"/><rect x="104" y="155" width="143.7" height="16" rx="3" class="bar-o"/><text x="244" y="167" text-anchor="end" class="ch-val">0.539</text>
+          <line x1="104" y1="182" x2="264" y2="182" class="axis"/>
+          <text x="104" y="196" text-anchor="middle" class="ch-ax">0</text><text x="184" y="196" text-anchor="middle" class="ch-ax">0.3</text><text x="264" y="196" text-anchor="middle" class="ch-ax">0.6</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">ERNIE-Image</span><span class="l2">ERNIE-Image-Turbo</span><span class="l4">闭源</span><span class="l3">开源 / 其他美学模型</span></div>
+  <p class="tbl-note wide">三张图的坐标轴都从 0 开始（OneIG 轴满刻度是 0.6）。所以前排差距看起来很小，这也是事实：LongText 前五名都在 0.96–0.99 之间。</p>
+
+  <h3 class="wide">内部人评（表 3）：开源第一，闭源第二档</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th class="q">Total HP</th><th>Spatial Structure</th><th>World Understanding</th><th>Physics Consistency</th><th>Aesthetic Design</th><th>Style Match</th><th>Creativity Ability</th><th>Knowledge Accuracy</th></tr></thead>
+      <tbody>
+        <tr><td>Nano Banana 2.0</td><td class="q best">5.39</td><td class="best">95.54</td><td class="best">98.51</td><td class="best">95.24</td><td class="best">91.37</td><td class="best">90.77</td><td class="best">67.86</td><td class="best">99.40</td></tr>
+        <tr class="hl"><td>ERNIE-Image</td><td class="q">5.07</td><td>89.88</td><td>94.05</td><td>92.56</td><td>83.04</td><td>84.82</td><td>62.80</td><td>95.24</td></tr>
+        <tr><td>Seedream 5.0</td><td class="q">5.03</td><td>90.48</td><td>97.32</td><td>91.96</td><td>80.65</td><td>81.55</td><td>61.01</td><td>97.02</td></tr>
+        <tr><td>Wan2.7-Image</td><td class="q">4.96</td><td>88.39</td><td>93.45</td><td>90.18</td><td>81.25</td><td>83.33</td><td>59.82</td><td>95.24</td></tr>
+        <tr><td>Qwen-Image-2512</td><td class="q">4.78</td><td>85.12</td><td>91.37</td><td>88.39</td><td>77.98</td><td>79.76</td><td>55.65</td><td>95.83</td></tr>
+        <tr class="hl"><td>ERNIE-Image-Turbo</td><td class="q">4.65</td><td>83.33</td><td>90.18</td><td>83.63</td><td>75.60</td><td>74.70</td><td>57.14</td><td>94.64</td></tr>
+        <tr><td>FLUX.2-klein-9B</td><td class="q">4.59</td><td>81.55</td><td>84.23</td><td>84.82</td><td>75.00</td><td>79.17</td><td>54.46</td><td>85.71</td></tr>
+        <tr><td>Z-Image-Turbo</td><td class="q">4.56</td><td>81.25</td><td>87.20</td><td>79.46</td><td>76.19</td><td>78.87</td><td>55.36</td><td>89.29</td></tr>
+        <tr><td>Qwen-Image</td><td class="q">4.52</td><td>81.85</td><td>87.20</td><td>81.55</td><td>72.02</td><td>72.32</td><td>57.44</td><td>90.48</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 3。七个维度是 pass/fail 的通过率（%），标注员对匿名模型输出逐维度独立判断<span class="src">§4.2</span>。<b>Total HP 的量纲和聚合方式原文没有说明</b>，不能直接从维度分推出来。测试集是根据用户反馈建立的内部集，覆盖摄影、广告海报、平面设计等<span class="src">§4.2</span>；题量和标注人数<span class="nd">未披露</span>。ERNIE-Image 和 Seedream 5.0 只差 0.04<span class="src calc">推算</span>，在不知道样本量的情况下，说「超过 Seedream 5.0」证据不足。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>PE 的作用：看指标，有升有降 <span class="tag">表 4–7</span></h4>
+      <ul>
+        <li>GenEval：加 PE 后反而从 0.89 降到 0.87<span class="src calc">推算 −0.02</span>，原文最高分用的是 w/o PE</li>
+        <li>OneIG-EN：0.554 → 0.575<span class="src calc">推算 +0.021</span>，主要来自 Reasoning（0.295 → 0.357）和 Diversity（0.169 → 0.241）<span class="src">表 6</span></li>
+        <li>OneIG-ZH：0.521 → 0.554<span class="src calc">推算 +0.033</span><span class="src">表 7</span></li>
+        <li>LongText：0.964 → 0.973<span class="src">表 5</span></li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Turbo 掉了多少 <span class="tag">表 3–7</span></h4>
+      <ul>
+        <li>人评 Total HP：5.07 → 4.65<span class="src calc">推算 −0.42</span>，比 Qwen-Image-2512（4.78）还低<span class="src">表 3</span></li>
+        <li>自动指标掉得少：LongText 0.973 → 0.966（w/ PE）；OneIG-EN 0.575 → 0.566<span class="src">表 5–6</span></li>
+        <li>自动指标几乎不掉、人评掉得明显，说明 MT-DMD 的代价主要体现在人能感知的质量上。原文没有讨论这个差异</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="wide">定性对比</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="Prompt Enhancer 对比：同一 prompt「深圳 HD-2D RPG 游戏截图」，左为不用 PE，中为 3B PE，右为更大语言模型 PE" loading="lazy" width="1102" height="281"></div>
+    <figcaption><b>Prompt 扩写对比（裁图只保留了中间一行：「深圳背景的 HD-2D RPG 游戏截图」）。</b>从左到右：不用 PE、用 3B PE、用更大的 LM 做 PE。原文说，加 PE 后出现了 HUD 等游戏界面元素，类型感更强；更大的 PE 在环境细节和界面真实感上更进一步。原图另有白板解题、网页截图两行。<span class="from">来源：论文图 6</span></figcaption>
+  </figure>
+  <div class="grid2 wide">
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig7.jpg" alt="写实人像对比：ERNIE-Image、Nano Banana 2、Z-image-Turbo、Seedream 5 生成的蹲坐逗猫女孩" loading="lazy" width="848" height="1471"></div>
+      <figcaption><b>写实人像（英文长 prompt：水泥院子里逗猫的女孩）。</b>原文认为 ERNIE-Image 的面部细节和皮肤纹理更自然，Nano Banana 2 和 Seedream 5 偏「精修感」，Z-Image-Turbo 的姿态和清晰度较弱。每个模型只展示了一张样例。<span class="from">来源：论文图 7</span></figcaption>
+    </figure>
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig8.jpg" alt="日系胶片人像对比：旧书店里侧身回眸的女性，四个模型各一张" loading="lazy" width="928" height="919"></div>
+      <figcaption><b>中文 prompt 胶片人像（裁图为原图 8 的第二组：「日系胶片风格肖像，旧书店，前景半透明遮挡，逆光」）。</b>原图 8 第一组是 35mm 情侣静帧，这里没有裁入。可以对照看前景遮挡和丁达尔光的表现。<span class="from">来源：论文图 8</span></figcaption>
+    </figure>
+  </div>
+
+  <details class="more wide">
+    <summary>完整表 4 · GenEval<span class="hint">19 行</span></summary>
+    <div class="body"><div class="tbl-wrap tall"><table><thead><tr><th>模型</th><th>开源权重</th>
+<th>Single Object</th>
+<th>Two Object</th>
+<th>Counting</th>
+<th>Colors</th>
+<th>Position</th>
+<th>Attribute Binding</th>
+<th class="q">Overall ↑</th>
+</tr></thead><tbody>
+<tr><td>Qwen-Image</td><td>✓</td><td>0.99</td><td>0.92</td><td>0.89</td><td>0.88</td><td>0.76</td><td>0.77</td><td class="q">0.87</td></tr>
+<tr><td>FLUX.2-klein-9B</td><td>✓</td><td>0.93</td><td>0.96</td><td>0.83</td><td>0.91</td><td>0.72</td><td>0.74</td><td class="q">0.85</td></tr>
+<tr><td>Seedream 3.0</td><td>–</td><td>0.99</td><td>0.96</td><td class="best">0.91</td><td class="best">0.93</td><td>0.47</td><td class="best">0.80</td><td class="q">0.84</td></tr>
+<tr><td>Z-Image</td><td>✓</td><td class="best">1.00</td><td>0.94</td><td>0.78</td><td class="best">0.93</td><td>0.62</td><td>0.77</td><td class="q">0.84</td></tr>
+<tr><td>GPT Image 1</td><td>–</td><td>0.99</td><td>0.92</td><td>0.85</td><td>0.92</td><td>0.75</td><td>0.61</td><td class="q">0.84</td></tr>
+<tr><td>HiDream-l1-Full</td><td>✓</td><td class="best">1.00</td><td class="best">0.98</td><td>0.79</td><td>0.91</td><td>0.60</td><td>0.72</td><td class="q">0.83</td></tr>
+<tr><td>Z-Image-Turbo</td><td>✓</td><td class="best">1.00</td><td>0.95</td><td>0.77</td><td>0.89</td><td>0.65</td><td>0.68</td><td class="q">0.82</td></tr>
+<tr><td>Janus-Pro-7B</td><td>✓</td><td>0.99</td><td>0.89</td><td>0.59</td><td>0.90</td><td>0.79</td><td>0.66</td><td class="q">0.80</td></tr>
+<tr><td>SD3.5-Large</td><td>✓</td><td>0.98</td><td>0.89</td><td>0.73</td><td>0.83</td><td>0.34</td><td>0.47</td><td class="q">0.71</td></tr>
+<tr><td>FLUX.1 [Dev]</td><td>✓</td><td>0.98</td><td>0.81</td><td>0.74</td><td>0.79</td><td>0.22</td><td>0.45</td><td class="q">0.66</td></tr>
+<tr><td>JanusFlow</td><td>✓</td><td>0.97</td><td>0.59</td><td>0.45</td><td>0.83</td><td>0.53</td><td>0.42</td><td class="q">0.63</td></tr>
+<tr><td>SD3 Medium</td><td>✓</td><td>0.98</td><td>0.74</td><td>0.63</td><td>0.67</td><td>0.34</td><td>0.36</td><td class="q">0.62</td></tr>
+<tr><td>Emu3-Gen</td><td>✓</td><td>0.98</td><td>0.71</td><td>0.34</td><td>0.81</td><td>0.17</td><td>0.21</td><td class="q">0.54</td></tr>
+<tr><td>Show-o</td><td>✓</td><td>0.95</td><td>0.52</td><td>0.49</td><td>0.82</td><td>0.11</td><td>0.28</td><td class="q">0.53</td></tr>
+<tr><td>PixArt-α</td><td>✓</td><td>0.98</td><td>0.50</td><td>0.44</td><td>0.80</td><td>0.08</td><td>0.07</td><td class="q">0.48</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/ PE)</td><td>✓</td><td>0.99</td><td>0.94</td><td>0.84</td><td>0.84</td><td>0.80</td><td>0.70</td><td class="q">0.85</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/o PE)</td><td>✓</td><td class="best">1.00</td><td>0.96</td><td>0.79</td><td>0.92</td><td>0.80</td><td>0.73</td><td class="q">0.87</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/ PE)</td><td>✓</td><td>0.99</td><td>0.96</td><td>0.82</td><td>0.88</td><td class="best">0.86</td><td>0.72</td><td class="q">0.87</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/o PE)</td><td>✓</td><td class="best">1.00</td><td>0.96</td><td>0.78</td><td class="best">0.93</td><td class="best">0.86</td><td>0.79</td><td class="best q">0.89</td></tr>
+</tbody></table></div>
+<p class="tbl-note">来源：表 4（原文 19 行全部收录）。圆点 = 该列最大值（按本页逐列计算，含 Diversity 列）；✓ / – 为原表的开源权重标记；橙色底 = ERNIE 系列。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>完整表 5 · LongText-Bench<span class="hint">20 行</span></summary>
+    <div class="body"><div class="tbl-wrap tall"><table><thead><tr><th>模型</th><th>开源权重</th>
+<th>LongText-Bench-EN</th>
+<th>LongText-Bench-ZH</th>
+<th class="q">Overall ↑</th>
+</tr></thead><tbody>
+<tr><td>Seedream 4.5</td><td>–</td><td class="best">0.989</td><td class="best">0.987</td><td class="best q">0.988</td></tr>
+<tr><td>GLM-Image</td><td>✓</td><td>0.952</td><td>0.979</td><td class="q">0.966</td></tr>
+<tr><td>Nano Banana 2.0</td><td>–</td><td>0.981</td><td>0.949</td><td class="q">0.965</td></tr>
+<tr><td>Qwen-Image-2512</td><td>✓</td><td>0.956</td><td>0.965</td><td class="q">0.960</td></tr>
+<tr><td>Qwen-Image</td><td>✓</td><td>0.943</td><td>0.946</td><td class="q">0.945</td></tr>
+<tr><td>Z-Image</td><td>✓</td><td>0.935</td><td>0.936</td><td class="q">0.936</td></tr>
+<tr><td>Seedream 4.0</td><td>–</td><td>0.921</td><td>0.926</td><td class="q">0.924</td></tr>
+<tr><td>Z-Image-Turbo</td><td>✓</td><td>0.917</td><td>0.926</td><td class="q">0.922</td></tr>
+<tr><td>Seedream 3.0</td><td>–</td><td>0.896</td><td>0.878</td><td class="q">0.887</td></tr>
+<tr><td>GPT Image 1 [High]</td><td>–</td><td>0.956</td><td>0.619</td><td class="q">0.788</td></tr>
+<tr><td>FLUX.2-klein-9B</td><td>✓</td><td>0.864</td><td>0.218</td><td class="q">0.541</td></tr>
+<tr><td>BAGEL</td><td>✓</td><td>0.373</td><td>0.310</td><td class="q">0.342</td></tr>
+<tr><td>Kolors 2.0</td><td>✓</td><td>0.258</td><td>0.329</td><td class="q">0.294</td></tr>
+<tr><td>HiDream-l1-Full</td><td>✓</td><td>0.543</td><td>0.024</td><td class="q">0.284</td></tr>
+<tr><td>BLIP3-o</td><td>✓</td><td>0.021</td><td>0.018</td><td class="q">0.020</td></tr>
+<tr><td>Janus-Pro</td><td>✓</td><td>0.019</td><td>0.006</td><td class="q">0.013</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/o PE)</td><td>✓</td><td>0.960</td><td>0.968</td><td class="q">0.964</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/ PE)</td><td>✓</td><td>0.968</td><td>0.964</td><td class="q">0.966</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/o PE)</td><td>✓</td><td>0.968</td><td>0.959</td><td class="q">0.964</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/ PE)</td><td>✓</td><td>0.980</td><td>0.966</td><td class="q">0.973</td></tr>
+</tbody></table></div>
+<p class="tbl-note">来源：表 5（原文 20 行全部收录）。圆点 = 该列最大值（按本页逐列计算，含 Diversity 列）；✓ / – 为原表的开源权重标记；橙色底 = ERNIE 系列。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>完整表 6 · OneIG-EN<span class="hint">20 行</span></summary>
+    <div class="body"><div class="tbl-wrap tall"><table><thead><tr><th>模型</th><th>开源权重</th>
+<th>Alignment</th>
+<th>Text</th>
+<th>Reasoning</th>
+<th>Style</th>
+<th>Diversity</th>
+<th class="q">Overall ↑</th>
+</tr></thead><tbody>
+<tr><td>Nano Banana 2.0</td><td>–</td><td>0.888</td><td>0.944</td><td>0.334</td><td class="best">0.481</td><td>0.245</td><td class="best q">0.578</td></tr>
+<tr><td>Seedream 4.5</td><td>–</td><td>0.891</td><td class="best">0.998</td><td>0.350</td><td>0.434</td><td>0.207</td><td class="q">0.576</td></tr>
+<tr><td>Seedream 4.0</td><td>–</td><td class="best">0.892</td><td>0.983</td><td>0.347</td><td>0.453</td><td>0.191</td><td class="q">0.573</td></tr>
+<tr><td>Z-Image</td><td>✓</td><td>0.881</td><td>0.987</td><td>0.280</td><td>0.387</td><td>0.194</td><td class="q">0.546</td></tr>
+<tr><td>Qwen-Image</td><td>✓</td><td>0.882</td><td>0.891</td><td>0.306</td><td>0.418</td><td>0.197</td><td class="q">0.539</td></tr>
+<tr><td>GPT Image 1 [High]</td><td>–</td><td>0.851</td><td>0.857</td><td>0.345</td><td>0.462</td><td>0.151</td><td class="q">0.533</td></tr>
+<tr><td>FLUX.2-klein-9B</td><td>✓</td><td>0.887</td><td>0.866</td><td>0.312</td><td>0.442</td><td>0.156</td><td class="q">0.532</td></tr>
+<tr><td>Seedream 3.0</td><td>–</td><td>0.818</td><td>0.865</td><td>0.275</td><td>0.413</td><td>0.277</td><td class="q">0.530</td></tr>
+<tr><td>Qwen-Image-2512</td><td>✓</td><td>0.876</td><td>0.990</td><td>0.292</td><td>0.338</td><td>0.151</td><td class="q">0.530</td></tr>
+<tr><td>GLM-Image</td><td>✓</td><td>0.805</td><td>0.969</td><td>0.298</td><td>0.353</td><td>0.213</td><td class="q">0.528</td></tr>
+<tr><td>Z-Image-Turbo</td><td>✓</td><td>0.840</td><td>0.994</td><td>0.298</td><td>0.368</td><td>0.139</td><td class="q">0.528</td></tr>
+<tr><td>HiDream-l1-Full</td><td>✓</td><td>0.829</td><td>0.707</td><td>0.317</td><td>0.347</td><td>0.186</td><td class="q">0.477</td></tr>
+<tr><td>Kolors 2.0</td><td>✓</td><td>0.820</td><td>0.427</td><td>0.262</td><td>0.360</td><td>0.300</td><td class="q">0.434</td></tr>
+<tr><td>BAGEL</td><td>✓</td><td>0.769</td><td>0.244</td><td>0.173</td><td>0.367</td><td>0.251</td><td class="q">0.361</td></tr>
+<tr><td>BLIP3-o</td><td>✓</td><td>0.711</td><td>0.133</td><td>0.223</td><td>0.361</td><td>0.229</td><td class="q">0.307</td></tr>
+<tr><td>Janus-Pro</td><td>✓</td><td>0.553</td><td>0.001</td><td>0.139</td><td>0.276</td><td class="best">0.365</td><td class="q">0.267</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/o PE)</td><td>✓</td><td>0.880</td><td>0.949</td><td>0.291</td><td>0.428</td><td>0.123</td><td class="q">0.534</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/ PE)</td><td>✓</td><td>0.868</td><td>0.967</td><td>0.354</td><td>0.419</td><td>0.221</td><td class="q">0.566</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/o PE)</td><td>✓</td><td>0.891</td><td>0.967</td><td>0.295</td><td>0.447</td><td>0.169</td><td class="q">0.554</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/ PE)</td><td>✓</td><td>0.868</td><td>0.979</td><td class="best">0.357</td><td>0.431</td><td>0.241</td><td class="q">0.575</td></tr>
+</tbody></table></div>
+<p class="tbl-note">来源：表 6（原文 20 行全部收录）。圆点 = 该列最大值（按本页逐列计算，含 Diversity 列）；✓ / – 为原表的开源权重标记；橙色底 = ERNIE 系列。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>完整表 7 · OneIG-ZH<span class="hint">20 行</span></summary>
+    <div class="body"><div class="tbl-wrap tall"><table><thead><tr><th>模型</th><th>开源权重</th>
+<th>Alignment</th>
+<th>Text</th>
+<th>Reasoning</th>
+<th>Style</th>
+<th>Diversity</th>
+<th class="q">Overall ↑</th>
+</tr></thead><tbody>
+<tr><td>Nano Banana 2.0</td><td>–</td><td class="best">0.843</td><td>0.983</td><td class="best">0.311</td><td class="best">0.461</td><td>0.236</td><td class="best q">0.567</td></tr>
+<tr><td>Seedream 4.0</td><td>–</td><td>0.836</td><td>0.986</td><td>0.304</td><td>0.443</td><td>0.200</td><td class="q">0.554</td></tr>
+<tr><td>Seedream 4.5</td><td>–</td><td>0.832</td><td>0.986</td><td>0.300</td><td>0.426</td><td>0.213</td><td class="q">0.551</td></tr>
+<tr><td>Qwen-Image</td><td>✓</td><td>0.825</td><td>0.963</td><td>0.267</td><td>0.405</td><td>0.279</td><td class="q">0.548</td></tr>
+<tr><td>Z-Image</td><td>✓</td><td>0.793</td><td class="best">0.988</td><td>0.266</td><td>0.386</td><td>0.243</td><td class="q">0.535</td></tr>
+<tr><td>Seedream 3.0</td><td>–</td><td>0.793</td><td>0.928</td><td>0.281</td><td>0.397</td><td>0.243</td><td class="q">0.528</td></tr>
+<tr><td>Qwen-Image-2512</td><td>✓</td><td>0.823</td><td>0.983</td><td>0.272</td><td>0.342</td><td>0.157</td><td class="q">0.515</td></tr>
+<tr><td>GLM-Image</td><td>✓</td><td>0.738</td><td>0.976</td><td>0.284</td><td>0.335</td><td>0.221</td><td class="q">0.511</td></tr>
+<tr><td>Z-Image-Turbo</td><td>✓</td><td>0.782</td><td>0.982</td><td>0.276</td><td>0.361</td><td>0.134</td><td class="q">0.507</td></tr>
+<tr><td>GPT Image 1 [High]</td><td>–</td><td>0.812</td><td>0.650</td><td>0.300</td><td>0.449</td><td>0.159</td><td class="q">0.474</td></tr>
+<tr><td>FLUX.2-klein-9B</td><td>✓</td><td>0.820</td><td>0.492</td><td>0.260</td><td>0.417</td><td>0.163</td><td class="q">0.430</td></tr>
+<tr><td>Kolors 2.0</td><td>✓</td><td>0.738</td><td>0.502</td><td>0.226</td><td>0.331</td><td>0.333</td><td class="q">0.426</td></tr>
+<tr><td>BAGEL</td><td>✓</td><td>0.672</td><td>0.365</td><td>0.186</td><td>0.357</td><td>0.268</td><td class="q">0.370</td></tr>
+<tr><td>HiDream-l1-Full</td><td>✓</td><td>0.620</td><td>0.205</td><td>0.256</td><td>0.304</td><td>0.300</td><td class="q">0.337</td></tr>
+<tr><td>BLIP3-o</td><td>✓</td><td>0.608</td><td>0.092</td><td>0.213</td><td>0.369</td><td>0.233</td><td class="q">0.303</td></tr>
+<tr><td>Janus-Pro</td><td>✓</td><td>0.324</td><td>0.148</td><td>0.104</td><td>0.264</td><td class="best">0.358</td><td class="q">0.240</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/o PE)</td><td>✓</td><td>0.833</td><td>0.909</td><td>0.258</td><td>0.400</td><td>0.132</td><td class="q">0.506</td></tr>
+<tr class="hl"><td>ERNIE-Image-Turbo (w/ PE)</td><td>✓</td><td>0.826</td><td>0.939</td><td>0.304</td><td>0.421</td><td>0.228</td><td class="q">0.544</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/o PE)</td><td>✓</td><td>0.842</td><td>0.898</td><td>0.266</td><td>0.421</td><td>0.177</td><td class="q">0.521</td></tr>
+<tr class="hl"><td>ERNIE-Image (w/ PE)</td><td>✓</td><td>0.830</td><td>0.954</td><td>0.306</td><td>0.434</td><td>0.248</td><td class="q">0.554</td></tr>
+</tbody></table></div>
+<p class="tbl-note">来源：表 7（原文 20 行全部收录）。圆点 = 该列最大值（按本页逐列计算，含 Diversity 列）；✓ / – 为原表的开源权重标记；橙色底 = ERNIE 系列。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>表 2 · 美学模型在 ERIA-1K 上的 SRCC / PLCC<span class="hint">4 行</span></summary>
+    <div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>模型</th><th class="q">SRCC</th><th>PLCC</th></tr></thead>
+        <tbody>
+          <tr><td>LAION AES</td><td class="q">0.2944</td><td>0.3138</td></tr>
+          <tr><td>ArtiMuse</td><td class="q">0.4277</td><td>0.4704</td></tr>
+          <tr><td>UniPercept</td><td class="q">0.4533</td><td>0.4748</td></tr>
+          <tr class="hl"><td>ERNIE-Image-Aes</td><td class="q best">0.7445</td><td class="best">0.7598</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">来源：表 2。正文 §3.3 把 UniPercept 的 SRCC 写成 0.4553，与表中 0.4533 不一致；本页以表为准。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 07 新在哪 -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+    <p class="sec-intro">只列可以对照原文核对的做法。SFT caption 改写成多风格 prompt、三阶段升分辨率属于常规工程，没有列进来。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>用瑞士轮做美学标注，每人跑独立赛程</h4><p>两两比较，比 Likert 打分更不容易漂移，比 ELO 需要的比较次数少得多；标注员先过校准测试；每人在自己的子集上跑完整个瑞士轮，最后在数据集层面聚合，而不是在同一个赛程里混合多人标准<span class="src">§3.1</span>。</p><p class="why">可核对：§3.1 写明了协议和两条质控结论；图 3 是标注界面。</p></div>
+    <div class="card nv"><h4>按真实分布配比的美学基准 ERIA-1K</h4><p>1,000 张，摄影约占一半，包含随手拍、黑白、AI 生成等常被忽略的类型，以 1–10 档标注，并公开<span class="src">§3.2 · 表 1</span>。用来揭示现成美学模型的系统性偏差（LAION 偏爱 AI 图，ArtiMuse / UniPercept 偏爱黑白）<span class="src">§3.3 · 图 5</span>。</p></div>
+    <div class="card nv"><h4>「万类细分类 × 美学分」的两级分层采样</h4><p>类间按「规模 + 类别整体美学」分权重，类内按单图美学分采样<span class="src">§2.1</span>。这是把美学模型从「过滤阈值」升级成采样分布的一部分。</p><p class="why">缺点：没有公式和消融，无法复现效果。</p></div>
+    <div class="card nv"><h4>DPO 上加双向 anchor loss</h4><p>在 Flow Matching DPO 里同时给 win 和 lose 加正向重建 loss（λ = 0.35 / 0.15，β = 0.05），专门针对「L2 无上界 → 模型故意把 lose 做烂」这种 reward hacking<span class="src">§2.2.2</span>。</p></div>
+    <div class="card nv"><h4>MT-DMD：按目标、按噪声级路由的多教师蒸馏</h4><p>门控同时依赖 x<sub>t</sub>、σ、条件 c 和优化目标 O ∈ {CA, DM}，所以同一个样本里 DM 可以问「风格专家」、CA 可以问「文字专家」<span class="src">式 5 · §2.2.3</span>。</p><p class="why">缺点：K、专家来源、门控训练方式都没给，也没有单教师对照，目前只能算一个设计描述。</p></div>
+  </div>
+</section>
+
+<!-- 08 启示 -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2 style="margin-top:8px">对图像编辑数据、评测、caption 的启示</h2>
+    <p class="sec-intro" style="margin-top:8px">ERNIE-Image 是文生图模型，不做编辑。下面每条先写论文怎么做（带出处），再给一条可以迁移到编辑基础模型的做法。<b>每条下半部分的「可迁移」框是迁移建议，不是论文内容。</b></p>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">D1</span>两级桶采样代替单一阈值</h4>
+        <p class="paper">论文：先分 10,000 个细类，类间按「规模 + 整体美学」分权重，类内按美学分采样<span class="src">§2.1</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑数据按「编辑类型 × 内容类别」建两级桶；类间权重同时看桶的规模和桶内平均质量分，类内按单样本质量分采样，而不是一刀切阈值。这样长尾编辑类型（如局部改字、换材质）不会被高频的风格化淹没。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D2</span>先给开源打分器做偏差体检</h4>
+        <p class="paper">论文：LAION 偏爱 AI 图、ArtiMuse / UniPercept 偏爱黑白、UniPercept 偏爱随手拍；于是在自家分布上重新标注、重新训练<span class="src">§3.1 · §3.3</span>。</p>
+        <p class="do"><b>可迁移：</b>用开源美学 / 画质分过滤编辑对之前，先按内容类别各抽几十张，看分数分布有没有系统性偏移。尤其注意 AI 生成的 target 图是否被普遍高估，否则过滤会把数据推向「AI 感」。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D3</span>SFT 按高频场景自顶向下建专项集</h4>
+        <p class="paper">论文：SFT 先定优先域（海报、游戏截图、人像、物体摄影、动漫），再按域精选高一致数据<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑 SFT 按线上高频请求定域（人像修图、商品换背景、海报改字……），每个域单独设「一致性」验收标准（非编辑区域像素 / 身份保持），宁少勿杂。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D4</span>注意质量分会压低文字类样本</h4>
+        <p class="paper">论文：预训练强调文字类图片（幻灯片、海报、截图）<span class="src">§2.1</span>；但美学标注预览里，文档和截图多落在 1–2 档<span class="src">图 4</span>，同一个美学分又用于类内采样。</p>
+        <p class="do"><b>可迁移：</b>如果用美学分采样编辑数据，对改字、UI、文档这类任务单独设采样曲线或豁免，不要让美学分把文字编辑样本系统性挤掉。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+    </div>
+
+    <div class="impl-group">Caption / 指令</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">C1</span>图中文字逐字转写，当一等公民</h4>
+        <p class="paper">论文：VLM caption 特别强调忠实识别并描述图中文字，认为漏字或错字会明显削弱图文对齐<span class="src">§2.1</span>；SFT caption 也把「可见文字」列为结构化字段<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑 caption 给 source 和 target 各写一个独立的 <code>text</code> 字段并逐字转写，改字指令直接引用这两个字段生成。用 OCR 结果和 caption 做交叉校验，不一致的样本打回。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C2</span>同一样本生成多风格指令</h4>
+        <p class="paper">论文：用 K2.5 把每张图的 caption 改写成关键词式、自然语言请求、指令式、详细构图四类 prompt，缓解训练 caption 和真实输入之间的错位，也稀释 caption 模型的偏差<span class="src">§2.2.1 · §1</span>。</p>
+        <p class="do"><b>可迁移：</b>每个编辑对生成「短命令 / 口语请求 / 详细规格」三到四种指令，训练时随机抽一种；评测集也按指令风格分桶报告，这样能看出模型是不是只认长指令。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C3</span>早期就给详细描述</h4>
+        <p class="paper">论文：在训练早期提供详细图像描述，不仅强化复杂指令遵循，还丰富世界知识；因此不刻意合成领域数据，改在标注上下功夫<span class="src">§1</span>（没有给对照实验）。</p>
+        <p class="do"><b>可迁移：</b>编辑预训练阶段的 caption 也写详细版本（编辑内容 + 保持内容 + 空间关系），短指令留到 SFT 的多样化阶段再引入。值得做一个「早期详细 vs 早期简短」的小规模对照来验证，论文本身没做。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C4</span>扩写器要报告 w/ 和 w/o 两组</h4>
+        <p class="paper">论文：所有自动基准都分别报告 w/ PE 和 w/o PE，PE 在 GenEval 上反而降分（0.89 → 0.87），在 OneIG 上加分<span class="src">表 4–7</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑模型如果加指令扩写器，评测必须并列报告两组，并额外检查扩写有没有「越权」：有没有改动用户没要求改的区域或属性。扩写器的收益在不同基准上可能方向相反。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+    </div>
+
+    <div class="impl-group">评测与人工标注协议</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">E1</span>两两比较 + 校准筛人 + 不混池</h4>
+        <p class="paper">论文：放弃 Likert（会漂移）和 ELO（比较次数太多），改用瑞士轮两两比较；标注员先过校准；每人在自己的子集上独立跑完，最后在数据集层面聚合<span class="src">§3.1</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑结果的人评和偏好对采集用两两比较；标注员上岗前先过一套带金标的校准集；不要让多人在同一个排序池里交替标注，每人负责完整子集，汇总时再做跨人归一化。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E2</span>评测集按真实分布配比</h4>
+        <p class="paper">论文：ERIA-1K 按真实世界分布配比，摄影 49.28%、插画 / 动漫 23.16%、产品 0.56%，刻意包含随手拍、黑白、AI 生成图<span class="src">§3.2 · 表 1</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑评测集的类别配比参考线上真实请求日志，而不是只挑精品源图；公开配比表，方便别人判断分数的适用范围。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E3</span>分维度 pass/fail，但要写清总分怎么算</h4>
+        <p class="paper">论文：人评用七个维度的 pass/fail 通过率，再给一个 Total HP，但没有说明 Total HP 的计算方式，也没给题量和标注人数<span class="src">表 3 · §4.2</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑人评拆成指令遵循、非编辑区域保持、画质、文字正确等二值维度，同时公开聚合公式、题量和置信区间。差距小于区间宽度时，不写「超过」。这一条也是论文的反面教训。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E4</span>偏好训练加双向锚点</h4>
+        <p class="paper">论文：Flow Matching DPO 在 win 和 lose 两端都加重建 loss（λ<sub>win</sub> = 0.35，λ<sub>lose</sub> = 0.15，β = 0.05），防止模型靠把 lose 做烂来刷 margin<span class="src">§2.2.2</span>。</p>
+        <p class="do"><b>可迁移：</b>编辑模型做 DPO 时，lose 样本往往只是「保持区域被改坏」。加 lose 端锚点可以避免模型学会整体破坏画面。可以把论文的 λ 当作起点做扫描，但这组值是在文生图上得到的。<span class="note-tag">迁移建议，不是论文内容</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 局限 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>全文没有消融。</b>万类分类、caption 策略、美学分层采样、prompt 多样化、anchor loss、MT-DMD，每一项都只有描述，没有「去掉它会怎样」的实验。核心论点「早期详细 caption 带来指令遵循和世界知识」也只是观察<span class="src">§1</span>。</li>
+    <li class="key"><b>数据规模和配比全部缺失。</b>预训练图池、采样后规模、SFT 数据量、DPO 偏好对数、美学训练集规模都没有给，采样权重公式也没有<span class="src">§2.1–§3.3</span>。</li>
+    <li><b>正文说法强于表格。</b>§4.3 说 LongText「state-of-the-art」，但 ERNIE 的 0.973 低于 Seedream 4.5 的 0.988（正文段落里用的词是「competitive」）<span class="src">表 5</span>；OneIG 说「consistent state-of-the-art」，但 EN 排第三（0.575，前两名是 0.578 / 0.576），ZH 是 0.554，低于 Nano Banana 2.0 的 0.567<span class="src">表 6–7</span>。准确的说法是「开源最高」。</li>
+    <li><b>GenEval 的第一名是 w/o PE 配置</b>（0.89），w/ PE 是 0.87，与 Qwen-Image 持平<span class="src">表 4</span>。对比模型用的是什么 prompt 设置，原文没有说明。</li>
+    <li><b>人评不可复现，也看不出显著性。</b>内部测试集不公开；Total HP 的量纲和计算方式没有定义；题量和标注人数没有披露。ERNIE 5.07 和 Seedream 5.0 5.03 只差 0.04<span class="src">表 3</span>。</li>
+    <li><b>ERIA-1K 对 ERNIE-Image-Aes 可能偏「主场」。</b>它的训练集和 ERIA-1K 是同一个团队、同一套瑞士轮协议标注的，基线都没在这个协议上训练过<span class="src">§3.1–§3.3</span>。0.7445 vs 0.4533 的差距<span class="src calc">推算 +0.29</span>里，有多少来自标注口径的对齐，无法区分。另外 ERNIE-Image-Aes 本身就是从基线之一 ArtiMuse 微调来的<span class="src">§3.3</span>。</li>
+    <li><b>正文与表格数字不一致：</b>UniPercept SRCC 正文写 0.4553，表 2 是 0.4533<span class="src">§3.3 · 表 2</span>。ArtiMuse 在 §3.1 引为 Cao et al. 2025a、在 §3.3 引为 2025b。</li>
+    <li><b>Turbo 的人评代价没有讨论。</b>Total HP 从 5.07 降到 4.65，自动指标却基本持平<span class="src">表 3、5、6</span>。MT-DMD 声称能缓解 capability drift，但没有单教师 DMD 的对照。</li>
+    <li><b>超参几乎没有披露。</b>只给了 DPO 的 β = 0.05 和 λ = 0.35 / 0.15<span class="src">式 3</span>；预训练、SFT、蒸馏的学习率、batch、步数、算力都没有。「少量 DPO 步」也没有量化。</li>
+    <li><b>组件信息不全。</b>Prompt Enhancer 只知道是 3B，基座和训练数据不明；「Larger LM PE」没有说明是什么模型<span class="src">§4.1</span>；caption VLM 的基座和微调数据不明<span class="src">§1</span>。</li>
+    <li><b>日期与许可证。</b>页眉日期 April 15, 2026，与 arXiv v1 的 2026-05-25 不一致；原文没写权重许可证。</li>
+    <li><b>定性对比每个 prompt 只有一张样例</b>（图 7–11），没有说明有没有挑图<span class="src">§4.4</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 图表索引 -->
+<section class="sec" id="index">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2>
+    <p class="sec-intro">页码按 PDF 页脚。标「本页」的已在上文引用；其余未裁入，请看原文。</p></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>页码 / 位置</th></tr></thead>
+      <tbody>
+        <tr><td>首页</td><td>摘要区与官方链接截图</td><td>p.1 · 本页 §01</td></tr>
+        <tr><td>图 1–2</td><td>ERNIE-Image 生成样例拼图</td><td>p.2–3 · 未裁入</td></tr>
+        <tr><td>图 3</td><td>瑞士轮标注界面（「只有一个标准：哪张更好看」）</td><td>p.9 · 未裁入</td></tr>
+        <tr><td>图 4</td><td>美学标注结果 1–10 档预览</td><td>p.10 · 本页 §04</td></tr>
+        <tr><td>图 5</td><td>四个美学模型在 9 张代表图上的打分和百分位</td><td>p.12 · 未裁入</td></tr>
+        <tr><td>图 6</td><td>Prompt Enhancer 对比（白板解题 / HD-2D RPG / 网页截图）</td><td>p.13 · 本页 §06（仅 RPG 一行）</td></tr>
+        <tr><td>图 7</td><td>写实人像对比（逗猫女孩）</td><td>p.17 · 本页 §06</td></tr>
+        <tr><td>图 8</td><td>中文 prompt 胶片人像对比（两组）</td><td>p.18 · 本页 §06（仅第二组）</td></tr>
+        <tr><td>图 9</td><td>复杂指令：3×3 贴纸 + 文字</td><td>p.19 · 未裁入</td></tr>
+        <tr><td>图 10–11</td><td>中文长文本渲染：APP 教程截图、手绘幻灯片、星座卡片</td><td>p.20–21 · 未裁入</td></tr>
+        <tr><td>表 1</td><td>ERIA-1K 类别分布</td><td>p.11 · 本页 §04</td></tr>
+        <tr><td>表 2</td><td>美学模型 SRCC / PLCC</td><td>p.11 · 本页 §06</td></tr>
+        <tr><td>表 3</td><td>内部人评（Total HP + 7 维通过率）</td><td>p.14 · 本页 §06</td></tr>
+        <tr><td>表 4</td><td>GenEval</td><td>p.15 · 本页 §06（完整）</td></tr>
+        <tr><td>表 5</td><td>LongText-Bench</td><td>p.15 · 本页 §06（完整）</td></tr>
+        <tr><td>表 6–7</td><td>OneIG-EN / OneIG-ZH</td><td>p.16 · 本页 §06（完整）</td></tr>
+        <tr><td>式 1–5</td><td>Flow Matching DPO、anchor loss、DMDR guidance、MT-DMD 门控</td><td>p.7–8 · 本页 §05</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 <a href="https://arxiv.org/abs/2605.25347" target="_blank" rel="noopener">ERNIE-Image Technical Report</a>（ERNIE Team, Baidu，arXiv:2605.25347v1，2026-05-25）的中文精读笔记。文中数字均来自原文正文与表格，标「推算」的为本页计算；「迁移建议」是笔者观点，不是论文内容。论文图片版权归原作者所有，仅用于学习与评论。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

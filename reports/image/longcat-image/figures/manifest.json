@@ -1,0 +1,44 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 10,
+    "caption_en": "Overview of training data.",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 11,
+    "caption_en": "Data curation pipeline. The pipeline consists of four stages: (1) Filtering: Raw data undergoes deduplication",
+    "caption_note": "来源：论文图 6"
+  },
+  {
+    "file": "fig12.jpg",
+    "figure": 12,
+    "page": 15,
+    "caption_en": "Overview of model architecture.",
+    "caption_note": "来源：论文图 12"
+  },
+  {
+    "file": "fig13.jpg",
+    "figure": 13,
+    "page": 16,
+    "caption_en": "Schematic overview of the multi-stage training pipeline.",
+    "caption_note": "来源：论文图 13"
+  },
+  {
+    "file": "fig20.jpg",
+    "figure": 20,
+    "page": 30,
+    "caption_en": "Overview of LongCat-Image-Edit model architecture.",
+    "caption_note": "来源：论文图 20"
+  }
+]

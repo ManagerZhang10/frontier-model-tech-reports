@@ -1,0 +1,37 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 10,
+    "caption_en": "Preview of aesthetic annotation results.",
+    "caption_note": "来源：论文图 4"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 13,
+    "caption_en": "Qualitative comparison of prompt enhancement on three representative tasks. From left to",
+    "caption_note": "来源：论文图 6"
+  },
+  {
+    "file": "fig7.jpg",
+    "figure": 7,
+    "page": 17,
+    "caption_en": "Comparison between ERNIE-Image and state-of-the-art open-source and closed-source models.",
+    "caption_note": "来源：论文图 7"
+  },
+  {
+    "file": "fig8.jpg",
+    "figure": 8,
+    "page": 18,
+    "caption_en": "Comparison between ERNIE-Image and state-of-the-art open-source and closed-source models.",
+    "caption_note": "来源：论文图 8"
+  }
+]

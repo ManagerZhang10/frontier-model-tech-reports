@@ -9,6 +9,9 @@
   - [FireRed-Image-Edit](./reports/image/firered-image-edit/)（图像编辑）
   - [Qwen-Image-2.0](./reports/image/qwen-image-2.0/)（图像生成 / 编辑）
   - [Wan-Image](./reports/image/wan-image/)（图像生成 / 编辑）
+  - [LongCat-Image](./reports/image/longcat-image/)（图像生成 / 编辑）
+  - [ERNIE-Image](./reports/image/ernie-image/)（图像生成）
+  - [Qwen-Image-2.0-RL](./reports/image/qwen-image-2.0-rl/)（图像生成 / 编辑 · RL）
   - [HunyuanVideo 1.5](./reports/video/hunyuanvideo-1.5/)（视频生成）
   - [Kling-Omni](./reports/video/kling-omni/)（视频生成）
   - [Seedance 2.0](./reports/video/seedance-2.0/)（视频生成）

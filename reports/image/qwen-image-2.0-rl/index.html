@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen-Image-2.0-RL 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Qwen-Image-2.0-RL（Qwen Team, arXiv 2606.27608）中文深读：pointwise VLM 奖励模型、混合 CFG 的 GRPO、组内奖励极差筛 prompt、按类别调奖励权重、多教师 on-policy distillation 合并 T2I 与编辑。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  /* 页面特有：图表 / 示意图 / 奖励卡片 */
+  .idx-table th { text-align: left; }
+  .grid-l { stroke: var(--line); stroke-width: 1; }
+  .ch-val.sm { font-size: 9.5px; }
+  .ch-delta { fill: var(--good); font: 700 11px var(--f-mono); }
+  .dg-arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+  .dg-arrow-w { stroke: var(--warm); stroke-width: 1.6; fill: none; marker-end: url(#ahw); }
+  .dg-dash { stroke-dasharray: 4 3; }
+  .dg-grp { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .dg-good { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 45%, var(--line)); }
+  .dg-k { fill: var(--accent-ink); font: 700 10.5px var(--f-mono); }
+  .ah-fill { fill: var(--muted); }
+  .ahw-fill { fill: var(--warm); }
+  .formula { font: 500 .9rem/1.6 var(--f-mono); background: var(--bg-accent); border-radius: 8px; padding: 8px 12px; margin: 8px 0; overflow-x: auto; white-space: nowrap; }
+  .rw3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+  .rw3 .mod, .rw2 .mod { margin: 0; border-top: 3px solid var(--accent); }
+  .rw2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+  .rw2 .mod { border-top-color: var(--warm); }
+  .rw-lab { font: 700 .74rem/1 var(--f-mono); color: var(--muted); letter-spacing: .04em; margin: 14px 0 0; }
+  .cfg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+  .cfg3 .mod { margin: 0; }
+  .cfg3 .mod.bad { border-top: 3px solid var(--warn); }
+  .cfg3 .mod.ok { border-top: 3px solid var(--good); }
+  .cfg3 .verdict { font: 700 .8rem/1.3 var(--f-mono); }
+  .cfg3 .bad .verdict { color: var(--warn); }
+  .cfg3 .ok .verdict { color: var(--good); }
+  @media (max-width: 860px) { .rw3, .cfg3 { grid-template-columns: 1fr; } .rw2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成 / 图像编辑（RL 后训练）</div>
+    <h1>Qwen-Image-2.0-RL<span class="sub">Qwen-Image-2.0-RL Technical Report · Qwen Team</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Qwen Team</b></span>
+      <span>arXiv v1 <b>2026-06-25</b></span>
+      <span>编号 <b>2606.27608</b></span>
+      <span>本页基于 <b>v1</b> 文本</span>
+    </div>
+    <p class="lede">不改网络结构，只做后训练：用 <b>pointwise 打分的 VLM 奖励模型</b>分别给 T2I 和编辑各训一个 GRPO 策略（rollout 带 CFG、优化目标不带），再用 <b>on-policy distillation</b> 把两个任务教师合进一个学生。Qwen-Image-Bench 总分 <b>55.23 → 57.84</b><span class="src">表 1</span>，T2I 竞技场 Elo <b>+78</b>、编辑竞技场 Elo <b>+93</b><span class="src">§5</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>图像生成 + 图像编辑 · RL 后训练</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>开源：原文未声明</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M9 12h6M9 16h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>参数量：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg>基座：Qwen-Image-2.0</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2606.27608" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg>arXiv 摘要页</a>
+      <a href="https://arxiv.org/pdf/2606.27608v1" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M12 10v7M9 14l3 3 3-3"/></svg>PDF（v1）</a>
+      <a href="https://arxiv.org/abs/2605.10730" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg>基座报告 Qwen-Image-2.0</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构与流程</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均来自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+  </nav>
+
+  <main>
+    <!-- 01 速览 -->
+    <section class="sec" id="glance">
+      <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+      <div class="glance wide">
+        <div class="card stat"><span class="stat-k">发布日期</span><span class="stat-num sm">2026-06-25</span><span class="stat-sub">arXiv v1；PDF 封面印的是 June 29, 2026</span><span class="src">arXiv v1</span></div>
+        <div class="card stat"><span class="stat-k">定位</span><span class="stat-num sm">后训练流水线</span><span class="stat-sub">RLHF + OPD，作用于 Qwen-Image-2.0，不改结构</span><span class="src">摘要 · §1</span></div>
+        <div class="card stat"><span class="stat-k">奖励模型</span><span class="stat-num sm">T2I 3 个 + 编辑 2 个</span><span class="stat-sub">对齐 / 美学 / 人像；指令遵循 / 人脸 ID</span><span class="src">图 1 · §3</span></div>
+        <div class="card stat"><span class="stat-k">奖励打分</span><span class="stat-num sm">1–5 离散分取期望</span><span class="stat-sub">pointwise 回归，微调 Qwen 系 VLM + CoT</span><span class="src">式 12 · §3.1</span></div>
+        <div class="card stat"><span class="stat-k">Rollout</span><span class="stat-num sm">40 步 ODE · 带 CFG</span><span class="stat-sub">只在部分偏高噪声的时间步上训练</span><span class="src">§4.1–4.2</span></div>
+        <div class="card stat"><span class="stat-k">合并方式</span><span class="stat-num sm">多教师 OPD</span><span class="stat-sub">T2I 教师 + 编辑教师 → 一个学生</span><span class="src">§4.3</span></div>
+        <div class="card stat"><span class="stat-k">Qwen-Image-Bench</span><span class="stat-num">57.84</span><span class="stat-sub">Base 55.23，+2.61</span><span class="src">表 1</span></div>
+        <div class="card stat"><span class="stat-k">T2I Arena Elo</span><span class="stat-num">1193</span><span class="stat-sub">Base 1115，+78</span><span class="src">§5 · 图 4</span></div>
+        <div class="card stat"><span class="stat-k">Image Edit Arena Elo</span><span class="stat-num">1349</span><span class="stat-sub">Base 1256，+93</span><span class="src">§5</span></div>
+        <div class="card stat"><span class="stat-k">参数量 / 许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">权重是否发布也未提</span><span class="src">全文</span></div>
+        <div class="card stat"><span class="stat-k">标注 / prompt 规模</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">奖励标注条数、RL prompt 池大小均无</span><span class="src">§3 · §4</span></div>
+        <div class="card stat"><span class="stat-k">RL 超参</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">组大小 G、学习率、步数、权重、阈值均无</span><span class="src">§4</span></div>
+      </div>
+    </section>
+
+    <!-- 02 TL;DR -->
+    <section class="sec" id="tldr">
+      <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+      <div class="tldr wide">
+        <div class="card tl"><span class="idx">01</span><h3>奖励模型用 pointwise，不用 pairwise</h3><p>同一图池、同一评价维度（美学 + 质感）下各训一个奖励模型去做 RL，pointwise 版出图质感更好、伪影更少<span class="src">§3.1 · 图 2</span>。打分 = VLM 在 {1,…,5} 上的概率期望<span class="src">式 12</span>。</p></div>
+        <div class="card tl"><span class="idx">02</span><h3>按任务拆奖励：T2I 分层，编辑加人脸 ID</h3><p>T2I：对齐 → 美学 → 人像，层层加码<span class="src">§3.2</span>。编辑：VLM 指令遵循（拆核心 / 非核心要求）+ 基于 embedding 的人脸身份分<span class="src">§3.3</span>。</p></div>
+        <div class="card tl"><span class="idx">03</span><h3>混合 CFG：rollout 用，优化不用</h3><p>两端都用 CFG → 训练崩、图像塌掉；都不用 → 奖励涨但丢风格化和世界知识（认不出名人）；只在 rollout 用 → 稳定且保留预训练能力<span class="src">§4.1 · 图 3</span>。</p></div>
+        <div class="card tl"><span class="idx">04</span><h3>多教师 OPD 合并 T2I 与编辑</h3><p>学生（从 Base 初始化）在自己的轨迹上逐步匹配对应任务教师的速度，教师带 CFG、学生不带；定性上优于把两类奖励混在一起训的 Mix-RL<span class="src">§4.3 · 图 5–6</span>。</p></div>
+        <div class="card tl caveat"><span class="idx">05</span><h3>证据几乎全是定性的</h3><p>定量结果只有表 1 和两个 Elo。pointwise vs pairwise、CFG 三选一、时间步子集、prompt 筛选、OPD vs Mix-RL 全部只有样例图或描述，没有数字消融；编辑侧没有自动化基准<span class="src">§3–§5</span>。</p></div>
+      </div>
+    </section>
+
+    <!-- 03 架构 -->
+    <section class="sec" id="arch">
+      <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构与流程：不动网络，只动后训练</h2><p class="sec-intro">模型结构完全沿用 Qwen-Image-2.0（Zhao et al., 2026），本文没有复述也没有修改结构；「架构」在这里指后训练流水线。</p></div>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig1.jpg" alt="Qwen-Image-2.0-RL 训练流水线总览" loading="lazy"></div>
+        <figcaption><b>训练流水线总览。</b>同一个 Base 分两路：T2I RL（Portrait / Aesthetic / Alignment 三个奖励，自下而上分层）得到 T2I 教师；Edit RL（Face ID / Instruction 两个奖励）得到编辑教师；两教师经 On-Policy Distillation 合成统一模型。<span class="from">来源：论文图 1</span></figcaption>
+      </figure>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>相对基座（Qwen-Image-2.0）改了什么 <span class="tag">§1</span></h4>
+          <ul>
+            <li>网络结构：<b>不变</b></li>
+            <li>新增：5 个任务专用奖励模型（4 个 VLM 打分器 + 1 个人脸 ID 模型）<span class="src">§3</span></li>
+            <li>新增：两条任务专用 GRPO 训练 + 一步多教师 OPD<span class="src">§4</span></li>
+            <li>交付形态：一个同时做 T2I 与编辑的模型，部署时不再依赖奖励模型<span class="src">§1 · §7</span></li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>和基座报告里的 RLHF 比 <span class="tag">对照阅读 · Qwen-Image-2.0 报告 §4.2</span></h4>
+          <p>Qwen-Image-2.0 报告里已经提到 GRPO + 「rollout 用 CFG、目标不含无条件分支」。本文的增量是：把奖励训练范式讲清（pointwise）、给出 CFG 三选一的定性对比、加入 prompt 筛选与按类别权重，以及<b>用 OPD 把两个任务策略合并</b>。</p>
+        </div>
+      </div>
+
+      <div class="card diagram wide">
+        <svg viewBox="0 0 900 300" role="img" aria-label="单个任务的 RL 训练循环示意">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="ah-fill"/></marker>
+            <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="ahw-fill"/></marker>
+          </defs>
+          <text x="20" y="22" class="ch-t">单个任务的 RL 循环（T2I 与编辑各跑一遍）</text>
+          <rect x="20" y="50" width="140" height="70" rx="10" class="dg-box"/>
+          <text x="90" y="78" text-anchor="middle" class="dg-t">筛过的 prompt</text>
+          <text x="90" y="98" text-anchor="middle" class="dg-s">组内极差 &gt; 阈值</text>
+          <rect x="200" y="50" width="170" height="70" rx="10" class="dg-llm"/>
+          <text x="285" y="78" text-anchor="middle" class="dg-t">Rollout：G 张图</text>
+          <text x="285" y="98" text-anchor="middle" class="dg-s">40 步 ODE · 带 CFG</text>
+          <rect x="410" y="50" width="200" height="70" rx="10" class="dg-vit"/>
+          <text x="510" y="78" text-anchor="middle" class="dg-t">远程奖励 API（异步）</text>
+          <text x="510" y="98" text-anchor="middle" class="dg-s">后台线程提交，延迟藏在推理后</text>
+          <rect x="650" y="50" width="230" height="70" rx="10" class="dg-box"/>
+          <text x="765" y="78" text-anchor="middle" class="dg-t">逐奖励、逐 prompt 组归一化</text>
+          <text x="765" y="98" text-anchor="middle" class="dg-s">A = Σ w_k (R_k − μ_k)/σ_k，Σw_k = 1</text>
+          <path d="M160 85h36" class="dg-arrow"/>
+          <path d="M370 85h36" class="dg-arrow"/>
+          <path d="M610 85h36" class="dg-arrow"/>
+          <rect x="560" y="190" width="320" height="76" rx="10" class="dg-llm-hot"/>
+          <text x="720" y="218" text-anchor="middle" class="dg-t">策略更新（不含无条件分支）</text>
+          <text x="720" y="238" text-anchor="middle" class="dg-s">只在部分时间步上算目标，偏重高噪声端</text>
+          <text x="720" y="255" text-anchor="middle" class="dg-s">权重向量 w 按 prompt 类别切换</text>
+          <path d="M765 120v66" class="dg-arrow"/>
+          <path d="M560 228H285V124" class="dg-arrow-w dg-dash"/>
+          <text x="300" y="220" class="dg-s">更新后的策略继续 rollout</text>
+          <path d="M560 258H254" class="dg-arrow dg-dash"/>
+          <text x="300" y="274" class="dg-s">训练结束</text>
+          <rect x="20" y="190" width="230" height="76" rx="10" class="dg-good"/>
+          <text x="135" y="218" text-anchor="middle" class="dg-t">产出：任务教师</text>
+          <text x="135" y="238" text-anchor="middle" class="dg-s">T2I 教师 / 编辑教师</text>
+          <text x="135" y="255" text-anchor="middle" class="dg-s">→ 进入 OPD（§4.3）</text>
+        </svg>
+        <div class="cap">示意。环节与公式出自 <span class="src">§4.1</span> <span class="src">§4.2</span> <span class="src">式 13</span>；具体策略损失（Flow-GRPO 式的裁剪目标还是 DiffusionNFT 式目标）原文只说「GRPO-based」，图中不画成确定形式。</div>
+      </div>
+
+      <div class="card diagram wide">
+        <svg viewBox="0 0 900 230" role="img" aria-label="多教师 on-policy distillation 示意">
+          <text x="20" y="22" class="ch-t">多教师 On-Policy Distillation</text>
+          <rect x="20" y="50" width="200" height="70" rx="10" class="dg-box"/>
+          <text x="120" y="78" text-anchor="middle" class="dg-t">学生 v_θ（从 Base 初始化）</text>
+          <text x="120" y="98" text-anchor="middle" class="dg-s">不带 CFG，自己解 N 步 ODE</text>
+          <rect x="270" y="50" width="250" height="70" rx="10" class="dg-llm"/>
+          <text x="395" y="78" text-anchor="middle" class="dg-t">保存学生整条轨迹</text>
+          <text x="395" y="98" text-anchor="middle" class="dg-s">x_t0 ~ N(0,I) → … → x_tN</text>
+          <rect x="580" y="30" width="300" height="50" rx="10" class="dg-vit"/>
+          <text x="730" y="52" text-anchor="middle" class="dg-t">T2I 教师 v_θ*（带 CFG）</text>
+          <text x="730" y="70" text-anchor="middle" class="dg-s">样本是 T2I 时加载到 GPU</text>
+          <rect x="580" y="94" width="300" height="50" rx="10" class="dg-vit"/>
+          <text x="730" y="116" text-anchor="middle" class="dg-t">编辑教师 v_θ*（带 CFG）</text>
+          <text x="730" y="134" text-anchor="middle" class="dg-s">不活跃的教师卸载到 CPU</text>
+          <path d="M220 85h46" class="dg-arrow"/>
+          <path d="M520 75l56-20" class="dg-arrow"/>
+          <path d="M520 95l56 22" class="dg-arrow"/>
+          <rect x="200" y="166" width="500" height="50" rx="10" class="dg-llm-hot"/>
+          <text x="450" y="188" text-anchor="middle" class="dg-t">L_OPD = E Σₙ ‖v_θ(x_tn, t_n, c) − v_θ*(x_tn, t_n, c)‖²</text>
+          <text x="450" y="206" text-anchor="middle" class="dg-s">在学生自己的轨迹点上逐点匹配速度；由 W2 上界推出（附录 A）</text>
+          <path d="M730 144v40H704" class="dg-arrow"/>
+        </svg>
+        <div class="cap">示意。依据 <span class="src">§4.3</span> <span class="src">式 14</span> <span class="src">附录 A</span>。原文还说「OPD 之后 CFG 也被整合进学生模型」，但没写具体做法，图中不画。</div>
+      </div>
+    </section>
+
+    <!-- 04 数据 -->
+    <section class="sec" id="data">
+      <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：奖励标注与 RL prompt 池</h2><p class="sec-intro">本文不涉及预训练数据。这里的「数据」只有两类：训练奖励模型用的人工标注，以及 RL 用的 prompt 池。两者都<b>没有给任何条数</b>。</p></div>
+
+      <h3 class="prose">4.1 奖励标注的两种格式（对照实验）</h3>
+      <p class="prose">为了只比较训练范式，两套标注<b>评价维度相同</b>（美学质量 + 视觉质感），<b>图片来自同一个 SOTA AIGC 模型池</b>，只差标注格式<span class="src">§3.1</span>。</p>
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>Pointwise（最终采用） <span class="tag ok-tag">默认</span></h4>
+          <ul>
+            <li>prompt：从<b>高质量人像参考图</b>中随机采样，再<b>改写</b>以让语言模式超出训练分布<span class="src">§3.1</span></li>
+            <li>每张图独立打 <b>5 分 Likert</b>，两个结构化维度：</li>
+            <li><b>Quality</b>：清晰度、光照、色彩平衡、风格一致、材质质感</li>
+            <li><b>Fidelity</b>：结构正确、物理一致、无 AI 伪影（不自然的磨皮、纹理重复）</li>
+            <li>损失：对分数做平方回归<span class="src">式 11</span></li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>Pairwise（对照组） <span class="tag">对照</span></h4>
+          <ul>
+            <li>同一 prompt 的两张图并排做偏好判断<span class="src">§3.1</span></li>
+            <li>严格优先级：<b>图文一致 &gt; 结构畸变 &gt; 纹理质量 &gt; 美感</b></li>
+            <li>高质量模型通常前两项都过关，于是比较<b>退化为质感 + 美感</b></li>
+            <li>附加属性标签：样本是否有效、是否有文字畸变、是否有人体畸变</li>
+            <li>损失：Bradley-Terry 排序<span class="src">式 10</span></li>
+          </ul>
+        </div>
+      </div>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig2.jpg" alt="pairwise 与 pointwise 奖励模型 RL 结果对比" loading="lazy"></div>
+        <figcaption><b>Pairwise vs Pointwise 奖励训出的 RL 结果。</b>左列为 prompt，中间一列为 pairwise 奖励、右列为 pointwise 奖励（按论文列标题顺序；本地裁图截掉了列标题）。论文结论：pointwise 版画质与纹理更好、伪影更少；作者归因于「绝对分数给出校准的好坏程度，成对标注只说明谁更好」。<span class="from">来源：论文图 2</span></figcaption>
+      </figure>
+
+      <h3 class="prose">4.2 五个奖励的打分标准</h3>
+      <p class="rw-lab wide">T2I · 分层：先管对不对，再管好不好看，最后专管人像 <span class="src">§3.2</span></p>
+      <div class="rw3 wide">
+        <div class="card mod"><h4>① 图文对齐 <span class="tag">最基础</span></h4><p>只看语义对应，<b>不看美感</b>；遗漏、误读、违背要求都要罚。优先级：<b>物体存在与数量 → 属性（颜色 / 大小 / 形状 / 材质）→ 空间关系 → 动作与姿态</b>。最高优先级不过关，其他再好也封顶低分。</p></div>
+        <div class="card mod"><h4>② 美学 <span class="tag">质感</span></h4><p>构图平衡、真实光照、纹理保真、整体艺术一致性。<b>训练数据就是 4.1 的 pointwise 标注集</b>。</p></div>
+        <div class="card mod"><h4>③ 人像 <span class="tag">人脸 / 皮肤 / 头发</span></h4><p>面部比例、保身份的面部细节、皮肤与头发质感；显式检查手指数、五官畸变、身体比例。用<b>单独的人像数据集</b>训练，prompt 同样采自高质量人像参考图；rubric 聚焦面部吸引力与皮肤头发真实感。</p></div>
+      </div>
+      <p class="rw-lab wide">编辑 · 「改对了」+「人没换」 <span class="src">§3.3</span></p>
+      <div class="rw2 wide">
+        <div class="card mod"><h4>④ 指令遵循（VLM）</h4><p>输入三元组：<b>源图 + 编辑指令 + 输出图</b>。先让 VLM 把指令<b>拆成核心编辑要求与非核心辅助要求</b>，再按 rubric 判：(1) 核心指令是否完成；(2) 非核心要求是否满足；(3) 整体是否视觉连贯。覆盖物体替换、属性修改、风格迁移等。</p></div>
+        <div class="card mod"><h4>⑤ 人脸身份一致性（模型打分）</h4><p>作者发现 VLM 的视觉一致性判断<b>抓不住细微的人脸身份漂移</b>，于是加一个基于人脸模型的 <b>embedding 级</b>身份分，补 VLM 的语义层判断。具体用哪个人脸模型、相似度怎么映射成奖励，原文未写。</p></div>
+      </div>
+      <p class="footnote wide">所有 VLM 奖励都是微调「Qwen series VLM」并开启 CoT 推理<span class="src">§1 · §3.2</span>；具体型号、尺寸、标注条数、标注员数量原文均未给。</p>
+
+      <h3 class="prose">4.3 RL prompt 池：先筛、再分类、再配权重</h3>
+      <div class="flow wide">
+        <div class="card stage"><span class="sid">P1</span><h4>候选 prompt 池</h4><dl><dt>规模</dt><dd><span class="nd">未披露</span></dd><dt>来源</dt><dd><span class="nd">未披露</span></dd></dl></div>
+        <div class="card stage"><span class="sid">P2</span><h4>Base 模型 G 次 rollout</h4><dl><dt>打分</dt><dd>复合奖励</dd><dt>G</dt><dd><span class="nd">未披露</span></dd></dl></div>
+        <div class="card stage"><span class="sid">P3</span><h4>组内极差过滤</h4><dl><dt>指标</dt><dd>max − min</dd><dt>规则</dt><dd>&gt; 预设阈值才保留</dd><dt>阈值</dt><dd><span class="nd">未披露</span></dd></dl></div>
+        <div class="card stage"><span class="sid">P4</span><h4>按语义分类 + 权重</h4><dl><dt>类别</dt><dd>人像 / 风景 / 文字排版 / 通用 等</dd><dt>权重值</dt><dd><span class="nd">未披露</span></dd></dl></div>
+      </div>
+      <p class="footnote wide">筛选逻辑：全高或全低的 prompt 组内没有区分度，对策略优化信号弱；只留「策略还有改进空间」的 prompt<span class="src">§4.2</span>。分类权重示例：人像 prompt 加大人像奖励权重，文字排版 prompt 加大对齐权重<span class="src">§4.2</span>。原文 4.2 写在 T2I 语境里，编辑侧是否同样筛选、怎么分类没有说明。</p>
+
+      <h3 class="prose">4.4 已披露规模</h3>
+      <div class="card wide" style="padding:4px 0 0;margin-top:14px">
+        <div class="tbl-wrap" style="border:0;margin:0">
+          <table class="idx-table">
+            <thead><tr><th>项目</th><th>原文给了什么</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>Pointwise 美学标注集条数</td><td><span class="nd">原文未披露</span>；只说 5 分 Likert、两维度</td><td>§3.1</td></tr>
+              <tr><td>Pairwise 对照集条数</td><td><span class="nd">原文未披露</span></td><td>§3.1</td></tr>
+              <tr><td>人像奖励数据集</td><td><span class="nd">原文未披露</span>；「单独的人像专用数据集」</td><td>§3.2</td></tr>
+              <tr><td>对齐奖励、指令遵循奖励训练数据</td><td><span class="nd">原文未披露</span>；连来源都没写</td><td>§3.2–3.3</td></tr>
+              <tr><td>标注图片来源</td><td>「state-of-the-art AIGC models」组成的共同图池；具体模型<span class="nd">未披露</span></td><td>§3.1</td></tr>
+              <tr><td>RL prompt 池大小 / 过滤留存率</td><td><span class="nd">原文未披露</span></td><td>§4.2</td></tr>
+              <tr><td>各类别 prompt 占比与权重</td><td><span class="nd">原文未披露</span>；只列了类别名</td><td>§4.2</td></tr>
+              <tr><td>OPD 用的 prompt / 编辑样本</td><td><span class="nd">原文未披露</span>；只说按样本任务类型选教师</td><td>§4.3</td></tr>
+              <tr><td>评测判官 Q-Judger 训练数据</td><td>130K+ 人工标注图文对，80 位专业艺术家标注（属于 Qwen-Image-Bench，不是本文训练数据）</td><td>§5</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="footnote wide">没有任何比例数字，所以本页不画配比条。</p>
+
+      <h3 class="prose">4.5 Caption / prompt 长什么样</h3>
+      <p class="prose">本文没有 caption 管线。能看到的只有图 2、3 里的 RL 评测 prompt：英文长描述，含场景、光线、情绪，以及需要渲染的<b>引号内文字</b>（如 "ART IS FREE"、"RESIDENCY"，以及一句中文标语）<span class="src">图 2 · 图 3</span>。编辑 prompt 示例见图 6：三联拼图、半身棚拍、角色设定图，均强调「保持主体特征」<span class="src">图 6</span>。</p>
+    </section>
+
+    <!-- 05 训练 -->
+    <section class="sec" id="train">
+      <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2><p class="sec-intro">预训练、SFT 都在基座报告里；本文只覆盖奖励模型 → 双路 RL → OPD。</p></div>
+      <div class="flow wide">
+        <div class="card stage"><span class="sid">S0</span><h4>奖励模型训练</h4><dl><dt>底座</dt><dd>Qwen 系 VLM + CoT</dd><dt>目标</dt><dd>pointwise 回归</dd><dt>输出</dt><dd>{1..5} 期望</dd></dl></div>
+        <div class="card stage"><span class="sid">S1a</span><h4>T2I RL</h4><dl><dt>初始化</dt><dd>Base</dd><dt>奖励</dt><dd>对齐 + 美学 + 人像</dd><dt>训练</dt><dd>全参数（§1 提及）</dd></dl></div>
+        <div class="card stage"><span class="sid">S1b</span><h4>编辑 RL</h4><dl><dt>初始化</dt><dd>Base</dd><dt>奖励</dt><dd>指令遵循 + 人脸 ID</dd><dt>与 S1a</dt><dd>并行、独立</dd></dl></div>
+        <div class="card stage"><span class="sid">S2</span><h4>多教师 OPD</h4><dl><dt>学生</dt><dd>从 Base 初始化</dd><dt>教师</dt><dd>S1a + S1b，带 CFG</dd><dt>奖励模型</dt><dd>不再需要</dd></dl></div>
+      </div>
+      <p class="footnote wide">「全参数」依据：§1 把「已有扩散 RL 框架主要在 LoRA 下验证，全参数大规模训练欠探索」列为要解决的挑战之一；正文没有再明说本文 RL 是否全参数。</p>
+
+      <h3 class="prose">5.1 RL 的四个关键选择</h3>
+      <div class="cfg3 wide">
+        <div class="card mod bad"><h4>CFG 两端都用</h4><p class="verdict">✗ 训练不稳，最终塌成无意义图像</p><p>rollout 和策略优化都带 CFG<span class="src">§4.1 · 图 3 左</span>。</p></div>
+        <div class="card mod bad"><h4>两端都不用</h4><p class="verdict">✗ 奖励涨，但丢风格化与世界知识</p><p>认不出名人、不会特定风格；作者归因于基座依赖 CFG 才能充分表达预训练知识<span class="src">§4.1 · 图 3 中</span>。</p></div>
+        <div class="card mod ok"><h4>只在 rollout 用（采用）</h4><p class="verdict">✓ 稳定 + 保留预训练能力</p><p>rollout 用 CFG 出结构合理的候选，奖励更可靠；目标不含无条件分支，梯度稳定、算力更省<span class="src">§4.1 · 图 3 右</span>。</p></div>
+      </div>
+      <div class="grid2 wide">
+        <div class="card mod"><h4>时间步子集 <span class="tag">§4.2</span></h4><p>rollout 用 <b>40 步</b> ODE。在全部 40 步上算 RL 目标会<b>很快 reward hacking</b>，几轮迭代就退化。改为只在一部分时间步上训练，偏重靠近 t = 1 的高噪声步（决定全局结构与语义布局）。具体选哪些步、多少步<span class="nd">未披露</span>。</p></div>
+        <div class="card mod"><h4>多奖励优势 <span class="tag">式 13</span></h4><div class="formula">A = Σ<sub>k</sub> w<sub>k</sub> · (R<sub>k</sub> − μ<sub>k</sub>) / σ<sub>k</sub>,&nbsp; Σ w<sub>k</sub> = 1</div><p>先对每个奖励在 prompt 组内单独归一化再加权，避免某个奖励因数值范围大而主导；思路参考 GDPO（Liu et al., 2026b）。</p></div>
+        <div class="card mod"><h4>异步奖励 <span class="tag">§4.1</span></h4><p>奖励模型作为远程 API 部署。各 rank 生成并汇总图片后，后台线程异步提交；返回后所有 rank 同步取分、组内归一化、算优势。作者称几乎所有奖励延迟都被推理计算掩盖，加奖励模型不会成比例拉长训练时间（无实测数字）。</p></div>
+        <div class="card mod"><h4>OPD 细节 <span class="tag">§4.3</span></h4><ul><li>每个 batch 按样本任务类型选教师</li><li>同一时刻只有活跃教师在 GPU，其余卸载到 CPU</li><li>教师带 CFG 预测速度，学生不带</li><li>相比把 T2I 与编辑奖励一起训，作者称可避免跨任务优化冲突</li></ul></div>
+      </div>
+
+      <details class="more wide">
+        <summary>背景公式：Flow-GRPO 与 DiffusionNFT<span class="hint">§2.2 · 式 4–9</span></summary>
+        <div class="body">
+          <p><b>Flow-GRPO</b>：把多步去噪当 MDP，用等价 SDE 采样让转移概率可算，组内归一化优势 A = (R − μ<sub>c</sub>)/σ<sub>c</sub>，配裁剪的重要性比率目标<span class="src">式 4–6</span>。</p>
+          <p><b>DiffusionNFT</b>：在前向加噪过程上做优化，构造正负速度 v<sup>+</sup> = βv<sub>θ</sub> + (1−β)v<sub>old</sub>、v<sup>−</sup> = (1+β)v<sub>old</sub> − βv<sub>θ</sub>，按缩放后的优势 r ∈ [0,1] 加权，另加对参考策略的 KL 约束<span class="src">式 7–9</span>。</p>
+          <p>本文正文只说「GRPO-based」，没写最终用的是哪种目标或二者如何结合。</p>
+        </div>
+      </details>
+
+      <details class="more wide">
+        <summary>OPD 目标的推导（附录 A）<span class="hint">W2 上界</span></summary>
+        <div class="body">
+          <p>LLM 蒸馏常用前向 KL，但连续扩散模型的路径测度 KL 难算。作者改用 2-Wasserstein 距离：引用 Benton et al. (2023) 定理 1，在流存在唯一且光滑、教师速度场对 x Lipschitz 两个假设下，学生与教师输出分布的 W2 距离被「沿学生分布的速度误差积分」乘以 exp(∫L<sub>t</sub>dt) 上界约束<span class="src">式 17</span>。指数项与训练目标无关，所以最小化上界 ⇔ 最小化轨迹级速度匹配损失<span class="src">式 18</span>，离散化即式 14 / 19。</p>
+          <p>相关工作对比：Flow-OPD、DiffusionOPD 也把 OPD 推到流匹配模型，但用的是高斯转移核的 KL，且只合并单奖励 T2I 教师；本文按<b>任务类型</b>分教师，并从 W2 上界推导<span class="src">§6</span>。</p>
+        </div>
+      </details>
+
+      <div class="card wide" style="padding:4px 0 0;margin-top:14px">
+        <div class="tbl-wrap" style="border:0;margin:0">
+          <table class="idx-table">
+            <thead><tr><th>超参 / 配置</th><th>原文</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>Rollout 采样步数</td><td>40 步 ODE</td><td>§4.2</td></tr>
+              <tr><td>奖励分数集合</td><td>S = {1, 2, 3, 4, 5}，取期望</td><td>式 12</td></tr>
+              <tr><td>优势权重约束</td><td>Σ w<sub>k</sub> = 1</td><td>式 13</td></tr>
+              <tr><td>组大小 G、学习率、训练步数、batch</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+              <tr><td>各奖励权重 w<sub>k</sub>、类别权重向量</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+              <tr><td>训练用的时间步子集</td><td><span class="nd">原文未披露</span>（只说偏高噪声）</td><td>§4.2</td></tr>
+              <tr><td>CFG scale、SDE 噪声 σ<sub>t</sub>、裁剪 ε、KL 系数</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+              <tr><td>OPD 离散步数 N、训练步数</td><td><span class="nd">原文未披露</span></td><td>§4.3</td></tr>
+              <tr><td>算力 / GPU 数 / 时长</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 评测 -->
+    <section class="sec" id="eval">
+      <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2><p class="sec-intro">两类定量：Qwen-Image-Bench（只测 T2I，模型判官打分）与两个人类偏好竞技场 Elo（T2I、编辑）。其余是定性对比。</p></div>
+
+      <div class="card mod wide">
+        <h4>Qwen-Image-Bench 是什么 <span class="tag">§5 · 表 1</span></h4>
+        <p>面向创作者的 T2I 基准（Li et al., 2026a），五个一级维度：Quality、Aesthetics、Alignment、Real-world Fidelity、Creative Generation；分数 0–100，由 56 个三级 facet 经三级分类树自下而上聚合。打分由 <b>Q-Judger</b> 完成，这是一个在 <b>130K+</b> 人工标注图文对上训练的统一判官模型，标注者为 <b>80 位专业艺术家</b>。</p>
+      </div>
+
+      <div class="chart-grid wide" style="grid-template-columns:1fr">
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 760 300" role="img" aria-label="Qwen-Image-Bench 五大维度 Base vs RL">
+<text x="56" y="18" class="ch-t">Qwen-Image-Bench 分维度：Base → RL</text><text x="750" y="18" text-anchor="end" class="ch-src">纵轴从 40 起 · 表 1</text>
+<line x1="56" x2="750" y1="250.0" y2="250.0" class="grid-l"/><text x="50" y="253.0" text-anchor="end" class="ch-ax">40</text>
+<line x1="56" x2="750" y1="180.0" y2="180.0" class="grid-l"/><text x="50" y="183.0" text-anchor="end" class="ch-ax">50</text>
+<line x1="56" x2="750" y1="110.0" y2="110.0" class="grid-l"/><text x="50" y="113.0" text-anchor="end" class="ch-ax">60</text>
+<line x1="56" x2="750" y1="40.0" y2="40.0" class="grid-l"/><text x="50" y="43.0" text-anchor="end" class="ch-ax">70</text>
+<rect x="83.8" y="164.0" width="28" height="86.0" rx="2" class="bar-qi"/><text x="97.8" y="160.0" text-anchor="middle" class="ch-val sm">52.29</text>
+<rect x="115.8" y="149.3" width="28" height="100.7" rx="2" class="bar-q"/><text x="129.8" y="145.3" text-anchor="middle" class="ch-val sm">54.39</text>
+<text x="113.8" y="268" text-anchor="middle" class="ch-lbl">Quality</text><text x="113.8" y="285" text-anchor="middle" class="ch-delta">+2.10</text>
+<rect x="199.5" y="130.3" width="28" height="119.7" rx="2" class="bar-qi"/><text x="213.5" y="126.3" text-anchor="middle" class="ch-val sm">57.10</text>
+<rect x="231.5" y="119.3" width="28" height="130.7" rx="2" class="bar-q"/><text x="245.5" y="115.3" text-anchor="middle" class="ch-val sm">58.67</text>
+<text x="229.5" y="268" text-anchor="middle" class="ch-lbl">Aesthetics</text><text x="229.5" y="285" text-anchor="middle" class="ch-delta">+1.57</text>
+<rect x="315.2" y="126.5" width="28" height="123.5" rx="2" class="bar-qi"/><text x="329.2" y="122.5" text-anchor="middle" class="ch-val sm">57.64</text>
+<rect x="347.2" y="115.0" width="28" height="135.0" rx="2" class="bar-q"/><text x="361.2" y="111.0" text-anchor="middle" class="ch-val sm">59.28</text>
+<text x="345.2" y="268" text-anchor="middle" class="ch-lbl">Alignment</text><text x="345.2" y="285" text-anchor="middle" class="ch-delta">+1.64</text>
+<rect x="430.8" y="197.2" width="28" height="52.8" rx="2" class="bar-qi"/><text x="444.8" y="193.2" text-anchor="middle" class="ch-val sm">47.54</text>
+<rect x="462.8" y="167.2" width="28" height="82.8" rx="2" class="bar-q"/><text x="476.8" y="163.2" text-anchor="middle" class="ch-val sm">51.83</text>
+<text x="460.8" y="268" text-anchor="middle" class="ch-lbl">Real-world Fidelity</text><text x="460.8" y="285" text-anchor="middle" class="ch-delta">+4.29</text>
+<rect x="546.5" y="122.5" width="28" height="127.5" rx="2" class="bar-qi"/><text x="560.5" y="118.5" text-anchor="middle" class="ch-val sm">58.22</text>
+<rect x="578.5" y="75.4" width="28" height="174.6" rx="2" class="bar-q"/><text x="592.5" y="71.4" text-anchor="middle" class="ch-val sm">64.94</text>
+<text x="576.5" y="268" text-anchor="middle" class="ch-lbl">Creative Gen.</text><text x="576.5" y="285" text-anchor="middle" class="ch-delta">+6.72</text>
+<rect x="662.2" y="143.4" width="28" height="106.6" rx="2" class="bar-qi"/><text x="676.2" y="139.4" text-anchor="middle" class="ch-val sm">55.23</text>
+<rect x="694.2" y="125.1" width="28" height="124.9" rx="2" class="bar-q"/><text x="708.2" y="121.1" text-anchor="middle" class="ch-val sm">57.84</text>
+<text x="692.2" y="268" text-anchor="middle" class="ch-lbl">Overall</text><text x="692.2" y="285" text-anchor="middle" class="ch-delta">+2.61</text>
+<line x1="56" x2="750" y1="250" y2="250" class="axis"/></svg>
+          <div class="chart-legend"><span class="l2">Qwen-Image-2.0-Base</span><span class="l1">Qwen-Image-2.0-RL</span><span style="color:var(--good)">绿色数字 = RL − Base <span class="src calc">推算</span></span></div>
+          <p class="tbl-note">纵轴从 40 起，柱高只反映相对差距。涨幅最大：Creative Gen. +6.72、Real-world Fidelity +4.29（与 <span class="src">§5</span> 一致）；Aesthetics 只涨 1.57，是五项里最少的。</p>
+        </div>
+      </div>
+
+      <div class="chart-grid wide" style="grid-template-columns:1fr">
+        <div class="chart-cell">
+          <p class="tbl-note" style="margin:0 0 6px;font-weight:700;color:var(--ink)">Qwen-Image-Bench Overall，19 个模型排序 <span class="src">表 1</span></p>
+          <svg class="chart" viewBox="0 0 760 496" role="img" aria-label="Qwen-Image-Bench Overall 排名">
+<line x1="176.0" x2="176.0" y1="6" y2="470" class="grid-l"/><text x="176.0" y="484" text-anchor="middle" class="ch-ax">45</text>
+<line x1="300.8" x2="300.8" y1="6" y2="470" class="grid-l"/><text x="300.8" y="484" text-anchor="middle" class="ch-ax">50</text>
+<line x1="425.5" x2="425.5" y1="6" y2="470" class="grid-l"/><text x="425.5" y="484" text-anchor="middle" class="ch-ax">55</text>
+<line x1="550.3" x2="550.3" y1="6" y2="470" class="grid-l"/><text x="550.3" y="484" text-anchor="middle" class="ch-ax">60</text>
+<line x1="675.0" x2="675.0" y1="6" y2="470" class="grid-l"/><text x="675.0" y="484" text-anchor="middle" class="ch-ax">65</text>
+<text x="168" y="23" text-anchor="end" class="ch-lbl">GPT Image 2</text><rect x="176" y="10" width="491.3" height="17" rx="3" class="bar-o"/><text x="673.3" y="23" class="ch-val">64.69</text>
+<text x="168" y="47" text-anchor="end" class="ch-lbl">Nano Banana 2.0</text><rect x="176" y="34" width="369.8" height="17" rx="3" class="bar-o"/><text x="551.8" y="47" class="ch-val">59.82</text>
+<text x="168" y="71" text-anchor="end" class="ch-lbl">GPT Image 1.5</text><rect x="176" y="58" width="365.6" height="17" rx="3" class="bar-o"/><text x="547.6" y="71" class="ch-val">59.65</text>
+<text x="168" y="95" text-anchor="end" class="ch-lbl">Nano Banana Pro</text><rect x="176" y="82" width="360.6" height="17" rx="3" class="bar-o"/><text x="542.6" y="95" class="ch-val">59.45</text>
+<text x="168" y="119" text-anchor="end" class="ch-lbl" style="font-weight:700">Qwen-Image-2.0-RL</text><rect x="176" y="106" width="320.4" height="17" rx="3" class="bar-q"/><text x="502.4" y="119" class="ch-val">57.84</text>
+<text x="168" y="143" text-anchor="end" class="ch-lbl">Seedream 5.0</text><rect x="176" y="130" width="304.9" height="17" rx="3" class="bar-o"/><text x="486.9" y="143" class="ch-val">57.22</text>
+<text x="168" y="167" text-anchor="end" class="ch-lbl">Seedream 4.5</text><rect x="176" y="154" width="293.9" height="17" rx="3" class="bar-o"/><text x="475.9" y="167" class="ch-val">56.78</text>
+<text x="168" y="191" text-anchor="end" class="ch-lbl">Seedream 4.0</text><rect x="176" y="178" width="279.7" height="17" rx="3" class="bar-o"/><text x="461.7" y="191" class="ch-val">56.21</text>
+<text x="168" y="215" text-anchor="end" class="ch-lbl">FLUX 2 Max</text><rect x="176" y="202" width="257.8" height="17" rx="3" class="bar-o"/><text x="439.8" y="215" class="ch-val">55.33</text>
+<text x="168" y="239" text-anchor="end" class="ch-lbl" style="font-weight:700">Qwen-Image-2.0-Base</text><rect x="176" y="226" width="255.3" height="17" rx="3" class="bar-qi"/><text x="437.3" y="239" class="ch-val">55.23</text>
+<text x="168" y="263" text-anchor="end" class="ch-lbl">FLUX 2 Pro</text><rect x="176" y="250" width="238.8" height="17" rx="3" class="bar-o"/><text x="420.8" y="263" class="ch-val">54.57</text>
+<text x="168" y="287" text-anchor="end" class="ch-lbl">GPT Image 1</text><rect x="176" y="274" width="226.3" height="17" rx="3" class="bar-o"/><text x="408.3" y="287" class="ch-val">54.07</text>
+<text x="168" y="311" text-anchor="end" class="ch-lbl">Qwen Image 2512</text><rect x="176" y="298" width="176.2" height="17" rx="3" class="bar-o"/><text x="358.2" y="311" class="ch-val">52.06</text>
+<text x="168" y="335" text-anchor="end" class="ch-lbl">Imagen 4.0 Ultra</text><rect x="176" y="322" width="174.4" height="17" rx="3" class="bar-o"/><text x="356.4" y="335" class="ch-val">51.99</text>
+<text x="168" y="359" text-anchor="end" class="ch-lbl">HunyuanImage 3.0</text><rect x="176" y="346" width="145.0" height="17" rx="3" class="bar-o"/><text x="327.0" y="359" class="ch-val">50.81</text>
+<text x="168" y="383" text-anchor="end" class="ch-lbl">Imagen 4.0</text><rect x="176" y="370" width="132.0" height="17" rx="3" class="bar-o"/><text x="314.0" y="383" class="ch-val">50.29</text>
+<text x="168" y="407" text-anchor="end" class="ch-lbl">Qwen Image</text><rect x="176" y="394" width="105.5" height="17" rx="3" class="bar-o"/><text x="287.5" y="407" class="ch-val">49.23</text>
+<text x="168" y="431" text-anchor="end" class="ch-lbl">Kling Image 2.1</text><rect x="176" y="418" width="81.3" height="17" rx="3" class="bar-o"/><text x="263.3" y="431" class="ch-val">48.26</text>
+<text x="168" y="455" text-anchor="end" class="ch-lbl">GLM Image</text><rect x="176" y="442" width="79.6" height="17" rx="3" class="bar-o"/><text x="261.6" y="455" class="ch-val">48.19</text>
+</svg>
+          <div class="chart-legend"><span class="l1">Qwen-Image-2.0-RL</span><span class="l2">Qwen-Image-2.0-Base</span><span class="l3">其他模型</span></div>
+          <p class="tbl-note">横轴从 45 起。RL 后 57.84 排第 5，超过 Seedream 5.0（57.22），仍低于 Nano Banana Pro（59.45）、GPT Image 1.5（59.65）、Nano Banana 2.0（59.82）和 GPT Image 2（64.69）<span class="src calc">推算</span>。Base 55.23 原本略低于 FLUX 2 Max（55.33）。</p>
+        </div>
+      </div>
+
+      <details class="more wide">
+        <summary>表 1 全表<span class="hint">19 个模型 × 5 维度 + Overall</span></summary>
+        <div class="body">
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>模型</th><th>Quality</th><th>Aesthetics</th><th>Alignment</th><th>Real-world Fidelity</th><th>Creative Gen.</th><th>Overall</th></tr></thead>
+              <tbody>
+                <tr><td>GLM Image</td><td>49.26</td><td>50.64</td><td>47.90</td><td>44.69</td><td>45.23</td><td>48.19</td></tr>
+                <tr><td>Kling Image 2.1</td><td>49.11</td><td>50.15</td><td>49.18</td><td>44.74</td><td>44.67</td><td>48.26</td></tr>
+                <tr><td>Qwen Image</td><td>48.44</td><td>52.25</td><td>50.72</td><td>43.16</td><td>47.30</td><td>49.23</td></tr>
+                <tr><td>Imagen 4.0</td><td>50.16</td><td>52.68</td><td>51.64</td><td>44.84</td><td>47.94</td><td>50.29</td></tr>
+                <tr><td>HunyuanImage 3.0</td><td>50.35</td><td>53.57</td><td>52.00</td><td>44.31</td><td>49.12</td><td>50.81</td></tr>
+                <tr><td>Imagen 4.0 Ultra</td><td>50.90</td><td>54.25</td><td>54.02</td><td>45.59</td><td>51.14</td><td>51.99</td></tr>
+                <tr><td>Qwen Image 2512</td><td>51.76</td><td>54.74</td><td>52.72</td><td>47.00</td><td>50.19</td><td>52.06</td></tr>
+                <tr><td>GPT Image 1</td><td>52.34</td><td>55.09</td><td>56.28</td><td>48.14</td><td>55.78</td><td>54.07</td></tr>
+                <tr><td>FLUX 2 Pro</td><td>52.30</td><td>56.94</td><td>57.01</td><td>47.29</td><td>56.18</td><td>54.57</td></tr>
+                <tr><td>FLUX 2 Max</td><td>53.64</td><td>56.85</td><td>57.35</td><td>49.35</td><td>56.50</td><td>55.33</td></tr>
+                <tr><td>Seedream 4.0</td><td>54.01</td><td>58.81</td><td>56.64</td><td>51.05</td><td>58.15</td><td>56.21</td></tr>
+                <tr><td>Seedream 4.5</td><td>54.41</td><td>58.72</td><td>57.31</td><td>51.69</td><td>60.64</td><td>56.78</td></tr>
+                <tr><td>Seedream 5.0</td><td>52.55</td><td>58.40</td><td>58.90</td><td>51.92</td><td>65.29</td><td>57.22</td></tr>
+                <tr><td>Nano Banana Pro</td><td>55.67</td><td>60.26</td><td>61.25</td><td>54.07</td><td>66.23</td><td>59.45</td></tr>
+                <tr><td>GPT Image 1.5</td><td>55.14</td><td>60.88</td><td>61.72</td><td>53.95</td><td>66.35</td><td>59.65</td></tr>
+                <tr><td>Nano Banana 2.0</td><td>54.77</td><td>61.08</td><td>62.40</td><td>54.28</td><td>67.05</td><td>59.82</td></tr>
+                <tr><td>GPT Image 2</td><td class="best">58.65</td><td class="best">67.53</td><td class="best">65.85</td><td class="best">57.38</td><td class="best">75.23</td><td class="best">64.69</td></tr>
+                <tr class="grp"><td colspan="7">本文</td></tr>
+                <tr><td>Qwen-Image-2.0-Base</td><td>52.29</td><td>57.10</td><td>57.64</td><td>47.54</td><td>58.22</td><td>55.23</td></tr>
+                <tr class="hl"><td>Qwen-Image-2.0-RL</td><td class="q">54.39</td><td class="q">58.67</td><td class="q">59.28</td><td class="q">51.83</td><td class="q">64.94</td><td class="q">57.84</td></tr>
+                <tr><td><i>RL − Base</i> <span class="src calc">推算</span></td><td>+2.10</td><td>+1.57</td><td>+1.64</td><td>+4.29</td><td>+6.72</td><td>+2.61</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="tbl-note">基线按 Overall 升序排列（原表做法）；圆点 = 该列最佳，均为 GPT Image 2。表中没有 * / † 等记号。<span class="src">表 1</span></p>
+        </div>
+      </details>
+
+      <h3 class="prose">人类偏好竞技场</h3>
+      <div class="chart-grid wide" style="grid-template-columns:1fr">
+        <div class="chart-cell">
+          <p class="tbl-note" style="margin:0 0 6px;font-weight:700;color:var(--ink)">Arena Elo：Base → RL <span class="src">§5</span></p>
+          <svg class="chart" viewBox="0 0 760 190" role="img" aria-label="Arena Elo Base vs RL">
+<line x1="170.0" x2="170.0" y1="6" y2="160" class="grid-l"/><text x="170.0" y="176" text-anchor="middle" class="ch-ax">1000</text>
+<line x1="302.5" x2="302.5" y1="6" y2="160" class="grid-l"/><text x="302.5" y="176" text-anchor="middle" class="ch-ax">1100</text>
+<line x1="435.0" x2="435.0" y1="6" y2="160" class="grid-l"/><text x="435.0" y="176" text-anchor="middle" class="ch-ax">1200</text>
+<line x1="567.5" x2="567.5" y1="6" y2="160" class="grid-l"/><text x="567.5" y="176" text-anchor="middle" class="ch-ax">1300</text>
+<line x1="700.0" x2="700.0" y1="6" y2="160" class="grid-l"/><text x="700.0" y="176" text-anchor="middle" class="ch-ax">1400</text>
+<text x="162" y="44" text-anchor="end" class="ch-lbl" style="font-weight:700">T2I Arena · Overall</text>
+<rect x="170" y="14" width="152.4" height="20" rx="3" class="bar-qi"/><text x="328.4" y="28" class="ch-val">Base 1115</text>
+<rect x="170" y="40" width="255.7" height="20" rx="3" class="bar-q"/><text x="431.7" y="54" class="ch-val">RL 1193</text>
+<text x="162" y="120" text-anchor="end" class="ch-lbl" style="font-weight:700">Image Edit Arena</text>
+<rect x="170" y="90" width="339.2" height="20" rx="3" class="bar-qi"/><text x="515.2" y="104" class="ch-val">Base 1256</text>
+<rect x="170" y="116" width="462.4" height="20" rx="3" class="bar-q"/><text x="638.4" y="130" class="ch-val">RL 1349</text>
+</svg>
+          <div class="chart-legend"><span class="l2">Qwen-Image-2.0-Base</span><span class="l1">Qwen-Image-2.0-RL</span></div>
+          <p class="tbl-note">横轴从 1000 起。T2I 1115 → 1193（+78），编辑 1256 → 1349（+93）。T2I 分项里正文只点名两项：3D Modeling +93、Photorealism +91；其余分项数值正文没给，图 4 的本地裁图也读不全，本页不填。竞技场名称、投票数、对手池、置信区间原文均未给。</p>
+        </div>
+      </div>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig4.jpg" alt="竞技场 Elo 雷达图与分组柱状图" loading="lazy"></div>
+        <figcaption><b>竞技场 Elo（本地裁图不完整）。</b>左：分类别 Elo 雷达图；右：分组柱状图，蓝 = Base、橙 = RL。原题注称 RL 在全部 8 个子类和总分上都提升；雷达图的轴包含 Edit。<span class="from">来源：论文图 4</span></figcaption>
+      </figure>
+
+      <h3 class="prose">定性对比</h3>
+      <div class="tbl-wrap wide">
+        <table class="idx-table">
+          <thead><tr><th>对比</th><th>对象</th><th>论文结论</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td>奖励训练范式</td><td>pairwise vs pointwise 奖励训出的 RL 模型</td><td>pointwise 质感更好、伪影更少</td><td>图 2</td></tr>
+            <tr><td>CFG 策略</td><td>两端都用 / 都不用 / 仅 rollout</td><td>仅 rollout 最稳且保知识</td><td>图 3</td></tr>
+            <tr><td>T2I 合并方式</td><td>Base / Mix-RL / OPD</td><td>Mix-RL 已优于 Base；OPD 细节更锐、更贴 prompt、美感更好</td><td>图 5</td></tr>
+            <tr><td>人像编辑</td><td>Base / Mix-RL / OPD</td><td>OPD 身份保持与指令遵循最好；Mix-RL 仍有身份漂移、复杂指令改不全</td><td>图 6</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig5.jpg" alt="T2I 场景下 Base、Mix-RL、OPD 三方定性对比" loading="lazy"></div>
+        <figcaption><b>T2I：Base → Mix-RL → Qwen-Image-2.0-RL（OPD）。</b>三列依次为预训练基座、T2I 与编辑混合奖励联合 RL、任务教师经 OPD 蒸馏。本地裁图截掉了列标题与第一行。<span class="from">来源：论文图 5</span></figcaption>
+      </figure>
+      <details class="more wide">
+        <summary>CFG 三策略、人像编辑对比原图<span class="hint">论文图 3 · 图 6</span></summary>
+        <div class="body">
+          <figure class="fig card">
+            <div class="img-pad"><img src="figures/fig3.jpg" alt="RL 训练中三种 CFG 策略对比" loading="lazy"></div>
+            <figcaption><b>三种 CFG 策略。</b>列依次为：两端都用 CFG（图像塌陷发糊）、两端都不用（风格化与知识流失）、仅 rollout 用（本文）。本地裁图截掉了列标题。<span class="from">来源：论文图 3</span></figcaption>
+          </figure>
+          <figure class="fig card">
+            <div class="img-pad"><img src="figures/fig6.jpg" alt="人像编辑 Base、Mix-RL、OPD 对比" loading="lazy"></div>
+            <figcaption><b>人像编辑（半身棚拍一例）。</b>依次为输入图、Base、Mix-RL、Qwen-Image-2.0-RL（OPD）。本地裁图只保留了原图三组中的一行。<span class="from">来源：论文图 6</span></figcaption>
+          </figure>
+        </div>
+      </details>
+    </section>
+
+    <!-- 07 新在哪 -->
+    <section class="sec" id="novel">
+      <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2><p class="sec-intro">只列能在原文核对的点。异步奖励 API 属常规工程，多奖励逐项归一化借自 GDPO，均不计入。</p></div>
+      <div class="novel wide">
+        <div class="card nv"><h4>多教师 OPD：按任务类型分教师，合并 T2I 与编辑</h4><p>学生在自己的轨迹上匹配对应任务教师的速度，教师带 CFG、学生不带，不活跃教师卸载到 CPU；目标由 W2 上界推出<span class="src">§4.3 · 附录 A</span>。与同期 Flow-OPD / DiffusionOPD 的区别：它们合并单奖励 T2I 教师<span class="src">§6</span>。</p><p class="why">可核对点：式 14、附录 A；对 Mix-RL 的优势只有图 5–6 定性。</p></div>
+        <div class="card nv"><h4>受控对比 pointwise vs pairwise 奖励，并统一用 pointwise</h4><p>同图池、同维度、只换标注格式，再看各自训出的 RL 结果<span class="src">§3.1 · 图 2</span>。</p><p class="why">可核对点：实验设计清楚；结果只有 3 组定性样例，没有奖励模型精度或 RL 后指标。</p></div>
+        <div class="card nv"><h4>CFG 三选一的对照</h4><p>把「rollout 用、目标不用」与两种对照放在一起，指出不用 CFG 会丢风格化与名人知识<span class="src">§4.1 · 图 3</span>。基座报告已用了这个策略，本文补的是对比证据。</p><p class="why">可核对点：图 3 定性；无训练曲线。</p></div>
+        <div class="card nv"><h4>编辑奖励 = VLM 指令拆解 + embedding 人脸 ID</h4><p>指令遵循奖励先把指令拆成核心 / 非核心要求再判；另加人脸 embedding 分专抓细微身份漂移<span class="src">§3.3</span>。</p><p class="why">可核对点：方法描述；奖励模型自身准确率没给。</p></div>
+        <div class="card nv"><h4>用 Base 的组内奖励极差筛 RL prompt</h4><p>每个 prompt 先让 Base 出 G 张图，max − min 低于阈值的丢掉；再按类别配奖励权重<span class="src">§4.2</span>。</p><p class="why">可核对点：流程描述；阈值、留存率、收益都没给。</p></div>
+      </div>
+    </section>
+
+    <!-- 08 启示 -->
+    <section class="sec" id="impl">
+      <div class="impl-wrap wide">
+        <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+        <h2>对图像编辑数据、评测、caption 的启示</h2>
+        <p class="sec-intro">每条先写论文做法（带来源），再给一条<b>迁移建议，不是论文内容</b>。</p>
+
+        <div class="impl-group">Caption / 指令</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">C1</span>把编辑指令拆成核心与非核心要求</h4><p class="paper">论文：指令遵循奖励先让 VLM 把指令拆成核心编辑要求和非核心辅助要求，再分别判是否完成，最后看整体连贯<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的结构化 caption 直接存这两层：<code>core_edits</code>（必须发生的改动）和 <code>aux_requirements</code>（风格、光线等附带要求），评测 rubric 就按这两层逐条勾，训练和评测共用一套 schema。</p></div>
+          <div class="impl"><h4><span class="ix">C2</span>对齐检查按优先级封顶</h4><p class="paper">论文：对齐奖励按「物体存在与数量 → 属性 → 空间关系 → 动作姿态」排优先级，高优先级不过关就封顶低分<span class="src">§3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>校验目标图 caption 与编辑结果时也用分级门控：先核对象与数量，再核属性和位置；前一级失败的样本直接剔除，不再算「部分正确」，减少脏对进训练集。</p></div>
+          <div class="impl"><h4><span class="ix">C3</span>标注用 prompt 主动改写出分布</h4><p class="paper">论文：pointwise 标注集的 prompt 从高质量人像参考图采样后再改写，用来让语言模式超出训练分布<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测集与奖励标注集的指令不要直接复用训练 caption；同一个编辑意图改写成口语、短句、多约束几种说法，单独统计改写后的掉点。</p></div>
+        </div>
+
+        <div class="impl-group">数据过滤与配比</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">D1</span>用组内分数极差挑「有信号」的样本</h4><p class="paper">论文：Base 对每个 prompt 出 G 张，复合奖励极差低于阈值就丢掉——全好或全差都没有优化信号<span class="src">§4.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 或 DPO 选指令时同样跑 G 次看判分极差；评测集里极差始终为 0 的 case（谁都做对 / 谁都做不了）可以降权或单独成桶，免得稀释模型间差距。</p></div>
+          <div class="impl"><h4><span class="ix">D2</span>按类别给奖励配不同权重</h4><p class="paper">论文：prompt 分人像、风景、文字排版、通用等类，人像提高人像奖励权重，文字排版提高对齐权重<span class="src">§4.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按编辑类型打标签（人像改妆、换背景、文字替换……），每类配一组评测权重：人像类人脸 ID 权重高，文字类 OCR 准确率权重高；这些标签同时用来做分桶报告。</p></div>
+          <div class="impl"><h4><span class="ix">D3</span>给样本挂辅助缺陷标签</h4><p class="paper">论文：pairwise 标注除偏好外，还标「样本是否有效、是否有文字畸变、是否有人体畸变」<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑对的质检表固定加这三列（再加「非编辑区是否被改」），既能做过滤规则，也能统计哪类缺陷最多，指导数据补充。</p></div>
+          <div class="impl"><h4><span class="ix">D4</span>比较标注方案时控制图池</h4><p class="paper">论文：pointwise 与 pairwise 两套标注用同一模型池的图、同一评价维度，只差格式<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>团队里比较两种 caption 格式或两种标注协议时，固定同一批编辑对，只换格式，否则结论会混进数据分布差异。</p></div>
+        </div>
+
+        <div class="impl-group">评测协议</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">E1</span>VLM 判分取概率期望而非 argmax</h4><p class="paper">论文：奖励模型输出 {1..5} 的 token，分数取 Σ s·p(s)<span class="src">式 12</span>；pointwise 用 Quality / Fidelity 两维 5 分 Likert<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>自建编辑判官时读出 1–5 各档的概率算期望，得到连续分，能区分「稳 4 分」和「3/5 摇摆」；同时把概率熵当作判官置信度，高熵样本送人工复核。</p></div>
+          <div class="impl"><h4><span class="ix">E2</span>身份一致性别只靠 VLM</h4><p class="paper">论文：作者发现 VLM 抓不住细微人脸身份漂移，加了 embedding 级人脸 ID 打分<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>人像编辑评测至少报两个独立分：VLM 指令完成度 + 人脸 embedding 相似度，不合成单一总分；ID 分出现大幅下降的样本优先人工看。</p></div>
+          <div class="impl"><h4><span class="ix">E3</span>分层 facet 自下而上聚合</h4><p class="paper">论文：Qwen-Image-Bench 由 56 个三级 facet 经三级分类树聚合到 5 个一级维度，判官在 130K+ 艺术家标注上训练<span class="src">表 1 · §5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑基准也建三级分类树（如 编辑类型 → 子操作 → 难点），分数逐级聚合，这样 RL 前后能看出涨在哪一层，而不只是一个总分。</p></div>
+          <div class="impl"><h4><span class="ix">E4</span>判官与奖励模型要分家</h4><p class="paper">论文：RL 奖励是 VLM 打分器，T2I 自动评测也用模型判官 Q-Judger；原文没讨论二者之间的相关性<span class="src">§3 · §5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的离线评测用与奖励模型不同来源 / 不同训练数据的判官，并保留一份人工盲测（GSB）做交叉验证，防止 reward hacking 在自动分上被误读成进步。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 局限 -->
+    <section class="sec" id="limits">
+      <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+      <ul class="limits wide">
+        <li class="key"><b>核心设计没有定量消融。</b>pointwise vs pairwise、CFG 三选一、时间步子集、prompt 极差筛选、按类别权重、OPD vs Mix-RL，全部只有样例图或文字描述<span class="src">图 2 · 图 3 · 图 5–6</span>。</li>
+        <li class="key"><b>编辑没有自动化基准。</b>表 1 只测 T2I；编辑侧唯一定量是竞技场 Elo +93，且竞技场名称、投票数、对手池、置信区间均未给<span class="src">§5</span>。</li>
+        <li><b>数据与超参全未披露。</b>奖励标注条数、标注员、prompt 池大小、过滤阈值、G、学习率、步数、奖励权重、OPD 步数、算力都没有；奖励 VLM 只写「Qwen series VLM」<span class="src">§3 · §4</span>。</li>
+        <li><b>奖励组成前后表述不一。</b>§3.3 提到「VLM-based visual consistency reward」，结论也说 rubric 覆盖「visual consistency」，但图 1 和 §4.3 的编辑教师只列指令遵循 + 人脸 ID 两个奖励<span class="src">§3.3 · §4.3 · §7</span>。</li>
+        <li><b>RL 目标没说清。</b>§2.2 同时介绍 Flow-GRPO 与 DiffusionNFT，正文只写「GRPO-based」，没交代最终用哪个目标或怎样组合。</li>
+        <li><b>「OPD 后把 CFG 整合进学生」没有解释。</b>学生训练时不带 CFG，之后如何整合未说明<span class="src">§4.3</span>。</li>
+        <li><b>竞技场分项只公开了两项。</b>正文给了 3D Modeling +93、Photorealism +91；图 4 题注说「8 个子类」，雷达图的轴里含 Edit，与「T2I 分项」的叙述口径需对照原图确认<span class="src">§5 · 图 4</span>。</li>
+        <li><b>自动评测由同组织的基准与判官给出。</b>Qwen-Image-Bench / Q-Judger 来自 Li et al. (2026a)；表 1 的基线分数由该判官统一打分，原文未给人工复核或与奖励模型的相关性分析<span class="src">表 1</span>。</li>
+        <li><b>开源与许可证未写。</b>原文没有提权重、代码或许可证；奖励模型是否发布也未提。</li>
+        <li><b>日期口径。</b>arXiv v1 为 2026-06-25，PDF 封面印 June 29, 2026；本页以 arXiv v1 为准。</li>
+      </ul>
+    </section>
+
+    <!-- 10 图表索引 -->
+    <section class="sec" id="figs">
+      <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+      <div class="tbl-wrap wide">
+        <table class="idx-table">
+          <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+          <tbody>
+            <tr><td>首页图</td><td>本地裁图只截到正文第一页文字，无图像内容</td><td>未收录</td></tr>
+            <tr><td>图 1</td><td>训练流水线总览：双路 RL → OPD</td><td><a href="#arch">架构</a></td></tr>
+            <tr><td>图 2</td><td>pairwise vs pointwise 奖励训出的 RL 结果</td><td><a href="#data">数据 4.1</a></td></tr>
+            <tr><td>图 3</td><td>RL 中三种 CFG 策略</td><td><a href="#eval">评测（折叠）</a> · <a href="#train">训练 5.1</a></td></tr>
+            <tr><td>图 4</td><td>竞技场 Elo 雷达图 + 分组柱状图</td><td><a href="#eval">评测</a></td></tr>
+            <tr><td>图 5</td><td>T2I：Base / Mix-RL / OPD</td><td><a href="#eval">评测</a></td></tr>
+            <tr><td>图 6</td><td>人像编辑：Base / Mix-RL / OPD</td><td><a href="#eval">评测（折叠）</a></td></tr>
+            <tr><td>表 1</td><td>Qwen-Image-Bench 19 模型 × 5 维度</td><td><a href="#eval">评测图 + 折叠全表</a></td></tr>
+            <tr><td>式 10–14</td><td>BT 损失、pointwise 回归、期望打分、多奖励优势、OPD 损失</td><td><a href="#data">数据</a> · <a href="#train">训练</a></td></tr>
+            <tr><td>附录 A</td><td>OPD 的 W2 上界推导</td><td><a href="#train">训练（折叠）</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Qwen Team《Qwen-Image-2.0-RL Technical Report》（<a href="https://arxiv.org/abs/2606.27608" target="_blank" rel="noopener">arXiv:2606.27608</a>，v1，2026-06-25）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页计算；「迁移建议」为编者观点，不是论文内容。论文图片版权归原作者所有，仅作学习引用。<br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

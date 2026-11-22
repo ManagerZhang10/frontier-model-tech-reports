@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LongCat-Image 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="LongCat-Image（美团 LongCat 团队）技术报告中文深读：6B DiT、12 亿样本数据管线、多粒度 caption、中文字符级渲染、编辑模型 LongCat-Image-Edit 的数据与评测。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* page-specific: architecture diagram + category bars */
+  .arch-svg .lab { fill: var(--muted); font: 600 10.5px var(--f-mono); letter-spacing: .04em; }
+  .arch-svg .dg-edit { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 45%, var(--line)); stroke-width: 1.2; }
+  .arch-svg .dg-dash { stroke: var(--good); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+  .arch-svg .arr { fill: var(--muted); }
+  .catbars { display: grid; gap: 5px; margin: 12px 0 4px; }
+  .catbar { display: grid; grid-template-columns: 118px minmax(0, 1fr) 58px; gap: 10px; align-items: center; font-size: .86rem; }
+  .catbar .t { height: 14px; background: var(--bg-accent); border-radius: 4px; overflow: hidden; }
+  .catbar .t i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .catbar.txt .t i { background: var(--warm); }
+  .catbar.art .t i { background: var(--bar-other2); }
+  .catbar .v { font: 600 .8rem/1 var(--f-mono); text-align: right; color: var(--ink-2); }
+  .mgc { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+  .mgc .chip b { display: block; font: 700 .76rem/1.3 var(--f-mono); color: var(--accent-ink); }
+  @media (max-width: 760px) { .mgc { grid-template-columns: 1fr 1fr; } .catbar { grid-template-columns: 96px minmax(0,1fr) 52px; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成 / 图像编辑</div>
+    <h1>LongCat-Image<span class="sub">美团 LongCat 团队的 6B 中英双语文生图基座 + 编辑模型 LongCat-Image-Edit</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Meituan LongCat Team</b></span>
+      <span>arXiv v1 <b>2025-12-08</b></span>
+      <span>编号 <b>2512.07584</b></span>
+      <span>本页依据 <b>arXiv v1 全文</b></span>
+    </div>
+    <p class="lede">用 <b>6B</b> 的 FLUX 式混合 DiT + Qwen2.5VL-7B 文本编码器，靠<b>全程排除 AIGC 数据</b>、<b>引号内字符级编码</b>和<b>按字错误率动态采样的合成文字数据</b>，把中文字库覆盖（ChineseWord 90.7）拉到远超 Seedream 4.0 / Qwen-Image 的水平；编辑分支从 mid-training 权重起步、SFT 只用高一致性人工数据，在 ImgEdit 上拿到 4.50。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 6 9 17l-5-5"/></svg>开源：权重 + 训练代码 + 中间 ckpt</span>
+      <span class="badge">许可证：原文未披露</span>
+      <span class="badge">扩散主干 6B</span>
+      <span class="badge">文本编码器 Qwen2.5VL-7B</span>
+      <span class="badge">中英双语</span>
+      <span class="badge">图像生成 / 图像编辑</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2512.07584" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg>arXiv 论文</a>
+      <a href="https://huggingface.co/meituan-longcat/LongCat-Image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.2 2.1 1.8 3.5 1.8s2.5-.6 3.5-1.8"/></svg>Hugging Face</a>
+      <a href="https://github.com/meituan-longcat/LongCat-Image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.8-.3 5.8-1.4 5.8-6.2a4.8 4.8 0 0 0-1.3-3.3 4.5 4.5 0 0 0-.1-3.3s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.1 5.4 2.4 5.4 2.4a4.5 4.5 0 0 0-.1 3.3A4.8 4.8 0 0 0 4 9c0 4.8 3 5.9 5.8 6.2a3 3 0 0 0-.8 2.3V21"/></svg>GitHub</a>
+      <a href="https://huggingface.co/datasets/meituan-longcat/CEdit-Bench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>CEdit-Bench 数据集</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+  </nav>
+
+  <main>
+    <!-- 01 速览 -->
+    <section class="sec" id="glance">
+      <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+      <div class="glance wide">
+        <div class="card stat"><span class="stat-k">扩散主干</span><span class="stat-num">6B</span><span class="stat-sub">MM-DiT ×10 + Single-DiT ×20，约 1:2</span><span class="src">§3.1 · 图 12</span></div>
+        <div class="card stat"><span class="stat-k">文本编码器</span><span class="stat-num sm">Qwen2.5VL-7B</span><span class="stat-sub">冻结；去掉文本→adaLN 注入</span><span class="src">§3.2</span></div>
+        <div class="card stat"><span class="stat-k">训练数据</span><span class="stat-num">12 亿</span><span class="stat-sub">1.2 billion 样本，全程预训练排除 AIGC</span><span class="src">§2</span></div>
+        <div class="card stat"><span class="stat-k">合成文字数据</span><span class="stat-num">&gt;1000 万</span><span class="stat-sub">SynthDoG 简单底纹渲染，预训练末期全部撤出</span><span class="src">§4.1</span></div>
+        <div class="card stat"><span class="stat-k">T2I 预训练步数</span><span class="stat-num">1.4M</span><span class="stat-sub">900K + 300K + 200K（256→512→512–1024px）</span><span class="src calc">推算 · 表 1</span></div>
+        <div class="card stat"><span class="stat-k">ChineseWord（8,105 字）</span><span class="stat-num">90.7</span><span class="stat-sub">Seedream 4.0 为 58.5</span><span class="src">表 7</span></div>
+        <div class="card stat"><span class="stat-k">ImgEdit Overall</span><span class="stat-num">4.50</span><span class="stat-sub">表内最高；Nano Banana / Qwen-Image-Edit[2509] 4.35</span><span class="src">表 11</span></div>
+        <div class="card stat"><span class="stat-k">自建编辑基准</span><span class="stat-num sm">CEdit-Bench</span><span class="stat-sub">1,464 对中英编辑样本，15 类，已在 HF 公开</span><span class="src">§6.5.1</span></div>
+        <div class="card stat"><span class="stat-k">后训练</span><span class="stat-num sm">SFT → DPO → GRPO / MPO</span><span class="stat-sub">编辑：PT → SFT → DPO</span><span class="src">§4.3 · §6.3</span></div>
+        <div class="card stat"><span class="stat-k">开放程度</span><span class="stat-num sm">最终 + Dev 权重</span><span class="stat-sub">另开源预训练到 RL 的训练代码；许可证 <span class="nd">原文未披露</span></span><span class="src">摘要 · §1</span></div>
+      </div>
+      <p class="footnote">论文日期：arXiv v1 published 2025-12-08（PDF 页眉 <code>arXiv:2512.07584v1 [cs.CV] 8 Dec 2025</code>）。本页所有数字对照该版本。</p>
+    </section>
+
+    <!-- 02 TL;DR -->
+    <section class="sec" id="tldr">
+      <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>一句话之外的五条</h2></div>
+      <div class="tldr wide">
+        <div class="card tl"><span class="idx">01</span><h3>不靠堆参数：6B 主干对标 20B</h3><p>沿用 FLUX.1-dev 的双流→单流 DiT 和 VAE，主干 6B<span class="src">§1</span>；GenEval 0.87 与 Qwen-Image（20B）持平<span class="src">表 2</span>，WISE 0.65 为表内开源扩散模型最高<span class="src">表 4</span>。</p></div>
+        <div class="card tl"><span class="idx">02</span><h3>真实感来自「零 AIGC」数据纪律</h3><p>预训练和 mid-training 用内部 AIGC 检测器清掉合成图<span class="src">§2.1.1</span>；SFT 里的合成图逐张人工挑<span class="src">§2.1.4</span>；RL 再把 AIGC 检测器当奖励模型<span class="src">§4.3.2</span>。人评 Realism 略胜 Seedream 4.0（仅图示，无数字）<span class="src">图 14</span>。</p></div>
+        <div class="card tl"><span class="idx">03</span><h3>中文字库覆盖是最大亮点</h3><p>引号内文本走字符级 tokenizer<span class="src">§3.2</span>，SynthDoG 合成 &gt;1000 万样本并按「每个字的错误率」动态加权<span class="src">§4.1</span>。ChineseWord L3（生僻字）70.3，对手最高 6.1<span class="src">表 7</span>。但作者自认多字序列稳定性下降<span class="src">§5.1.2</span>。</p></div>
+        <div class="card tl"><span class="idx">04</span><h3>编辑：从 Dev 权重起步 + 一致性数据卡死</h3><p>编辑模型初始化自 mid-training ckpt 而非 SFT/RL 后的权重<span class="src">§6.3.1</span>；SFT 只用严筛的高一致性数据，「标准稍放松，一致性就断崖下跌」<span class="src">§6.3.2</span>。ImgEdit 4.50<span class="src">表 11</span>，GEdit-EN G_O 7.64（Seedream 4.0 为 7.68）<span class="src">表 10</span>。</p></div>
+        <div class="card tl caveat"><span class="idx">05</span><h3>人评仍落后两家商业模型</h3><p>编辑 SBS 中，对 Nano Banana 综合质量胜率约 39.2%、对 Seedream 4.0 约 43.1%；对 Qwen-Image-Edit[2509] 约 58.7%、对 FLUX.1 Kontext[Pro] 约 60.5%<span class="src">图 22</span>。T2I 与编辑没能合成一个模型，作者归因于编辑合成数据拖累真实感<span class="src">§6.4</span>。</p></div>
+      </div>
+    </section>
+
+    <!-- 03 架构 -->
+    <section class="sec" id="arch">
+      <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：FLUX 骨架 + Qwen2.5-VL 条件 + 原版 3D MRoPE</h2>
+        <p class="sec-intro">骨架本身不新，改动集中在条件编码、文字 tokenization 和位置编码上。</p></div>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig12.jpg" alt="LongCat-Image 模型架构总览：Qwen2.5 VL 与 VAE 编码器冻结，MM-DiT ×10 与 Single-DiT ×20 可训练，M-RoPE 三维位置索引" loading="lazy"></div>
+        <figcaption><b>T2I 架构总览。</b>Qwen2.5 VL 与 VAE 冻结（雪花），10 个双流 MM-DiT + 20 个单流 DiT 可训练；文本 token 的 MRoPE 第一维为 0，图像 latent 为 1。<span class="from">来源：论文图 12</span></figcaption>
+      </figure>
+
+      <div class="grid2 wide">
+        <div class="card mod"><h4>DiT 主干 <span class="tag">沿用 FLUX.1-dev</span></h4>
+          <ul><li>前段双流注意力、后段单流，块数比约 1:2<span class="src">§3.1</span>；图 12 标注为 MM-DiT ×10 + Single-DiT ×20<span class="src">图 12</span>。</li>
+          <li>主干约 6B，远小于「近 20B 或更大的 MoE」<span class="src">摘要</span>。</li></ul></div>
+        <div class="card mod"><h4>VAE <span class="tag">沿用 FLUX.1-dev</span></h4>
+          <ul><li>8× 空间压缩，再做 2×2 token merge，序列长度 = H×W / (16×16)<span class="src">§3.1</span>。</li>
+          <li>选它的理由：细字体、复杂纹理的重建保真度更好<span class="src">§3.1</span>。</li></ul></div>
+        <div class="card mod"><h4>文本编码器 <span class="tag ok-tag">改动</span></h4>
+          <ul><li>Qwen2.5VL-7B 统一编码 T2I 和编辑条件<span class="src">§3.2</span>。</li>
+          <li>不再把文本嵌入注入 timestep 做 adaLN 调制，作者称增益可忽略<span class="src">§3.2</span>。</li>
+          <li><b>引号内的待渲染文本用字符级 tokenizer</b>，不引入 GlyphByT5 这类专用编码器；称能提升数据效率、加速收敛<span class="src">§3.2</span>（无量化消融）。</li></ul></div>
+        <div class="card mod"><h4>位置编码 <span class="tag ok-tag">改动</span></h4>
+          <ul><li>原版 3D MRoPE，不做居中、频率缩放、插值等技巧<span class="src">§3.3</span>。</li>
+          <li>第 1 维区分模态（文本 / 噪声 latent / 编辑参考图），后 2 维为 (x, y)；文本两坐标相同，退化为 1D-RoPE<span class="src">§3.3</span>。</li></ul></div>
+        <div class="card mod"><h4>编辑分支 LongCat-Image-Edit <span class="tag ok-tag">改动</span></h4>
+          <ul><li>参考图过 VAE 得 latent，MRoPE 第 1 维取不同值（图 20 中为 2），空间维与噪声 latent 对齐，沿序列维拼接<span class="src">§6.2 · 图 20</span>。</li>
+          <li>源图 + 指令一起送进 Qwen2.5-VL，并用不同 system prompt 区分编辑与 T2I<span class="src">§6.2</span>。</li></ul></div>
+        <div class="card mod"><h4>Prompt 改写 <span class="tag">工程</span></h4>
+          <ul><li>默认复用同一个 Qwen2.5-VL 做 prompt 扩写，弥合训练时的稠密 caption 与用户短 query 的差距，不依赖外部 API<span class="src">§3.4</span>。</li>
+          <li>WISE 评测时也用这个编码器做「内在 prompt 增强」<span class="src">§5.1.1</span>。</li></ul></div>
+      </div>
+
+      <div class="card diagram wide">
+        <svg class="arch-svg" viewBox="0 0 900 250" role="img" aria-label="T2I 与编辑的输入序列构成示意">
+          <text class="lab" x="20" y="18">T2I 输入</text>
+          <rect class="dg-box" x="20" y="34" width="150" height="40" rx="8"/><text class="dg-t" x="95" y="58" text-anchor="middle">Prompt（引号内逐字）</text>
+          <rect class="dg-llm" x="200" y="34" width="150" height="40" rx="8"/><text class="dg-t" x="275" y="52" text-anchor="middle">Qwen2.5VL-7B ❄</text><text class="dg-s" x="275" y="67" text-anchor="middle">文本 token · RoPE dim0=0</text>
+          <rect class="dg-box" x="20" y="92" width="150" height="40" rx="8"/><text class="dg-t" x="95" y="116" text-anchor="middle">目标图 + 噪声</text>
+          <rect class="dg-vit" x="200" y="92" width="150" height="40" rx="8"/><text class="dg-t" x="275" y="110" text-anchor="middle">VAE ❄ 8× · 2×2 merge</text><text class="dg-s" x="275" y="125" text-anchor="middle">噪声 latent · dim0=1</text>
+          <path class="dg-line-main" d="M170 54 H196"/><path class="dg-line" d="M170 112 H196"/>
+          <text class="lab" x="20" y="166">编辑额外输入</text>
+          <rect class="dg-edit" x="20" y="178" width="150" height="40" rx="8"/><text class="dg-t" x="95" y="202" text-anchor="middle">源图（参考图）</text>
+          <rect class="dg-edit" x="200" y="178" width="150" height="40" rx="8"/><text class="dg-t" x="275" y="196" text-anchor="middle">VAE ❄</text><text class="dg-s" x="275" y="211" text-anchor="middle">参考 latent · dim0=2</text>
+          <path class="dg-dash" d="M170 198 H196"/>
+          <path class="dg-dash" d="M20 198 H8 V27 H275 V32"/>
+          <text class="dg-s" x="285" y="24">源图也送入 Qwen2.5-VL</text>
+          <rect class="dg-box" x="400" y="70" width="110" height="110" rx="10"/><text class="dg-t" x="455" y="118" text-anchor="middle">序列拼接</text><text class="dg-s" x="455" y="136" text-anchor="middle">3D MRoPE</text>
+          <path class="dg-line-main" d="M350 54 H372 V100 H396"/><path class="dg-line" d="M350 112 H372 M372 112 V125 H396"/><path class="dg-dash" d="M350 198 H372 V150 H396"/>
+          <rect class="dg-llm-hot" x="550" y="70" width="140" height="50" rx="10"/><text class="dg-t" x="620" y="92" text-anchor="middle">MM-DiT ×10</text><text class="dg-s" x="620" y="108" text-anchor="middle">双流 · 可训练</text>
+          <rect class="dg-llm" x="550" y="130" width="140" height="50" rx="10"/><text class="dg-t" x="620" y="152" text-anchor="middle">Single-DiT ×20</text><text class="dg-s" x="620" y="168" text-anchor="middle">单流 · 可训练</text>
+          <path class="dg-line-main" d="M510 125 H546"/>
+          <rect class="dg-box" x="730" y="100" width="150" height="50" rx="10"/><text class="dg-t" x="805" y="122" text-anchor="middle">预测速度场</text><text class="dg-s" x="805" y="138" text-anchor="middle">flow matching → VAE 解码</text>
+          <path class="dg-line-main" d="M690 155 H710 V125 H726"/>
+        </svg>
+        <div class="cap">示意（据 §3.1–3.3、§6.2 与图 12 / 图 20 绘制）。绿色虚线为编辑模型新增路径；dim0 取值按图 12 / 图 20 标注。DiT 内部连接、timestep 调制细节以原图为准。</div>
+      </div>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig20.jpg" alt="LongCat-Image-Edit 架构：源图和指令进入 Qwen2.5 VL，目标图与源图分别经 VAE 编码，源图 latent 的 M-RoPE 第一维为 2" loading="lazy"></div>
+        <figcaption><b>编辑模型架构。</b>源图同时进 Qwen2.5 VL（与指令一起）和第二路 VAE；参考 latent 的 MRoPE 第一维为 2，空间维与目标 latent 相同。<span class="from">来源：论文图 20</span></figcaption>
+      </figure>
+    </section>
+
+    <!-- 04 数据 -->
+    <section class="sec" id="data">
+      <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：12 亿样本、四段式管线、多粒度 caption</h2>
+        <p class="sec-intro">全篇最用功的部分。T2I 管线 = 过滤 → 元信息抽取 → 多粒度 caption → 分层；编辑数据另起一套（本节下半）。</p></div>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig6.jpg" alt="数据整理管线前两段：过滤（去重、分辨率/宽高比、水印、LAION 美学、AIGC 检测）与元信息抽取（美学分、类别、风格、命名实体、OCR）" loading="lazy"></div>
+        <figcaption><b>数据管线（裁图含前两段）。</b>① 过滤：去重、分辨率 / 宽高比、水印检测、LAION 美学、AIGC 检测；② 元信息：美学分、类别、风格、命名实体、OCR。原图后两段为多粒度 caption 与金字塔分层。<span class="from">来源：论文图 6</span></figcaption>
+      </figure>
+
+      <h3>① 过滤：每条规则都给了阈值</h3>
+      <div class="pipe wide">
+        <div class="pipe-head"><span>环节</span><span>做法</span><span>阈值 / 工具</span><span>目的</span></div>
+        <div class="pipe-row"><span class="lbl">去重</span><span class="chip">两级去重</span><span class="chip m">MD5 精确去重 → SigLIP 相似度近重复<span class="src">§2.1.1</span></span><span class="chip o">跨来源冗余</span></div>
+        <div class="pipe-row"><span class="lbl">分辨率 / 比例</span><span class="chip">硬过滤</span><span class="chip m">短边 &lt; 384px 丢弃；宽高比限 0.25–4.0<span class="src">§2.1.1</span></span><span class="chip o">低分辨率、极端比例常伴随低质</span></div>
+        <div class="pipe-row"><span class="lbl">水印</span><span class="chip">专用检测器</span><span class="chip m">去除可见水印样本<span class="src">§2.1.1</span></span><span class="chip o">避免生成水印伪影</span></div>
+        <div class="pipe-row"><span class="lbl">美学下限</span><span class="chip">LAION-Aesthetics</span><span class="chip m">分数 &lt; 4.5 丢弃（经验阈值）<span class="src">§2.1.1</span></span><span class="chip o">保底质量同时保多样性</span></div>
+        <div class="pipe-row"><span class="lbl">AIGC</span><span class="chip">内部 AIGC 检测器</span><span class="chip m">清除合成图<span class="src">§2.1.1</span></span><span class="chip o">少量 AIGC 即导致「塑料 / 油腻」质感</span></div>
+      </div>
+      <div class="legend-dots"><span class="m">具体规则</span><span class="o">论文给出的动机</span></div>
+
+      <h3>② 元信息：五个属性，各管一件事</h3>
+      <div class="grid2 wide">
+        <div class="card mod"><h4>用于配比与分层 <span class="tag">类别 · 风格 · 美学</span></h4>
+          <ul><li><b>类别</b>：16 类固定标签——portrait、sport、activity、plant、animal、food、object、landscape、cityscape、indoor、UI、cartoon、chart、rich-text、poster、synthetic text<span class="src">§2.1.2</span>。</li>
+          <li><b>风格</b>：让开源 VLM 输出开放式风格短语，不限定标签集<span class="src">§2.1.2</span>。</li>
+          <li><b>综合美学</b>：拆成正交两维、六种方法集成——Quality（饱和度 / 对比度 / RGB·HSV 色彩丰富度 + MUSIQ + Q-Align），Artistry（VLM 评构图、光影、色调 + Q-Align-Aesthetics）<span class="src">§2.1.2 · 图 7</span>。</li></ul></div>
+        <div class="card mod"><h4>用于 caption 准确性 <span class="tag">命名实体 · OCR</span></h4>
+          <ul><li><b>命名实体</b>：用 VLM 识别名人、虚构角色、生物物种、商业品牌、IP，结果喂给后续 recaption<span class="src">§2.1.2</span>。</li>
+          <li><b>OCR</b>：OCR 模型抽取图中文字，经「专门处理流程」并入 caption<span class="src">§2.1.2</span>；具体处理规则 <span class="nd">原文未披露</span>。</li></ul></div>
+      </div>
+
+      <h3>类别分布：原文图 5 给出了占比</h3>
+      <div class="card mod wide">
+        <p style="margin-top:0">以下为图 5 树图中的类别占比（原文未说明是全部 12 亿样本还是某一阶段子集）。人像一类就占 1/5；文字相关四类（synthetic-text / rich-text / poster / UI）合计约 6%<span class="src calc">推算</span>。</p>
+        <div class="catbars">
+          <div class="catbar"><span>Portrait</span><span class="t"><i style="width:80.5%"></i></span><span class="v">20.13%</span></div>
+          <div class="catbar"><span>Landscape</span><span class="t"><i style="width:53.6%"></i></span><span class="v">13.40%</span></div>
+          <div class="catbar"><span>Object</span><span class="t"><i style="width:37.6%"></i></span><span class="v">9.41%</span></div>
+          <div class="catbar"><span>Food</span><span class="t"><i style="width:36.8%"></i></span><span class="v">9.20%</span></div>
+          <div class="catbar"><span>Indoor</span><span class="t"><i style="width:33.6%"></i></span><span class="v">8.39%</span></div>
+          <div class="catbar"><span>Animal</span><span class="t"><i style="width:32.5%"></i></span><span class="v">8.12%</span></div>
+          <div class="catbar"><span>Plant</span><span class="t"><i style="width:31.8%"></i></span><span class="v">7.94%</span></div>
+          <div class="catbar"><span>Cityscape</span><span class="t"><i style="width:30.1%"></i></span><span class="v">7.52%</span></div>
+          <div class="catbar"><span>Activity</span><span class="t"><i style="width:20.1%"></i></span><span class="v">5.02%</span></div>
+          <div class="catbar"><span>Sport</span><span class="t"><i style="width:13.6%"></i></span><span class="v">3.41%</span></div>
+          <div class="catbar txt"><span>Synthetic-text</span><span class="t"><i style="width:7.0%"></i></span><span class="v">1.76%</span></div>
+          <div class="catbar txt"><span>Rich-text</span><span class="t"><i style="width:6.4%"></i></span><span class="v">1.61%</span></div>
+          <div class="catbar txt"><span>Poster</span><span class="t"><i style="width:6.0%"></i></span><span class="v">1.50%</span></div>
+          <div class="catbar art"><span>Cartoon</span><span class="t"><i style="width:4.7%"></i></span><span class="v">1.17%</span></div>
+          <div class="catbar txt"><span>UI</span><span class="t"><i style="width:4.5%"></i></span><span class="v">1.12%</span></div>
+          <div class="catbar txt"><span>Chart</span><span class="t"><i style="width:0.7%"></i></span><span class="v">0.18%</span></div>
+          <div class="catbar art"><span>Art</span><span class="t"><i style="width:0.5%"></i></span><span class="v">≈0.1%</span></div>
+        </div>
+        <div class="bar-legend"><span>自然图类</span><span class="s">文字 / 版式类</span><span style="opacity:.8">条长按 0–25% 刻度</span></div>
+        <p class="tbl-note">来源：论文图 5（Overview of training data）。Art 一项在图中字号过小，仅能读出约 0.1x%。</p>
+      </div>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig5.jpg" alt="训练数据类别分布树图：Portrait 20.13%、Landscape 13.40%、Object 9.41% 等" loading="lazy"></div>
+        <figcaption><b>训练数据总览。</b>树图按类别面积给出占比，四周为各类样例图。<span class="from">来源：论文图 5</span></figcaption>
+      </figure>
+
+      <h3>③ 多粒度 caption（MGC）：四级 + 固定采样概率</h3>
+      <p class="prose">作者点名 VLM caption 的三个毛病：缺世界知识（实体写错）、同一 VLM 格式单一、啰嗦导致信息密度低<span class="src">§2.1.3</span>。解法是分四级生成，每级用不同模型：</p>
+      <div class="mgc wide">
+        <div class="chip"><b>L1 Entity</b>主要视觉实体。Qwen2.5-VL，与 L2 同次生成<span class="src">§2.1.3</span></div>
+        <div class="chip"><b>L2 Phrase</b>显著属性的短语串（类 tag）<span class="src">§2.1.3</span></div>
+        <div class="chip m"><b>L3 Composition</b>图 + L1 描述 + 元信息 → InternVL2.5 生成整体场景描述<span class="src">§2.1.3</span></div>
+        <div class="chip o"><b>L4 Photographic</b>自研 Photographic Captioner：Qwen2.5-VL + LoRA，用精标合成图文对微调，提升信息密度、保留世界知识<span class="src">§2.1.3</span></div>
+      </div>
+      <div class="ratio wide">
+        <div class="rlab"><span><b>训练时四级 caption 的采样概率</b></span><span class="src">§2.1.3</span></div>
+        <div class="rbar">
+          <span class="a" style="width:5%;opacity:.45" title="Entity 0.05"></span>
+          <span class="a" style="width:10%;opacity:.6">0.1</span>
+          <span class="a" style="width:20%;opacity:.8">0.2</span>
+          <span class="b" style="width:65%">Photographic 0.65</span>
+        </div>
+        <div class="bar-legend"><span style="opacity:.6">Entity 0.05 · Phrase 0.1 · Composition 0.2</span><span class="s">Photographic 0.65</span></div>
+      </div>
+      <details class="more wide">
+        <summary>Photographic Captioner 的写法长什么样<span class="hint">图 9 / 图 10 要点</span></summary>
+        <div class="body">
+          <ul>
+            <li>图 9 对比：Photographic 级 caption 把实体直接写成专名（如球员姓名、球队、赞助商、地标），用不同色块标注属性词、程度词、专名；基线 QwenVL 输出更长、更多泛化描述<span class="src">图 9</span>。</li>
+            <li>图 10 给出同一张图四级 caption 的样例，中英文都有：Entity 只是一句名词短语，Phrase 是逗号分隔的属性串，Composition 一两句，Photographic 最长、含文字内容（如海报上的中英文原文）<span class="src">图 10</span>。</li>
+            <li>L4 微调数据的规模、标注规范 <span class="nd">原文未披露</span>；caption 语言配比 <span class="nd">原文未披露</span>。</li>
+          </ul>
+        </div>
+      </details>
+
+      <h3>④ 分层：按阶段控制风格与质量</h3>
+      <div class="grid2 wide">
+        <div class="card mod"><h4>预训练 <span class="tag nd-tag">艺术数据压到 ≈0.5%</span></h4><p>早期大量插画 / 卡通 / 动漫会让模型偏向简化视觉模式、写实子空间「塌陷」，所以艺术数据限制在预训练语料约 0.5%<span class="src">§2.1.4</span>。</p></div>
+        <div class="card mod"><h4>Mid-training <span class="tag">0.5% → 2.5%</span></h4><p>从预训练语料挑 &gt;1024px、锐利、构图好、美学分高的子集；风格化数据按「校准过的日程」从 0.5% 逐步升到 2.5%<span class="src">§2.1.4</span>。规模为「数百万」<span class="src">§4.2</span>。</p></div>
+        <div class="card mod"><h4>SFT <span class="tag">真实 + 人工筛合成</span></h4><p>专家从 mid-training 集手挑真实图（构图、光线、色调、情绪，类别均衡）；合成图人工剔除结构畸变、不真实、审美缺陷<span class="src">§2.1.4</span>。总量「数十万」<span class="src">§4.3.1</span>。</p></div>
+        <div class="card mod"><h4>长尾合成 <span class="tag">LoRA 造数据</span></h4><p>在少量样本上训多个领域 LoRA，生成稀有概念 / 罕见构图 / 独特风格图，以「受控低比例」并入 mid-training<span class="src">§2.2</span>。具体比例 <span class="nd">原文未披露</span>。</p></div>
+      </div>
+
+      <h3>合成文字数据：为中文长尾字服务</h3>
+      <div class="card mod wide">
+        <ul>
+          <li>动机：中文约 3,000 常用字 + 5,000 余生僻字，后者在自然数据中稀疏<span class="src">§4.1</span>。</li>
+          <li>SynthDoG 渲染 <b>&gt;1000 万</b>样本，底纹简单（纸、玻璃、黑板），字体多样<span class="src">§4.1</span>；语料取自古典诗词、生僻字表，caption 写明内容、颜色、字体、排版方向<span class="src">§2.2 · 图 11</span>。</li>
+          <li><b>按字动态采样</b>：实时监控每个字的准确率，错误率高的字提高采样概率，学会的字逐步换成真实图；<b>预训练最后阶段完全撤掉合成文字</b>，防止过拟合简单合成域<span class="src">§4.1</span>。</li>
+          <li>SFT 阶段改用真实文字图，RL 阶段加 OCR 和美学奖励<span class="src">§1</span>。</li>
+        </ul>
+      </div>
+
+      <h3>编辑数据（LongCat-Image-Edit）</h3>
+      <div class="pipe wide">
+        <div class="pipe-head"><span>来源</span><span>怎么来</span><span>怎么筛 / 标</span><span>补什么</span></div>
+        <div class="pipe-row"><span class="lbl">开源数据集</span><span class="chip">OmniEdit、OmniGen2、NHREdit<span class="src">§6.1.1</span></span><span class="chip m">清洗 + 重写原指令</span><span class="chip o">低成本铺量</span></div>
+        <div class="pipe-row"><span class="lbl">专家模型合成</span><span class="chip">每任务一条管线：MLLM 写指令，专家模型出目标图<span class="src">§6.1.2</span></span><span class="chip m">关键样本人工复核；滤镜 / 光照用传统图像算法造<span class="src">§6.1.2</span></span><span class="chip o">物体操作、风格迁移、换背景、参考生成</span></div>
+        <div class="pipe-row"><span class="lbl">视频帧</span><span class="chip">多模态模型定位目标 + 光流量化帧间变化<span class="src">§6.1.3</span></span><span class="chip m">取「变化大但连贯」的关键帧对，自动写指令，部分人工核验</span><span class="chip o">姿态、视角等合成难做的结构变化</span></div>
+        <div class="pipe-row"><span class="lbl">图文交错语料</span><span class="chip">从网页图文序列挖隐式编辑信号<span class="src">§6.1.4</span></span><span class="chip m">严格过滤 + 多模态辅助重写指令</span><span class="chip o">长尾指令；作者称目前规模有限</span></div>
+        <div class="pipe-row"><span class="lbl">指令重写</span><span class="chip">GPT-4o 一对多改写<span class="src">§6.1.5</span></span><span class="chip m">口语改写 + 复合指令；训练时每样本 3–5 条中英候选随机抽一条<span class="src">§6.3.1</span></span><span class="chip o">贴近真实用户与推理类指令</span></div>
+      </div>
+      <details class="more wide">
+        <summary>已披露规模一览（编辑 + T2I）<span class="hint">无比例的项不画条形</span></summary>
+        <div class="body">
+          <div class="tbl-wrap"><table class="idx-table">
+            <thead><tr><th>数据</th><th>规模</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>T2I 总语料</td><td>1.2 billion 样本</td><td><span class="src">§2</span></td></tr>
+              <tr><td>合成文字（SynthDoG）</td><td>&gt;10 million</td><td><span class="src">§4.1</span></td></tr>
+              <tr><td>T2I mid-training 集</td><td>millions（数百万）</td><td><span class="src">§4.2</span></td></tr>
+              <tr><td>T2I SFT 集</td><td>hundreds of thousands（数十万）</td><td><span class="src">§4.3.1</span></td></tr>
+              <tr><td>T2I DPO 偏好集</td><td>每 prompt 6 张候选，打 1–5 分；总量 <span class="nd">原文未披露</span></td><td><span class="src">§4.3.2</span></td></tr>
+              <tr><td>编辑预训练集（各来源）</td><td>各来源规模 <span class="nd">原文未披露</span>；任务占比见原文图 19</td><td><span class="src">§6.1 · 图 19</span></td></tr>
+              <tr><td>编辑 SFT 集</td><td>hundreds of thousands（真实照片 + 专业人工精修 + 合成）</td><td><span class="src">§6.3.2</span></td></tr>
+              <tr><td>编辑 DPO 偏好集</td><td>每 prompt 5 张候选，标 winner / losers；总量 <span class="nd">原文未披露</span></td><td><span class="src">§6.3.3</span></td></tr>
+              <tr><td>编辑预训练：编辑 vs T2I</td><td>「balanced batch ratio」，具体数值 <span class="nd">原文未披露</span></td><td><span class="src">§6.3.1</span></td></tr>
+            </tbody>
+          </table></div>
+          <p class="tbl-note">图 19 为编辑预训练数据的任务占比饼图，未随本页裁出；文本层提取的百分比与标签错位，本页不转录。</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- 05 训练 -->
+    <section class="sec" id="train">
+      <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：三段预训练 → MT → SFT → DPO → GRPO/MPO</h2></div>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig13.jpg" alt="多阶段训练流程：T2I 为渐进预训练、mid-training、Dev 模型、SFT、GRPO 与 DPO、最终模型；编辑从 Dev 模型出发做预训练、SFT、DPO" loading="lazy"></div>
+        <figcaption><b>多阶段训练流程。</b>上：T2I；下：编辑从 T2I 的 Dev（mid-training）权重起步。注意图中 GRPO 与 DPO 画成并列，而正文说 GRPO 在 DPO 之后（见「局限与存疑」）。<span class="from">来源：论文图 13</span></figcaption>
+      </figure>
+
+      <h3>T2I 预训练与 mid-training</h3>
+      <div class="flow wide">
+        <div class="card stage"><span class="sid">PT-1</span><h4>256px</h4><dl><dt>LR</dt><dd>1e-4 const</dd><dt>步数</dt><dd>900K</dd><dt>batch</dt><dd>4608</dd></dl><div class="tokbar"><i style="width:100%"></i></div></div>
+        <div class="card stage"><span class="sid">PT-2</span><h4>512px</h4><dl><dt>LR</dt><dd>5e-5 const</dd><dt>步数</dt><dd>300K</dd><dt>batch</dt><dd>4608</dd></dl><div class="tokbar"><i style="width:33.3%"></i></div></div>
+        <div class="card stage"><span class="sid">PT-3</span><h4>512–1024px 连续</h4><dl><dt>LR</dt><dd>2e-5 const</dd><dt>步数</dt><dd>200K</dd><dt>batch</dt><dd>3072</dd></dl><div class="tokbar"><i style="width:22.2%"></i></div></div>
+        <div class="card stage"><span class="sid">MT</span><h4>高质 + 风格注入</h4><dl><dt>LR</dt><dd>1e-5 const</dd><dt>步数</dt><dd>70K</dd><dt>batch</dt><dd>3072</dd></dl><div class="tokbar"><i style="width:7.8%"></i></div></div>
+      </div>
+      <div class="bar-legend"><span>条长 = 训练步数，相对 PT-1 的 900K</span></div>
+      <p class="footnote">表 1 共用：AdamW（β1=0.9, β2=0.95）、weight decay 0.01、梯度裁剪 1.0<span class="src">表 1</span>。按步数 × batch 粗算，三段预训练约 6.1B 样本次，MT 约 2.15 亿样本次<span class="src calc">推算</span>。全程 bucket sampling 适配宽高比<span class="src">§4.1</span>。</p>
+
+      <div class="grid2 wide">
+        <div class="card mod"><h4>预训练里的几个讲究</h4><ul>
+          <li>保留 512px 中间段，避免 256 直接跳到最终段的不稳定<span class="src">§4.1</span>。</li>
+          <li>实时监控 val loss、图文对齐、美学分、OCR 准确率；作者观察到这些指标在 MT 和后训练阶段区分力明显下降<span class="src">§4.1</span>。</li>
+          <li>合成文字按字错误率动态采样，末段撤出<span class="src">§4.1</span>。</li></ul></div>
+        <div class="card mod"><h4>Mid-training = 开源的 Dev 版</h4><ul>
+          <li>美学模型 + 质量估计 + 领域分类器 + 人工复核，数据比预训练严得多<span class="src">§4.2</span>。</li>
+          <li>该阶段权重作为 Developer Version 开源，理由是保留可塑性、避免 RL 带来的模式坍缩<span class="src">§4.2</span>。</li></ul></div>
+      </div>
+
+      <h3>后训练</h3>
+      <div class="post-flow wide">
+        <div class="card stage"><span class="sid">SFT</span><h4>LR 1e-5 cosine · 20K 步 · batch 128 · warm-up 1000<span class="src">表 1</span></h4><ul>
+          <li>数十万条真实 + 合成混合，专家校验<span class="src">§4.3.1</span></li>
+          <li><b>权重平均</b>：分别在光照、人像、艺术风格等子集上微调多个候选，再参数平均<span class="src">§4.3.1</span></li>
+          <li>timestep 采样从 Logit-Normal 换成 Uniform，加大高频细节步的权重<span class="src">§4.3.1</span></li></ul></div>
+        <div class="card stage"><span class="sid">DPO</span><h4>LR 1e-5 cosine · 4K 步 · batch 64 · warm-up 1000<span class="src">表 1</span></h4><ul>
+          <li>类别均衡 PromptSet（公开数据中的真实用户 query，聚类清洗）<span class="src">§4.3.2</span></li>
+          <li>每 prompt 6 个种子出图，人工 1–5 分；丢掉 3 分，4–5 为正、1–2 为负<span class="src">§4.3.2</span></li>
+          <li>探索多轮 DPO、按梯度范数跳过脏数据、KL 约束；结论仅为「显著降低 bad case 率」<span class="src">§4.3.2</span></li></ul></div>
+        <div class="card stage"><span class="sid">GRPO / MPO</span><h4>小规模 on-policy 精修</h4><ul>
+          <li>奖励模型：畸变检测、AIGC 检测、人类偏好、OCR 准确率<span class="src">§4.3.2</span></li>
+          <li>GRPO 按 DanceGRPO，ODE 改写成 SDE 采样<span class="src">§4.3.2</span></li>
+          <li><b>MPO</b>（自提）：每 prompt 单条轨迹、单次更新；高斯 value tracker（Kalman 式更新 + KL 自适应遗忘）、全局优势归一化、按不确定度的 prompt 课程<span class="src">§4.3.2</span></li>
+          <li>§4.3.2 给的超参：AdamW 恒定 LR 5e-6、batch 64、12 步 SDE 采样，g_t 0.1→0 线性退火；MPO λ=0.99、η=1.0、α=1.0、γ=0.5<span class="src">§4.3.2</span></li>
+          <li>表 1 的 GRPO 列：LR 1e-5 cosine、300 步、batch 32<span class="src">表 1</span>（与上一条不一致）</li></ul></div>
+      </div>
+
+      <h3>编辑模型训练</h3>
+      <div class="grid2 wide">
+        <div class="card mod"><h4>Pre-training</h4><ul>
+          <li>初始化自 T2I mid-training ckpt<span class="src">§6.3.1</span>。</li>
+          <li>512×512 用大规模含噪数据快速收敛 → 1024×1024 用高质数据<span class="src">§6.3.1</span>。</li>
+          <li>与 T2I mid-training 数据按平衡 batch 比例联合训练，SFT 沿用<span class="src">§6.3.1</span>。</li>
+          <li>超参（LR、步数、batch）<span class="nd">原文未披露</span>。</li></ul></div>
+        <div class="card mod"><h4>SFT → DPO</h4><ul>
+          <li>SFT：数十万条，人工重点卡源图–结果的结构对齐；与 T2I SFT 数据联合训练<span class="src">§6.3.2</span>。</li>
+          <li>DPO：MLLM 合成 + 真实用户 query，聚类过滤；每 prompt 5 个种子，专业标注挑 winner 和 losers；梯度离群样本跳过 + KL 约束<span class="src">§6.3.3</span>。</li>
+          <li>超参 <span class="nd">原文未披露</span>。</li></ul></div>
+      </div>
+    </section>
+
+    <!-- 06 评测 -->
+    <section class="sec" id="eval">
+      <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：文字渲染与编辑最强，通用对齐与商业模型接近</h2>
+        <p class="sec-intro">对比对象主要是 Seedream 4.0（商业）、Qwen-Image / Qwen-Image-Edit（开源 20B）、HunyuanImage-3.0（开源 MoE），编辑再加 Nano Banana、GPT Image 1、FLUX.1 Kontext。</p></div>
+
+      <div class="chart-grid wide">
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 360 170" role="img" aria-label="ChineseWord Overall 柱状图">
+            <text class="ch-t" x="0" y="14">ChineseWord Overall</text><text class="ch-src" x="360" y="14" text-anchor="end">表 7 · 0–100</text>
+            <g transform="translate(0,30)">
+              <text class="ch-lbl" x="0" y="13">LongCat-Image</text><rect class="bar-bg" x="110" y="2" width="210" height="16" rx="3"/><rect class="bar-q" x="110" y="2" width="190.5" height="16" rx="3"/><text class="ch-val" x="324" y="14">90.7</text>
+              <text class="ch-lbl" x="0" y="43">Seedream 4.0</text><rect class="bar-bg" x="110" y="32" width="210" height="16" rx="3"/><rect class="bar-o" x="110" y="32" width="122.9" height="16" rx="3"/><text class="ch-val" x="324" y="44">58.5</text>
+              <text class="ch-lbl" x="0" y="73">Qwen-Image</text><rect class="bar-bg" x="110" y="62" width="210" height="16" rx="3"/><rect class="bar-o" x="110" y="62" width="118.9" height="16" rx="3"/><text class="ch-val" x="324" y="74">56.6</text>
+              <text class="ch-lbl" x="0" y="103">HunyuanImage-3.0</text><rect class="bar-bg" x="110" y="92" width="210" height="16" rx="3"/><rect class="bar-o" x="110" y="92" width="103.5" height="16" rx="3"/><text class="ch-val" x="324" y="104">49.3</text>
+              <line class="axis" x1="110" y1="116" x2="320" y2="116"/><text class="ch-ax" x="110" y="128">0</text><text class="ch-ax" x="320" y="128" text-anchor="end">100</text>
+            </g>
+          </svg>
+        </div>
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 360 200" role="img" aria-label="ImgEdit Overall 柱状图">
+            <text class="ch-t" x="0" y="14">ImgEdit-Bench Overall</text><text class="ch-src" x="360" y="14" text-anchor="end">表 11 · 0–5</text>
+            <g transform="translate(0,30)">
+              <text class="ch-lbl" x="0" y="13">LongCat-Image-Edit</text><rect class="bar-bg" x="120" y="2" width="200" height="16" rx="3"/><rect class="bar-q" x="120" y="2" width="180" height="16" rx="3"/><text class="ch-val" x="324" y="14">4.50</text>
+              <text class="ch-lbl" x="0" y="43">Nano Banana</text><rect class="bar-bg" x="120" y="32" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="32" width="174" height="16" rx="3"/><text class="ch-val" x="324" y="44">4.35</text>
+              <text class="ch-lbl" x="0" y="73">Qwen-Edit[2509]</text><rect class="bar-bg" x="120" y="62" width="200" height="16" rx="3"/><rect class="bar-o" x="120" y="62" width="174" height="16" rx="3"/><text class="ch-val" x="324" y="74">4.35</text>
+              <text class="ch-lbl" x="0" y="103">GPT Image 1[High]</text><rect class="bar-bg" x="120" y="92" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="92" width="168" height="16" rx="3"/><text class="ch-val" x="324" y="104">4.20</text>
+              <text class="ch-lbl" x="0" y="133">Seedream 4.0</text><rect class="bar-bg" x="120" y="122" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="122" width="167.2" height="16" rx="3"/><text class="ch-val" x="324" y="134">4.18</text>
+              <line class="axis" x1="120" y1="146" x2="320" y2="146"/><text class="ch-ax" x="120" y="158">0</text><text class="ch-ax" x="320" y="158" text-anchor="end">5</text>
+            </g>
+          </svg>
+        </div>
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 360 200" role="img" aria-label="GEdit-Bench-EN G_O 柱状图">
+            <text class="ch-t" x="0" y="14">GEdit-Bench-EN G_O</text><text class="ch-src" x="360" y="14" text-anchor="end">表 10 · 0–10</text>
+            <g transform="translate(0,30)">
+              <text class="ch-lbl" x="0" y="13">Seedream 4.0</text><rect class="bar-bg" x="120" y="2" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="2" width="153.6" height="16" rx="3"/><text class="ch-val" x="324" y="14">7.68</text>
+              <text class="ch-lbl" x="0" y="43">LongCat-Image-Edit</text><rect class="bar-bg" x="120" y="32" width="200" height="16" rx="3"/><rect class="bar-q" x="120" y="32" width="152.8" height="16" rx="3"/><text class="ch-val" x="324" y="44">7.64</text>
+              <text class="ch-lbl" x="0" y="73">Qwen-Image-Edit</text><rect class="bar-bg" x="120" y="62" width="200" height="16" rx="3"/><rect class="bar-o" x="120" y="62" width="151.2" height="16" rx="3"/><text class="ch-val" x="324" y="74">7.56</text>
+              <text class="ch-lbl" x="0" y="103">Nano Banana</text><rect class="bar-bg" x="120" y="92" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="92" width="150.8" height="16" rx="3"/><text class="ch-val" x="324" y="104">7.54</text>
+              <text class="ch-lbl" x="0" y="133">GPT Image 1[High]</text><rect class="bar-bg" x="120" y="122" width="200" height="16" rx="3"/><rect class="bar-o2" x="120" y="122" width="150.6" height="16" rx="3"/><text class="ch-val" x="324" y="134">7.53</text>
+              <line class="axis" x1="120" y1="146" x2="320" y2="146"/><text class="ch-ax" x="120" y="158">0</text><text class="ch-ax" x="320" y="158" text-anchor="end">10</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="chart-legend wide"><span class="l1">LongCat</span><span class="l3">开源对手</span><span class="l4">闭源 / 商业</span><span>横轴均从 0 起</span></div>
+
+      <h3>文生图：精选对比</h3>
+      <div class="tbl-wrap wide"><table>
+        <thead><tr><th>基准</th><th class="q">LongCat-Image</th><th>Seedream 4.0</th><th>Qwen-Image</th><th>HunyuanImage-3.0</th><th>来源</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="6">通用对齐</td></tr>
+          <tr><td>GenEval Overall</td><td class="q best">0.87</td><td>0.84</td><td class="best">0.87</td><td>0.72</td><td><span class="src">表 2</span></td></tr>
+          <tr><td>DPG-Bench Overall</td><td class="q">86.80</td><td>88.25</td><td class="best">88.32</td><td>86.10</td><td><span class="src">表 3</span></td></tr>
+          <tr><td>WISE Overall</td><td class="q">0.65</td><td class="best">0.78</td><td>0.62</td><td>0.57</td><td><span class="src">表 4</span></td></tr>
+          <tr class="grp"><td colspan="6">文字渲染</td></tr>
+          <tr><td>GlyphDraw2 Avg</td><td class="q">0.95</td><td class="best">0.97</td><td>0.93</td><td>0.78</td><td><span class="src">表 5</span></td></tr>
+          <tr><td>GlyphDraw2 Complex-zh</td><td class="q best">0.92</td><td>0.91</td><td>0.87</td><td>0.85</td><td><span class="src">表 5</span></td></tr>
+          <tr><td>CVTG-2K Word Acc（avg）</td><td class="q">0.8658</td><td class="best">0.8917</td><td>0.8288</td><td>0.7650</td><td><span class="src">表 6</span></td></tr>
+          <tr><td>CVTG-2K NED</td><td class="q">0.9361</td><td class="best">0.9507</td><td>0.9297</td><td>0.8765</td><td><span class="src">表 6</span></td></tr>
+          <tr><td>ChineseWord L1 / L2 / L3</td><td class="q best">98.7 / 90.8 / 70.3</td><td>94.8 / 41.2 / 2.3</td><td>92.5 / 37.1 / 6.1</td><td>83.5 / 31.3 / 4.1</td><td><span class="src">表 7</span></td></tr>
+          <tr><td>Poster&amp;Scene Avg（内部 500 prompt）</td><td class="q">91.5</td><td class="best">91.6</td><td>89.2</td><td>87.1</td><td><span class="src">表 8</span></td></tr>
+        </tbody>
+      </table></div>
+      <div class="keybox"><span class="k-best">该行最高</span><span class="k-q">LongCat 列</span></div>
+      <p class="tbl-note">ChineseWord：按《通用规范汉字表》构建 8,105 个 prompt，每字套固定模板，用 PPOCRv5 判读（作者称 MLLM 认不出生僻字）<span class="src">§5.1.2</span>。注意 CVTG-2K 正文称 SOTA，但表 6 中 Seedream 4.0 的 Word Acc 与 NED 都更高；论文的 SOTA 表述应理解为相对开源模型。</p>
+
+      <details class="more wide">
+        <summary>完整 GenEval / DPG / WISE 子项<span class="hint">LongCat 行与主要对手</span></summary>
+        <div class="body"><div class="tbl-wrap"><table>
+          <thead><tr><th>模型</th><th>GenEval 单物体</th><th>双物体</th><th>计数</th><th>颜色</th><th>位置</th><th>属性绑定</th><th>DPG Global</th><th>Entity</th><th>Relation</th><th>WISE 文化</th><th>化学</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td>LongCat-Image</td><td>0.99</td><td>0.98</td><td>0.86</td><td>0.86</td><td>0.75</td><td>0.73</td><td>89.10</td><td>92.54</td><td>93.28</td><td>0.66</td><td>0.49</td></tr>
+            <tr><td>Qwen-Image</td><td>0.99</td><td>0.92</td><td>0.89</td><td>0.88</td><td>0.76</td><td>0.77</td><td>91.32</td><td>91.56</td><td>94.31</td><td>0.62</td><td>0.40</td></tr>
+            <tr><td>Seedream 4.0</td><td>0.99</td><td>0.92</td><td>0.72</td><td>0.91</td><td>0.76</td><td>0.74</td><td>94.10</td><td>92.28</td><td>93.67</td><td>0.78</td><td>0.67</td></tr>
+            <tr><td>HunyuanImage-3.0</td><td>1.00</td><td>0.92</td><td>0.48</td><td>0.82</td><td>0.42</td><td>0.63</td><td>92.12</td><td>92.53</td><td>92.13</td><td>0.58</td><td>0.31</td></tr>
+            <tr><td>FLUX.1-dev</td><td>0.98</td><td>0.81</td><td>0.74</td><td>0.79</td><td>0.22</td><td>0.45</td><td>74.35</td><td>90.00</td><td>90.87</td><td>0.48</td><td>0.35</td></tr>
+          </tbody>
+        </table></div><p class="tbl-note">来源：表 2、表 3、表 4。WISE 中 GPT4o 为 0.80（统一模型组）<span class="src">表 4</span>。</p></div>
+      </details>
+
+      <h3>图像编辑：CEdit / GEdit</h3>
+      <div class="tbl-wrap wide"><table>
+        <thead><tr><th>模型</th><th>CEdit-EN G_SC</th><th>G_PQ</th><th>G_O</th><th>CEdit-CN G_O</th><th>GEdit-EN G_SC</th><th>G_PQ</th><th>G_O</th><th>GEdit-CN G_O</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="9">闭源</td></tr>
+          <tr><td>GPT Image 1 [High]</td><td class="best">8.64</td><td class="best">8.26</td><td class="best">8.17</td><td class="best">8.21</td><td>7.85</td><td>7.62</td><td>7.53</td><td>7.30</td></tr>
+          <tr><td>Nano Banana</td><td>7.51</td><td>8.17</td><td>7.20</td><td>7.36</td><td>7.86</td><td class="best">8.33</td><td>7.54</td><td>7.25</td></tr>
+          <tr><td>Seedream 4.0</td><td>8.12</td><td>7.95</td><td>7.58</td><td>7.57</td><td class="best">8.24</td><td>8.08</td><td class="best">7.68</td><td class="best">7.71</td></tr>
+          <tr><td>FLUX.1 Kontext [Pro]</td><td>6.79</td><td>7.80</td><td>6.53</td><td>1.43</td><td>7.02</td><td>7.60</td><td>6.56</td><td>1.23</td></tr>
+          <tr class="grp"><td colspan="9">开源</td></tr>
+          <tr><td>Qwen-Image-Edit</td><td>8.07</td><td>7.84</td><td>7.52</td><td>7.46</td><td>8.00</td><td>7.86</td><td>7.56</td><td>7.52</td></tr>
+          <tr><td>Qwen-Image-Edit [2509]</td><td>8.04</td><td>7.79</td><td>7.48</td><td>7.37</td><td>8.15</td><td>7.86</td><td>7.54</td><td>7.49</td></tr>
+          <tr><td>Step1X-Edit</td><td>6.68</td><td>7.36</td><td>6.25</td><td>6.35</td><td>7.66</td><td>7.35</td><td>6.97</td><td>6.86</td></tr>
+          <tr class="hl"><td>LongCat-Image-Edit</td><td>8.27</td><td>7.88</td><td>7.67</td><td>7.65</td><td>8.18</td><td>8.00</td><td>7.64</td><td>7.60</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">来源：表 9（CEdit）、表 10（GEdit）。G_SC = 语义一致 / 指令遵循，G_PQ = 感知质量，G_O = 综合；CEdit 用 GPT-4o 自动打分<span class="src">§6.5.1</span>。FLUX.1 Kontext 的 CN 分只有 1.x，是中文指令基本不被执行导致，不代表画质。方括号 [Pro] / [2509] / [High] 为原文的版本记号。</p>
+
+      <details class="more wide">
+        <summary>ImgEdit-Bench 子项<span class="hint">表 11 节选</span></summary>
+        <div class="body"><div class="tbl-wrap"><table>
+          <thead><tr><th>模型</th><th>Add</th><th>Adjust</th><th>Extract</th><th>Replace</th><th>Remove</th><th>Background</th><th>Style</th><th>Hybrid</th><th>Action</th><th>Overall</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td>LongCat-Image-Edit</td><td>4.51</td><td class="best">4.57</td><td>3.93</td><td class="best">4.76</td><td class="best">4.60</td><td>4.49</td><td>4.85</td><td>4.01</td><td>4.74</td><td class="best">4.50</td></tr>
+            <tr><td>Qwen-Image-Edit [2509]</td><td>4.32</td><td>4.36</td><td class="best">4.04</td><td>4.64</td><td>4.52</td><td>4.37</td><td>4.84</td><td>3.39</td><td>4.71</td><td>4.35</td></tr>
+            <tr><td>Nano Banana</td><td>4.50</td><td>4.47</td><td>3.75</td><td>4.64</td><td>4.51</td><td>4.44</td><td>4.14</td><td class="best">4.03</td><td>4.65</td><td>4.35</td></tr>
+            <tr><td>GPT Image 1 [High]</td><td class="best">4.61</td><td>4.33</td><td>2.90</td><td>4.35</td><td>3.66</td><td class="best">4.57</td><td class="best">4.93</td><td>3.96</td><td class="best">4.89</td><td>4.20</td></tr>
+            <tr><td>Seedream 4.0</td><td>4.52</td><td>4.41</td><td>2.93</td><td>4.56</td><td>4.44</td><td>4.30</td><td>4.76</td><td>3.33</td><td>4.36</td><td>4.18</td></tr>
+            <tr><td>FLUX.1 Kontext [Pro]</td><td>4.25</td><td>4.15</td><td>2.35</td><td>4.56</td><td>3.57</td><td>4.26</td><td>4.57</td><td>3.68</td><td>4.63</td><td>4.00</td></tr>
+          </tbody>
+        </table></div></div>
+      </details>
+
+      <h3>人工评测</h3>
+      <div class="grid2 wide">
+        <div class="card mod"><h4>T2I：MOS 四维 <span class="tag nd-tag">只给图，无数字</span></h4>
+          <p>400 prompt 黑盒集，评 Alignment / Plausibility / Realism / Aesthetics<span class="src">§5.2</span>。文字结论：全面胜 HunyuanImage 3.0；与 Qwen-Image 在对齐与合理性上持平；Realism 胜 Qwen-Image 且略胜 Seedream 4.0；美学略逊 Qwen-Image<span class="src">§5.2 · 图 14</span>。</p></div>
+        <div class="card mod"><h4>编辑：SBS 胜率 <span class="tag">胜率 =（胜 + 0.5×平）/ 总</span></h4>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>LongCat-Image-Edit vs</th><th>综合质量</th><th>一致性</th></tr></thead>
+            <tbody>
+              <tr><td>Nano Banana</td><td class="down">39.2%</td><td class="down">46.1%</td></tr>
+              <tr><td>Seedream 4.0</td><td class="down">43.1%</td><td class="down">43.7%</td></tr>
+              <tr><td>Qwen-Image-Edit [2509]</td><td class="up">58.7%</td><td class="up">54.2%</td></tr>
+              <tr><td>FLUX.1 Kontext [Pro]</td><td class="up">60.5%</td><td class="up">63.0%</td></tr>
+            </tbody>
+          </table></div>
+          <p class="tbl-note">约 400 样本，覆盖全局 / 局部 / 文字修改 / 参考引导编辑<span class="src">§6.5.2</span>。数值读自图 22 的堆叠条；对手与行的对应关系按图例顺序与正文结论推定。</p></div>
+      </div>
+    </section>
+
+    <!-- 07 新在哪 -->
+    <section class="sec" id="novel">
+      <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+        <p class="sec-intro">骨架、VAE、DPO、GRPO 都是现成的；下面是可以核对、且不是常规工程的几处。</p></div>
+      <div class="novel wide">
+        <div class="card nv"><h4>按字错误率驱动的合成文字课程</h4><p>SynthDoG 数据的采样权重随每个汉字的实时准确率调整，学会即退场，预训练末段整体撤出<span class="src">§4.1</span>。配合引号内字符级 tokenizer<span class="src">§3.2</span>，ChineseWord L3 从对手的个位数拉到 70.3<span class="src">表 7</span>。</p><p class="why">缺口：没有「不做动态采样」或「不做字符级编码」的消融。</p></div>
+        <div class="card nv"><h4>AIGC 检测器既做数据过滤也做 RL 奖励</h4><p>预训练 / MT 用它排除合成图，RL 阶段把同类检测信号作为奖励之一，推动真实质感<span class="src">§1 · §4.3.2</span>。</p><p class="why">证据只有人评 Realism 的定性描述<span class="src">§5.2</span>，没有单独的奖励消融。</p></div>
+        <div class="card nv"><h4>四级 caption + 固定采样概率</h4><p>Entity / Phrase / Composition / Photographic 分别由 Qwen2.5-VL、InternVL2.5 和 LoRA 微调的 Photographic Captioner 生成，训练按 0.05 / 0.1 / 0.2 / 0.65 采样<span class="src">§2.1.3</span>。</p><p class="why">多粒度 caption 本身不新，可核对的是这套具体分工和比例。</p></div>
+        <div class="card nv"><h4>MPO：去掉 group 的单轨迹 on-policy RL</h4><p>每 prompt 一条 SDE 轨迹、一次更新，用 per-prompt 高斯 value tracker 作基线、按不确定度做 prompt 课程<span class="src">§4.3.2</span>。</p><p class="why">文中称「效率和稳定性优于 GRPO」，但没给对比曲线或数值；最终模型用的是 GRPO 还是 MPO 也没写清。</p></div>
+        <div class="card nv"><h4>编辑从 mid-training 权重起步，并公开 Dev 版</h4><p>理由是 SFT/RL 后的权重处在收窄的状态空间，不利于学编辑<span class="src">§1 · §6.3.1</span>；对应地把 MT 权重作为 Developer Version 开源<span class="src">§4.2</span>。另公开自建的 CEdit-Bench（1,464 对、15 类）<span class="src">§6.5.1</span>。</p></div>
+      </div>
+    </section>
+
+    <!-- 08 启示 -->
+    <section class="sec" id="impl">
+      <div class="impl-wrap wide">
+        <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+        <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+        <p class="sec-intro">每条先写论文怎么做（带出处），下面灰底是<b>迁移建议，不是论文内容</b>。</p>
+
+        <div class="impl-group">数据构建</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">D1</span>一致性数据门槛宁严勿松</h4>
+            <p class="paper">编辑 SFT 人工专卡源图–结果结构对齐；作者称标准稍放松，一致性就「断崖下跌」<span class="src">§6.3.2</span>。预训练阶段也按任务定制策略剔除一致性差的样本<span class="src">§1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>把「非编辑区保持」拆成独立判定项（掩膜外像素差 / 身份 / 版式），SFT 集按最严档入库；宽松档只进预训练，并记录档位以便回溯。</p></div>
+          <div class="impl"><h4><span class="ix">D2</span>结构变化类编辑去视频里挖</h4>
+            <p class="paper">合成方法做不好姿态、视角变化，改用视频：多模态模型定位目标 + 光流量化变化，取「显著但连贯」的关键帧对，自动写指令，抽样人工核验<span class="src">§6.1.3</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>用光流幅度设上下两道阈值（太小=没变化、太大=镜头切换），再用分割掩膜面积限定「只有主体在动」，产出动作 / 视角编辑对。</p></div>
+          <div class="impl"><h4><span class="ix">D3</span>合成编辑数据会伤 T2I 真实感</h4>
+            <p class="paper">尝试 T2I 与编辑合一，发现编辑预训练大量依赖合成数据会明显降低 T2I 真实感，最终拆成两个模型；作者认为是数据问题而非架构问题<span class="src">§6.4</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>给每条编辑样本打「目标图是否为模型生成」标记，统计合成占比；做统一模型时把目标图真实性当一等指标监控，而不只看编辑分数。</p></div>
+          <div class="impl"><h4><span class="ix">D4</span>编辑与 T2I 联训防遗忘</h4>
+            <p class="paper">编辑预训练与 SFT 都按平衡 batch 比例混入 T2I 数据，称同时提升语义理解与画质<span class="src">§6.3.1 · §6.3.2</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>把 T2I 混入比例当超参扫 2–3 档，并固定一组 T2I 回归集，每个 ckpt 同时出编辑分和 T2I 分。</p></div>
+        </div>
+
+        <div class="impl-group">Caption / 指令</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">C1</span>多粒度 caption 按概率混采</h4>
+            <p class="paper">四级 caption，训练按 0.05 / 0.1 / 0.2 / 0.65 采样，偏向最详细的 Photographic 级<span class="src">§2.1.3</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令也做「短命令 / 标准句 / 带保持约束的长描述」三档，训练混采；评测时三档分开报分，看模型是否只会吃长指令。</p></div>
+          <div class="impl"><h4><span class="ix">C2</span>先抽实体和 OCR，再写 caption</h4>
+            <p class="paper">命名实体（名人、品牌、IP、物种）与 OCR 文本先抽出，再作为输入喂给 caption 模型，解决「实体写错、文字缺失」<span class="src">§2.1.2</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑类样本把源图 OCR 结果作为结构化字段（原文 → 目标文）写进指令，用 OCR 回读校验目标图，自动过滤改错字的样本。</p></div>
+          <div class="impl"><h4><span class="ix">C3</span>一对多指令改写 + 训练时随机抽</h4>
+            <p class="paper">GPT-4o 为每个编辑对生成多条改写（口语化、复合指令）<span class="src">§6.1.5</span>；训练时每样本 3–5 条中英候选随机选一<span class="src">§6.3.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>候选里至少保留一条中文、一条英文、一条复合指令；改写后用 VLM 对「改写是否改变编辑语义」做一次一致性校验。</p></div>
+          <div class="impl"><h4><span class="ix">C4</span>用 LoRA 微调专用 captioner 统一格式</h4>
+            <p class="paper">开源 VLM 世界知识够但格式不稳，用精标合成图文对 LoRA 微调成 Photographic Captioner，提升信息密度<span class="src">§2.1.3</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption（变化描述 + 保持描述）也可以用小规模精标数据 LoRA 一个专用模型，替代长 prompt 约束的大模型调用，便于格式校验。</p></div>
+        </div>
+
+        <div class="impl-group">评测协议</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">E1</span>一致性单独评</h4>
+            <p class="paper">SBS 除综合质量外，单独评「非编辑区的版式、纹理、色调、主体身份是否不变」，强调其对多轮编辑的重要性<span class="src">§6.5.2</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>一致性评测按子项（身份 / 版式 / 色调 / 纹理）拆开打勾，并加多轮链式编辑的累计漂移测试。</p></div>
+          <div class="impl"><h4><span class="ix">E2</span>补齐公开基准的任务空洞</h4>
+            <p class="paper">指出 GEdit 缺参考生成、结构修改、视角变换等任务，整合扩展成 CEdit-Bench：1,464 对中英样本、15 类<span class="src">§6.5.1 · 图 21</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>内部评测集先对齐公开基准的任务表，列出覆盖缺口再补数据；中英各一份，便于直接发现「中文指令不执行」类问题（如 Kontext CN 分 1.x<span class="src">表 9</span>）。</p></div>
+          <div class="impl"><h4><span class="ix">E3</span>罕见字用 OCR 判，不用 MLLM 判</h4>
+            <p class="paper">ChineseWord 用 PPOCRv5 自动判读，理由是 MLLM 难以识别生僻字<span class="src">§5.1.2</span>；训练期也以 OCR 准确率为监控指标<span class="src">§4.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑评测按字表分层（常用 / 次常用 / 生僻）报 OCR 准确率，单字与多字句分开，避免被单字高分掩盖序列错误。</p></div>
+          <div class="impl"><h4><span class="ix">E4</span>DPO 偏好对：丢中间档</h4>
+            <p class="paper">T2I DPO：6 张候选打 1–5 分，丢 3 分，4–5 正、1–2 负<span class="src">§4.3.2</span>；编辑 DPO：5 张候选挑 winner 与 losers<span class="src">§6.3.3</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑偏好标注把「指令执行」和「一致性」分两栏打分，只在两栏都拉开差距时成对，减少 reward hacking 到「不改图」的风险。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 局限 -->
+    <section class="sec" id="limits">
+      <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+      <ul class="limits wide">
+        <li class="key"><b>几乎没有消融。</b>字符级 tokenizer、动态采样、AIGC 过滤、权重平均、MPO 都只有「实验表明」式文字，没有对照数字<span class="src">§3.2 · §4.1 · §4.3</span>。</li>
+        <li class="key"><b>超参前后不一致。</b>表 1 的 GRPO 列为 LR 1e-5 cosine、batch 32；§4.3.2 写 GRPO/MPO 用恒定 LR 5e-6、batch 64<span class="src">表 1 · §4.3.2</span>。</li>
+        <li><b>RL 顺序与最终方案不清。</b>正文说 GRPO 在 DPO 之后、且 GRPO/MPO 都从同一 DPO 模型起步<span class="src">§4.3.2</span>；图 13 却把 GRPO 与 DPO 画成从 SFT 并列分出<span class="src">图 13</span>。MPO 未出现在表 1 和图 13，最终模型是否用了 MPO 未说明。</li>
+        <li><b>「SOTA」表述与表格不符。</b>CVTG-2K 正文称 SOTA，但 Seedream 4.0 Word Acc 0.8917 &gt; 0.8658<span class="src">表 6</span>；Poster&amp;Scene 平均 91.5 vs Seedream 91.6<span class="src">表 8</span>；GEdit G_O 也略低于 Seedream 4.0<span class="src">表 10</span>。应读作「开源最佳」。</li>
+        <li><b>配比与规模大多未披露。</b>LoRA 合成数据的「受控低比例」、编辑/T2I「平衡 batch 比」、编辑各来源规模、DPO 偏好集规模、编辑训练超参都没给<span class="src">§2.2 · §6.1 · §6.3</span>。</li>
+        <li><b>评测含内部集。</b>Poster&amp;Scene（500 prompt）、T2I MOS（400 prompt）、编辑 SBS（约 400）均为内部集；T2I MOS 只有图没有数值<span class="src">§5.1 · §5.2 · §6.5.2</span>。CEdit-Bench 已公开，但由作者构建并用 GPT-4o 打分<span class="src">§6.5.1</span>。</li>
+        <li><b>多字中文仍不稳。</b>作者承认单字强、多字序列稳定性明显下降，归因于真实文字数据不足<span class="src">§5.1.2</span>；ChineseWord 只测单字，掩盖了这一点。</li>
+        <li><b>小处笔误。</b>DPO 段写「按 Equation 2 优化」，实际公式为式 (1)<span class="src">§4.3.2</span>；WISE 表中 Emu3 与 Liquid 两行数值完全相同<span class="src">表 4</span>，可能是复制错误。</li>
+        <li><b>许可证未写。</b>论文只说开源权重与训练代码，许可证 <span class="nd">原文未披露</span>，商用条件需看仓库。</li>
+      </ul>
+    </section>
+
+    <!-- 10 图表索引 -->
+    <section class="sec" id="figs">
+      <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+      <div class="tbl-wrap wide"><table class="idx-table">
+        <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+        <tbody>
+          <tr><td>图 5</td><td>训练数据类别分布（树图，含占比）</td><td><a href="#data">04 数据</a>（原图 + 条形转录）</td></tr>
+          <tr><td>图 6</td><td>数据整理四段管线（本页裁图含前两段）</td><td><a href="#data">04 数据</a></td></tr>
+          <tr><td>图 7</td><td>综合美学打分：Quality × Artistry</td><td>文字引用于 04</td></tr>
+          <tr><td>图 9 / 10 / 11</td><td>Photographic Captioner 对比 / 多粒度 caption 样例 / 合成文字流程</td><td>文字引用于 04</td></tr>
+          <tr><td>图 12</td><td>T2I 模型架构</td><td><a href="#arch">03 架构</a></td></tr>
+          <tr><td>图 13</td><td>多阶段训练流程（T2I + 编辑）</td><td><a href="#train">05 训练</a></td></tr>
+          <tr><td>图 14</td><td>T2I 人评 MOS（无数值）</td><td>文字引用于 06</td></tr>
+          <tr><td>图 19 / 21</td><td>编辑预训练任务分布 / CEdit-Bench 任务分布</td><td>文字引用于 04、06</td></tr>
+          <tr><td>图 20</td><td>LongCat-Image-Edit 架构</td><td><a href="#arch">03 架构</a></td></tr>
+          <tr><td>图 22</td><td>编辑 SBS 胜率</td><td><a href="#eval">06 评测</a>（转录为表）</td></tr>
+          <tr><td>表 1</td><td>T2I 各阶段训练超参</td><td><a href="#train">05 训练</a></td></tr>
+          <tr><td>表 2–8</td><td>GenEval / DPG / WISE / GlyphDraw2 / CVTG-2K / ChineseWord / Poster&amp;Scene</td><td><a href="#eval">06 评测</a></td></tr>
+          <tr><td>表 9–11</td><td>CEdit / GEdit / ImgEdit</td><td><a href="#eval">06 评测</a></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Meituan LongCat Team《LongCat-Image Technical Report》（<a href="https://arxiv.org/abs/2512.07584" target="_blank" rel="noopener">arXiv:2512.07584</a>，v1 发布于 2025-12-08）撰写。文中数字均来自原文，标注 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为编者观点，不是论文内容。论文图片版权归原作者所有，仅用于解读。
+    <br><a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

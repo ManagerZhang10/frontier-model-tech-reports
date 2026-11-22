@@ -128,6 +128,54 @@
       "one_liner": "MLLM Planner + DiT Visualizer 统一理解与生成；最多 9 张输入、一次 12 张组图，原生 RGBA 与最高 4K，结构化 caption 含 25 个属性。",
       "path": "reports/image/wan-image/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "longcat-image",
+      "title": "LongCat-Image",
+      "subtitle": "LongCat-Image Technical Report",
+      "vendor": "Meituan LongCat Team",
+      "vendor_key": "meituan",
+      "category": "image",
+      "date": "2025-12-08",
+      "paper": "https://arxiv.org/abs/2512.07584",
+      "arxiv": "2512.07584",
+      "open_weights": true,
+      "params": "6B DiT + Qwen2.5VL-7B",
+      "one_liner": "6B 开源双语图像基础模型，强调中文渲染（ChineseWord Overall 90.7）与写实；编辑分支在 ImgEdit 上 Overall 为 4.50。",
+      "path": "reports/image/longcat-image/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "ernie-image",
+      "title": "ERNIE-Image",
+      "subtitle": "ERNIE-Image Technical Report",
+      "vendor": "ERNIE Team, Baidu",
+      "vendor_key": "baidu",
+      "category": "image",
+      "date": "2026-05-25",
+      "paper": "https://arxiv.org/abs/2605.25347",
+      "arxiv": "2605.25347",
+      "open_weights": true,
+      "params": "8B 单流 DiT",
+      "one_liner": "8B 单流 DiT 开源文生图，靠分层数据与 DPO / MT-DMD 拉近与闭源的差距；同时开源美学模型与 ERIA-1K 基准。",
+      "path": "reports/image/ernie-image/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "qwen-image-2.0-rl",
+      "title": "Qwen-Image-2.0-RL",
+      "subtitle": "Qwen-Image-2.0-RL Technical Report",
+      "vendor": "Qwen Team",
+      "vendor_key": "qwen",
+      "category": "image",
+      "date": "2026-06-25",
+      "paper": "https://arxiv.org/abs/2606.27608",
+      "arxiv": "2606.27608",
+      "open_weights": false,
+      "params": null,
+      "one_liner": "不改网络结构的 RL 后训练：T2I 与编辑分训后再蒸馏合一；Qwen-Image-Bench 55.23→57.84，T2I Elo +78、编辑 Elo +93。",
+      "path": "reports/image/qwen-image-2.0-rl/",
+      "added": "2026-11-22"
     }
   ]
 }
