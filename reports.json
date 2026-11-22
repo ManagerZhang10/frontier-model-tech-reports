@@ -544,6 +544,54 @@
       "one_liner": "在 GLM-5-Turbo 上接自研 CogViT 与 MMTP（图像只喂共享 <|image|> 占位符），并在 30+ 类任务上联合 RL。Design2Code 94.8、AndroidWorld 75.7 出自正文；图 4 其余对比为读图。参数、许可证与权重发布原文均未声明。",
       "path": "reports/vlm/glm-5v-turbo/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "step3-vl-10b",
+      "title": "STEP3-VL-10B",
+      "subtitle": "STEP3-VL-10B Technical Report",
+      "vendor": "StepFun",
+      "vendor_key": "stepfun",
+      "category": "vlm",
+      "date": "2026-01-14",
+      "paper": "https://arxiv.org/abs/2601.09668",
+      "arxiv": "2601.09668",
+      "open_weights": true,
+      "params": "10B（1.8B PE + Qwen3-8B）",
+      "one_liner": "1.8B 语言对齐 Perception Encoder + Qwen3-8B 解码器，在 1.2T 多模态 token 上单阶段全参解冻预训练；后训练含 1,400 次迭代 RL。测试时 PaCoRe 把 16 条 SeRe 轨迹综合后再推理。摘要 MMBench 92.2%、MMMU 80.11%、AIME2025 94.43%、MathVision 75.95% 均为 PaCoRe 模式。完整套件已发布，许可证原文未披露。",
+      "path": "reports/vlm/step3-vl-10b/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "seed2.0",
+      "title": "Seed2.0",
+      "subtitle": "Seed2.0 Model Card: Towards Intelligence Frontier for Real-World Complexity",
+      "vendor": "ByteDance Seed",
+      "vendor_key": "bytedance",
+      "category": "llm",
+      "date": "2026-06-30",
+      "paper": "https://arxiv.org/abs/2607.00248",
+      "arxiv": "2607.00248",
+      "open_weights": false,
+      "params": "原文未披露（系列 Pro / Lite / Mini）",
+      "one_liner": "面向生产部署的模型卡，不是架构论文。架构、参数、训练数据与配方均未披露。正文写 token 定价「大约低一个数量级」；表 1 中 Pro 输出 $2.37，相对 Claude Opus 4.5 $25 约为 1/10.5（推算），相对 GPT-5.2 High $14 约为 1/6。",
+      "path": "reports/llm/seed2.0/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "olmo-3",
+      "title": "Olmo 3",
+      "subtitle": "Olmo 3",
+      "vendor": "Ai2 / Olmo Team",
+      "vendor_key": "ai2",
+      "category": "llm",
+      "date": "2025-12-15",
+      "paper": "https://arxiv.org/abs/2512.13961",
+      "arxiv": "2512.13961",
+      "open_weights": true,
+      "params": "7B · 32B 稠密",
+      "one_liner": "fully-open 的 7B/32B 家族（Base → Think / Instruct / RL-Zero）。Base 预训练最多约 5.9T token（Dolma 3 Mix；7B 满 1 epoch，32B 在 5.5T 截断）。架构相对 OLMo 2 改动不大：8K 预训练窗口、每 4 层中 3 层 SWA。数据、代码与中间 checkpoint 全部开放；许可证原文未披露。本页核对 v2（2026-04-14），含 Olmo 3.1。",
+      "path": "reports/llm/olmo-3/",
+      "added": "2026-11-22"
     }
   ]
 }

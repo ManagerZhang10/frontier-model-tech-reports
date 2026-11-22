@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STEP3-VL-10B 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="STEP3-VL-10B（StepFun）中文深读：1.8B 语言对齐 Perception Encoder + Qwen3-8B，1.2T token 单阶段全解冻预训练，两段 SFT + 1,400 次迭代 RL，测试时用 PaCoRe 并行协同推理。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  .ar .t { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .ar .s { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  .ar .s2 { fill: var(--ink-2); font: 500 11px var(--f-body); }
+  .ar .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arw); }
+  .ar .arrow-a { stroke: var(--accent); stroke-width: 1.8; fill: none; marker-end: url(#arwA); }
+  .ar .dash { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 4; fill: none; }
+  .ar .mk { fill: var(--muted); }
+  .ar .mkA { fill: var(--accent); }
+  .ar .frz { fill: none; stroke: var(--warm); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .bar-neg { fill: var(--warm); }
+  .zero { stroke: var(--ink-2); stroke-width: 1.2; }
+  .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+  .post-flow.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .post-flow.four .stage:nth-child(4) { border-top-color: var(--accent-ink); }
+  @media (max-width: 1100px) { .post-flow.four { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 640px) { .post-flow.four { grid-template-columns: 1fr; } }
+  .ratio .rbar .c { background: var(--good); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视觉语言模型</div>
+    <h1>STEP3-VL-10B<span class="sub">STEP3-VL-10B Technical Report · Multimodal Intelligence Team, StepFun</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>StepFun（阶跃星辰）</b></span>
+      <span>arXiv v1 <b>2026-01-14</b></span>
+      <span>arXiv <b>2601.09668</b></span>
+      <span>本页核对版本 <b>v2（2026-01-15）</b></span>
+    </div>
+    <p class="lede">一个 <strong>10B</strong> 的开源 VLM：1.8B 语言对齐 <strong>Perception Encoder</strong> + <strong>Qwen3-8B</strong> 解码器，在 <strong>1.2T</strong> 多模态 token 上<strong>单阶段、全参解冻</strong>预训练，再做两段 SFT 和 <strong>1,400</strong> 次迭代的 RL（RLVR → RLHF → PaCoRe）。测试时用 <strong>PaCoRe</strong>（并行协同推理）把 16 条推理并行展开再综合，摘要里的 MMMU 80.11 / MathVision 75.95 / AIME2025 94.43 都是这个模式下的成绩。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源（完整模型套件）</span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">10B · 1.8B PE + Qwen3-8B</span>
+      <span class="badge">稠密 · 非 MoE</span>
+      <span class="badge">视觉语言模型</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2601.09668" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>arXiv 2601.09668</a>
+      <a href="https://arxiv.org/pdf/2601.09668" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>PDF</a>
+      <a href="https://stepfun-ai.github.io/Step3-VL-10B" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>项目主页</a>
+      <a href="https://huggingface.co/collections/stepfun-ai/step3-vl-10b" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>Hugging Face</a>
+      <a href="https://modelscope.cn/collections/stepfun-ai/Step3-VL-10B" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>ModelScope</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均摘自原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+  </nav>
+
+  <main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">参数规模</div><div class="stat-num">10B</div><div class="stat-sub">1.8B 语言对齐 Perception Encoder + Qwen3-8B 解码器</div><span class="src">§2.1</span></div>
+    <div class="card stat"><div class="stat-k">预训练 token</div><div class="stat-num">1.2T</div><div class="stat-sub">单阶段、全参解冻；370K 迭代，batch 8,192，序列 4,096</div><span class="src">§2.3</span></div>
+    <div class="card stat"><div class="stat-k">SFT token</div><div class="stat-num">190B + 36B</div><div class="stat-sub">Stage 1 文:图 = 9:1；Stage 2 = 1:1；序列 128k</div><span class="src">§3.1</span></div>
+    <div class="card stat"><div class="stat-k">RL 迭代</div><div class="stat-num">1,400</div><div class="stat-sub">RLVR 600 + RLHF 300 + PaCoRe 500；只训解码器</div><span class="src">§3.2</span></div>
+    <div class="card stat"><div class="stat-k">视觉输入</div><div class="stat-num sm">728² 全局 + 多个 504² 局部</div><div class="stat-sub">投影层两次 stride-2，空间 16× 下采样</div><span class="src">§2.1</span></div>
+    <div class="card stat"><div class="stat-k">测试时扩展</div><div class="stat-num sm">PaCoRe：16 条 SeRe → 综合</div><div class="stat-sub">SeRe 最长 65,536 token；PaCoRe 最长 131,072</div><span class="src">§4.1</span></div>
+    <div class="card stat"><div class="stat-k">评测规模</div><div class="stat-num">60+ 基准</div><div class="stat-sub">多模态 9 个能力域 + 文本 6 类</div><span class="src">§4.1</span></div>
+    <div class="card stat"><div class="stat-k">开源 / 许可证</div><div class="stat-num sm">权重已发布 · <span class="nd">许可证未披露</span></div><div class="stat-sub">HF 与 ModelScope 合集链接见首页</div><span class="src">p.1</span></div>
+  </div>
+  <p class="footnote wide">日期以 arXiv v1（2026-01-14）为准；本页对照的 PDF 为 v2（2026-01-15），正文页码按 v2 计。</p>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看完</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>摘要数字是 PaCoRe 模式下的成绩</h3><p>MMMU <b>80.11</b>、MathVision <b>75.95</b>、AIME2025 <b>94.43</b><span class="src">表 3</span>；MMBench <b>92.2</b> 是 PaCoRe 下 EN/CN 的平均值 92.17<span class="src">§4.4</span>。标准 SeRe 模式对应 78.11 / 70.81 / 87.66 / 91.80<span class="src">表 3</span><span class="src calc">推算</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>7–10B 同档基本领先，但不是全胜</h3><p>MathVision 70.81，比 MiMo-VL-RL-2508（59.65）、Qwen3-VL-8B（59.60）高 11 分以上<span class="src">表 1</span>；计数和部分 OCR 落后：PixMo-Count 70.85 vs GLM-4.6V-Flash 76.42，OmniOCR 76.98 vs 80.24<span class="src">表 1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>数据重感知</h3><p>Grounding &amp; Counting 约 <b>400M</b> 样本、整页文档约 <b>80M</b>、arXiv 公式约 <b>100M</b>、GUI 约 <b>23M</b><span class="src">§2.2</span>。各域配比和 token 占比<span class="nd">原文未披露</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>感知任务做 RL 后，回答反而变短</h3><p>RLVR 600 步里 reward 升到约 0.8 仍未饱和，平均 rollout 长度先升后回落到起点<span class="src">§5.2 · 图 2</span>。作者归因于推理任务变长、感知任务变短，两者互相抵消，并据此引入 PaCoRe。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>PaCoRe 对比时算力并不对等</h3><p>PaCoRe 先跑 16 条 SeRe 再综合<span class="src">§4.1</span>，基线只跑单次；推理成本<span class="nd">原文未披露</span>。另有 3 项 PaCoRe 低于 SeRe，例如 M3GIA 78.33→73.50<span class="src">表 3</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：PE-lang + Qwen3-8B，刻意做减法</h2>
+  <p class="sec-intro">原文没有架构总览图（附录 Fig. 4–7 是 Morse 码、编辑器截图等定性案例，不是架构图）。下图按 §2.1 文字画成示意。</p></div>
+
+  <div class="card diagram wide">
+    <svg class="ar" viewBox="0 0 920 250" role="img" aria-label="STEP3-VL-10B 架构示意">
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0L10 5L0 10z"/></marker>
+        <marker id="arwA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mkA" d="M0 0L10 5L0 10z"/></marker>
+      </defs>
+      <rect class="dg-box" x="10" y="40" width="120" height="86" rx="10"/>
+      <text class="t" x="70" y="78" text-anchor="middle">输入图像</text>
+      <text class="s" x="70" y="98" text-anchor="middle">任意分辨率</text>
+
+      <rect class="dg-box" x="160" y="30" width="170" height="106" rx="10"/>
+      <text class="t" x="245" y="56" text-anchor="middle">Multi-crop</text>
+      <text class="s2" x="245" y="78" text-anchor="middle">1 × 728×728 全局视图</text>
+      <text class="s2" x="245" y="96" text-anchor="middle">多个 504×504 局部 crop</text>
+      <text class="s" x="245" y="118" text-anchor="middle">走 batch 维并行，不做变长打包</text>
+
+      <rect class="dg-box dg-vit" x="360" y="30" width="150" height="106" rx="10"/>
+      <text class="t" x="435" y="62" text-anchor="middle">Perception Encoder</text>
+      <text class="s2" x="435" y="82" text-anchor="middle">语言对齐版（PE-lang）</text>
+      <text class="s" x="435" y="104" text-anchor="middle">1.8B</text>
+
+      <rect class="dg-box dg-merger" x="540" y="30" width="150" height="106" rx="10"/>
+      <text class="t" x="615" y="62" text-anchor="middle">Projector</text>
+      <text class="s2" x="615" y="82" text-anchor="middle">两层连续 stride-2</text>
+      <text class="s" x="615" y="104" text-anchor="middle">空间 16× 下采样</text>
+
+      <rect class="dg-box dg-llm-hot" x="720" y="22" width="190" height="122" rx="12"/>
+      <text class="t" x="815" y="54" text-anchor="middle">Qwen3-8B 解码器</text>
+      <text class="s2" x="815" y="76" text-anchor="middle">每行 patch 末尾加换行 token</text>
+      <text class="s2" x="815" y="96" text-anchor="middle">标准 1D RoPE</text>
+      <text class="s" x="815" y="120" text-anchor="middle">→ 文本输出（含 &lt;think&gt;）</text>
+
+      <path class="arrow" d="M130 83 H156"/>
+      <path class="arrow" d="M330 83 H356"/>
+      <path class="arrow" d="M510 83 H536"/>
+      <path class="arrow-a" d="M690 83 H716"/>
+
+      <rect class="dg-box" x="740" y="188" width="150" height="40" rx="8"/>
+      <text class="t" x="815" y="213" text-anchor="middle">文本 token</text>
+      <path class="arrow" d="M815 188 V148"/>
+
+      <rect class="frz" x="352" y="162" width="350" height="70" rx="10"/>
+      <text class="s2" x="527" y="186" text-anchor="middle">预训练：编码器 + 投影层 + 解码器全部解冻</text>
+      <text class="s2" x="527" y="206" text-anchor="middle">RL（1,400 步）：只更新解码器，编码器冻结</text>
+      <text class="s" x="527" y="224" text-anchor="middle">§2.3 · §3.2.1</text>
+    </svg>
+    <div class="cap">示意，非论文原图。依据 §2.1 / §2.3 / §3.2.1。投影层具体算子、局部 crop 的数量上限以及各视图在序列中的排列顺序，原文均未披露。</div>
+  </div>
+
+  <div class="prose">
+    <h3>相对同类的取舍（作者给出的理由）</h3>
+    <ul>
+      <li><b>选语言对齐版 PE，不用空间版。</b>理由是预对齐的语言特征收敛更好<span class="src">§2.1</span>。300M 规模消融里，PE-lang 对 DINOv3 在 OCRBench 上 <span class="up">+12.50</span>，在 BLINK 上 <span class="down">−1.16</span><span class="src">表 4</span>。</li>
+      <li><b>投影层借鉴 Step-3 / DeepSeek-OCR</b>：两层 stride-2，空间压 16×<span class="src">§2.1</span>。</li>
+      <li><b>不用变长打包</b>：全局 728² + 局部 504² 的 multi-crop 走 batch 维并行<span class="src">§2.1</span>。</li>
+      <li><b>位置编码用标准 1D RoPE</b>，空间结构只靠 patch 行末的换行 token 表达；作者说更复杂的变体在他们的设置里没有明显收益<span class="src">§2.1</span>。</li>
+      <li><b>不用 DeepStack</b>（Qwen3-VL 用了）：收敛更快，但下游没有实质收益，算力开销不划算<span class="src">§5.1 · 表 6</span>。</li>
+      <li><b>优化器用 AdamW，不用 Muon</b>：Muon 在长尾知识上更好（SimpleVQA 高 6.48），但从 AdamW 初始化的权重切到 Muon 要很长 warmup，整体效率反而更低<span class="src">§5.1 · 表 5</span>。</li>
+    </ul>
+  </div>
+
+  <details class="more wide">
+    <summary>三组架构消融原表（表 4–6）<span class="hint">300M 编码器 · 未训到最终 ckpt · few-shot</span></summary>
+    <div class="body">
+      <h4>表 4 · 视觉编码器：DINOv3（ViT-L/16, 300M）vs PE-lang（300M）</h4><div class="tbl-wrap"><table><thead><tr><th>设置</th><th>BLINK</th><th>OmniSpatial</th><th>MMVP</th><th>OCRBench</th><th>MMStar</th><th>SimpleVQA</th><th>CCBench</th><th>V*</th><th>MMMU</th><th>ReMI</th></tr></thead><tbody><tr><td>DINOv3</td><td class="">42.35</td><td class="">43.31</td><td class="">28.00</td><td class="">57.60</td><td class="">41.43</td><td class="">22.18</td><td class="">56.32</td><td class="">34.55</td><td class="">46.56</td><td class="">24.50</td></tr><tr><td>PE-lang (Ours)</td><td class="q">41.19</td><td class="q">43.57</td><td class="q">32.00</td><td class="q">70.10</td><td class="q">42.10</td><td class="q">21.15</td><td class="q">59.39</td><td class="q">37.17</td><td class="q">47.67</td><td class="q">26.08</td></tr><tr class="hl"><td>Δ</td><td class="down">−1.16</td><td class="up">+0.26</td><td class="up">+4.00</td><td class="up">+12.50</td><td class="up">+0.67</td><td class="down">−1.03</td><td class="up">+3.07</td><td class="up">+2.62</td><td class="up">+1.11</td><td class="up">+1.58</td></tr></tbody></table></div><h4>表 5 · 优化器：Muon vs AdamW</h4><div class="tbl-wrap"><table><thead><tr><th>设置</th><th>BLINK</th><th>OmniSpatial</th><th>MMVP</th><th>OCRBench</th><th>MMStar</th><th>SimpleVQA</th><th>CCBench</th><th>V*</th><th>MMMU</th><th>ReMI</th></tr></thead><tbody><tr><td>Muon</td><td class="">41.14</td><td class="">42.73</td><td class="">32.00</td><td class="">67.70</td><td class="">44.58</td><td class="">27.08</td><td class="">60.72</td><td class="">36.65</td><td class="">47.56</td><td class="">22.23</td></tr><tr><td>Adam (Ours)</td><td class="q">40.72</td><td class="q">44.94</td><td class="q">29.33</td><td class="q">71.10</td><td class="q">41.77</td><td class="q">20.60</td><td class="q">60.13</td><td class="q">39.27</td><td class="q">46.11</td><td class="q">25.00</td></tr><tr class="hl"><td>Δ</td><td class="down">−0.42</td><td class="up">+2.21</td><td class="down">−2.67</td><td class="up">+3.40</td><td class="down">−2.81</td><td class="down">−6.48</td><td class="down">−0.59</td><td class="up">+2.62</td><td class="down">−1.45</td><td class="up">+2.77</td></tr></tbody></table></div><h4>表 6 · DeepStack 有 / 无</h4><div class="tbl-wrap"><table><thead><tr><th>设置</th><th>BLINK</th><th>OmniSpatial</th><th>MMVP</th><th>OCRBench</th><th>MMStar</th><th>SimpleVQA</th><th>CCBench</th><th>V*</th><th>MMMU</th><th>ReMI</th></tr></thead><tbody><tr><td>w/ DeepStack</td><td class="">40.72</td><td class="">42.92</td><td class="">26.00</td><td class="">71.20</td><td class="">43.31</td><td class="">28.66</td><td class="">63.94</td><td class="">36.65</td><td class="">47.44</td><td class="">26.96</td></tr><tr><td>w/o DeepStack (Ours)</td><td class="q">40.61</td><td class="q">43.57</td><td class="q">31.33</td><td class="q">69.30</td><td class="q">42.44</td><td class="q">25.20</td><td class="q">62.80</td><td class="q">38.22</td><td class="q">47.78</td><td class="q">26.96</td></tr><tr class="hl"><td>Δ</td><td class="down">−0.11</td><td class="up">+0.65</td><td class="up">+5.33</td><td class="down">−1.90</td><td class="down">−0.87</td><td class="down">−3.46</td><td class="down">−1.14</td><td class="up">+1.57</td><td class="up">+0.34</td><td class="">+0.00</td></tr></tbody></table></div>
+      <p class="tbl-note">Δ = 本文选择 − 对照方案。三组消融都在相同 token 数（具体数值原文未给）的预训练 checkpoint 上，以 few-shot 方式评测，没有训到最终 checkpoint<span class="src">附录 C.3</span>。CCBench 只出现在消融表里，主评测没有它。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：六大域、规模给得细，配比一个没给</h2>
+  <p class="sec-intro">预训练语料 = 大规模文本语料（引 SmolLM3, Bakouch et al. 2025）+ 六个多模态域<span class="src">§2.2</span>。下面先看各域<b>已披露的规模</b>；原文<b>没有</b>给出任何域的 token 占比，所以这里不画配比条。</p></div>
+
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>域 / 子集</th><th>来源与做法</th><th>已披露规模</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">Knowledge 知识</td></tr>
+        <tr><td>交错图文</td><td>Common Crawl + 自研中文互联网爬虫 StepCrawl + 关键词搜索；丢弃图片下载失败率 &gt;90% 的网页、二维码内容、极端长宽比图片</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>图文对 ① 开源</td><td>LAION、COYO、BLIP-CCS、Zero；按 CLIP 聚类做概念均衡重采样，缓解长尾</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>图文对 ② 检索</td><td>从高质量知识网站挖关键词，到百度、Bing 等商业搜索引擎检索</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>图文对 ③ 交错抽取</td><td>每张图取上方文字、下方文字、alt-text 作为候选描述；CLIP 相似度评对齐，美学分评图像质量，选最合适的一条</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr><td>图文对 ④ Mosaic</td><td>4 张图拼成 1 个输入：等效提高分辨率和信息密度，练跨区域的空间/位置推理</td><td><span class="nd">原文未披露</span></td></tr>
+        <tr class="grp"><td colspan="3">Education 教育</td></tr>
+        <tr><td>K-12 / 大学 / 成人考试</td><td>数理化与人文；化学式与结构图来自开源 + CoSyn 合成；几何题混合合成数据与带标注 caption 的真实试卷图；大学 STEM/医学/艺术/金融；驾照、CPA、法考。题目来自授权题库 + 开源题集</td><td>约 15M 样本<span class="src">§2.2</span></td></tr>
+        <tr class="grp"><td colspan="3">OCR</td></tr>
+        <tr><td>Image → Text</td><td>真实图来自开源集，用 PaddleOCR 标注；合成用 SynthDog，覆盖字体/版式/方向</td><td>10M 真实 + 30M 合成<span class="src">§2.2</span></td></tr>
+        <tr><td>Image → Code（标记类）</td><td>Markdown / LaTeX / Matplotlib：开源数据 + 自动合成信息图；<b>不完全交给 LLM 生成</b>，而是在多种渲染工具上强制细粒度渲染规则</td><td>开源 10M+ ，合成信息图 15M+<span class="src">§2.2</span></td></tr>
+        <tr><td>Image → Code（程序图形）</td><td>TikZ / Graphviz 重建任务：把自然图、人工表格、几何图翻成可执行代码</td><td>约 5M<span class="src">§2.2</span></td></tr>
+        <tr><td>Document → Text</td><td>书籍和论文整页，用 PaddleOCR 或 MinerU 2.0 标注</td><td>约 80M 页<span class="src">§2.2</span></td></tr>
+        <tr><td>Document → Code</td><td>HTML（表格为主）/ Markdown（GitHub README 渲染）/ LaTeX（arXiv）；渲染时显式处理引用、超链接，避免图文不一致；另加开源集</td><td>arXiv：约 4M 表格、100M 公式<span class="src">§2.2</span></td></tr>
+        <tr class="grp"><td colspan="3">Grounding &amp; Counting</td></tr>
+        <tr><td>框 + 点</td><td>OpenImages、COCO、Merlin、PixMo + 自有文本段落检测；计数来自开源集，并把高质量检测标注转成计数题</td><td>约 400M 样本<span class="src">§2.2</span></td></tr>
+        <tr class="grp"><td colspan="3">VQA</td></tr>
+        <tr><td>通用 VQA</td><td>开源 VQA + 从 caption 数据自动生成的高质量问答对</td><td>约 10M<span class="src">§2.2</span></td></tr>
+        <tr><td>OCR VQA</td><td>开源 + 由其他 OCR 任务转出的问答对</td><td>约 20M<span class="src">§2.2</span></td></tr>
+        <tr class="grp"><td colspan="3">GUI（沿用 Step-GUI 做法）</td></tr>
+        <tr><td>总量</td><td>Android / iOS / Windows / Linux / macOS，200+ 应用；grounding 标注与轨迹数据<b>同步生成</b>，保证动作与感知监督一致</td><td>约 23M 样本<span class="src">§2.2</span></td></tr>
+        <tr><td>Caption</td><td>UI 界面详细描述：页面布局、功能区域</td><td>700K</td></tr>
+        <tr><td>Knowledge VQA</td><td>UI 元素定位与功能问答</td><td>1M+</td></tr>
+        <tr><td>Trajectory</td><td>12 种原子动作（CLICK、SLIDE、TYPE 等）；任务含操作执行、信息检索、信息汇总</td><td>2M+</td></tr>
+        <tr><td>Grounding</td><td>点 + 框，多种布局与分辨率</td><td>19M+</td></tr>
+        <tr><td>OCR（Browser-use）</td><td>爬网页，抽文本和精确元素坐标</td><td>约 30M 网页</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">GUI 前四个子集合计约 22.7M<span class="src calc">推算</span>，和「约 23M」对得上；OCR 子集按「网页」计，约 30M，看起来不在 23M 之内，口径原文没说清。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>预训练两相配比 <span class="tag nd-tag">未披露</span></h4>
+      <p>前 900B token 用一种配比，后 300B「换成更高质量的数据配比」，用来巩固 OCR、grounding 等细粒度感知和推理能力<span class="src">§2.3</span>。两相各域比例、文本与多模态之比，原文都没有给。</p>
+    </div>
+    <div class="card mod">
+      <h4>SFT 数据 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>开源社区收集的<b>数百万</b> prompt（数学、代码、科学、逻辑）+ 开源感知数据（grounding、OCR、文档/图表）。</li>
+        <li>回答从<b>内部前沿模型</b>蒸馏。</li>
+        <li>「两道过滤」：① 规则去退化模式（如无限重复）；② 基准去污染，精确匹配 + <b>64-gram</b> 匹配。</li>
+        <li>各领域在 dataloader 里有不同采样权重，相当于不同 epoch 数；具体权重<span class="nd">原文未披露</span>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="wide">SFT 两阶段的文 : 图比例（原文给出）</h3>
+  <div class="wide">
+    <div class="ratio"><div class="rlab"><span><b>Stage 1 · 以文本推理为主</b> · 约 190B token</span><span class="src">§3.1</span></div>
+      <div class="rbar"><span class="a" style="width:90%">文本 9</span><span class="b" style="width:10%">图 1</span></div></div>
+    <div class="ratio"><div class="rlab"><span><b>Stage 2 · 多模态融合</b> · 约 36B token</span><span class="src">§3.1</span></div>
+      <div class="rbar"><span class="a" style="width:50%">文本 1</span><span class="b" style="width:50%">图 1</span></div></div>
+    <div class="bar-legend"><span>文本样本</span><span class="s">多模态样本</span></div>
+    <p class="tbl-note">比例按<b>样本数</b>（原文 “text to multimodal samples”），不是 token 占比。</p>
+  </div>
+
+  <h3 class="wide">RL 数据怎么筛（全文最可复用的一段）</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span>阶段</span><span>来源</span><span>过滤</span><span>保留下来的</span></div>
+    <div class="pipe-row"><div class="lbl">RLVR</div>
+      <div class="chip">Open-Vision-Reasoner 等开源集（数学、几何、物理、图表、谜题…）+ Perception-R1 grounding + 内部 K-12</div>
+      <div class="chip m">① 可验证性：GPT-OSS-120B 独立判 4 次，全一致才留 ② 视觉相关性：早期 STEP3-VL 判图和题是否互相需要 ③ 难度：每题 24 次 rollout</div>
+      <div class="chip o">some-accept：既不是每次都对、也不是每次都错的题</div></div>
+    <div class="pipe-row"><div class="lbl">RLHF</div>
+      <div class="chip">开源 arena 数据集 + 内部指令池</div>
+      <div class="chip m">专挑没有确定答案、无法验证的 query</div>
+      <div class="chip o">最强内部模型写参考回答，作为偏好学习的锚点</div></div>
+    <div class="pipe-row"><div class="lbl">PaCoRe</div>
+      <div class="chip">复用难度过滤时的 24 条 rollout，作为 message cache</div>
+      <div class="chip m">Synthesis Filtration：抽 16–24 条作为「综合上下文」喂回模型重答</div>
+      <div class="chip o">综合后仍是 some-accept 的题，避免任务被参考答案变得太简单</div></div>
+  </div>
+  <div class="legend-dots wide"><span>数据来源</span><span class="m">过滤规则</span><span class="o">留存标准</span> <span class="src">§3.2.3 · §3.2.4</span></div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING RECIPE</div><h2>训练配方：一段预训练 → 两段 SFT → 三段 RL</h2></div>
+
+  <div class="post-flow four wide">
+    <div class="card stage"><div class="sid">P · 预训练</div><h4>单阶段、全参解冻</h4>
+      <dl><dt>token</dt><dd>1.2T</dd><dt>迭代</dt><dd>370K</dd><dt>batch</dt><dd>8,192</dd><dt>序列</dt><dd>4,096</dd><dt>优化器</dt><dd>AdamW</dd></dl>
+      <ul><li>β₁=0.9、β₂=0.95、ε=10⁻⁸、wd=0.01</li><li>前 900B：LR 5e-5 → 1e-5</li><li>后 300B：换高质量配比，1e-5 → 6e-6 退火</li></ul>
+      <span class="src">§2.3</span></div>
+    <div class="card stage"><div class="sid">S · SFT ×2</div><h4>先文本推理，再多模态</h4>
+      <dl><dt>Stage 1</dt><dd>9:1，约 190B</dd><dt>Stage 2</dt><dd>1:1，约 36B</dd><dt>batch</dt><dd>32</dd><dt>序列</dt><dd>128k</dd></dl>
+      <ul><li>cosine，200 步 warmup</li><li>峰值 LR 1e-4 → 终值 1e-5</li></ul>
+      <span class="src">§3.1</span></div>
+    <div class="card stage"><div class="sid">R1 · 顺序推理 RL</div><h4>RLVR 600 → RLHF 300</h4>
+      <dl><dt>RLVR</dt><dd>512 题 × 16 条，24k</dd><dt>RLHF</dt><dd>512 题 × 8 条，32k</dd></dl>
+      <ul><li>PPO + GAE（γ=1, λ=1），每步 4 个 mini-batch</li><li>actor LR 2e-6，critic LR 5e-6</li><li>off-policy 变体，去掉标准重要性采样；截断 IS，阈值 C=8</li></ul>
+      <span class="src">§3.2.1 · §3.2.3</span></div>
+    <div class="card stage"><div class="sid">R2 · PaCoRe RL</div><h4>并行协同推理 500 步</h4>
+      <dl><dt>每步</dt><dd>64 题 × 16 条</dd><dt>序列</dt><dd>64k</dd><dt>设置</dt><dd>严格 on-policy</dd></dl>
+      <ul><li>只用可验证 reward</li><li>数据见上节 Synthesis Filtration</li></ul>
+      <span class="src">§3.2.4</span></div>
+  </div>
+
+  <div class="wide">
+    <div class="ratio"><div class="rlab"><span><b>RL 1,400 次迭代的构成</b>（§3.2.1 原文总数 1,400）</span><span class="src">§3.2</span></div>
+      <div class="rbar"><span class="a" style="width:42.86%">RLVR 600</span><span class="b" style="width:21.43%">RLHF 300</span><span class="c" style="width:35.71%">PaCoRe 500</span></div></div>
+    <p class="tbl-note">600 + 300 + 500 = 1,400<span class="src calc">推算</span>，与 §3.2.1 一致；摘要写的是「超过 1k 次迭代」。全程只更新解码器，编码器冻结<span class="src">§3.2.1</span>。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>可验证 reward <span class="tag">§3.2.2</span></h4>
+      <ul>
+        <li><b>感知 reward</b>：pointing / grounding 按 IoU 或欧氏距离对齐真值（沿用 Perception-R1），用严格的距离衰减做 shaping。</li>
+        <li><b>模型判分</b>：GPT-OSS-120B 当答案判官；不受格式影响（如非常规 LaTeX），认等价表达，并<b>惩罚“答案对、过程错”的假阳性</b>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>不可验证 reward <span class="tag">§3.2.2</span></h4>
+      <ul>
+        <li><b>GenRM</b>：成对比较，拿 rollout 和更强 teacher 的回答比；先写推理判断，再给细粒度标量分。</li>
+        <li><b>行为正则</b>：语言一致性惩罚（防中英混杂、问答语言不一致）；<b>引用核验</b>，发现编造的引用或链接就把 reward 置零；认知校准惩罚，压制无依据的过度自信。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="wide">PaCoRe 推理流程</h3>
+  <div class="card diagram wide">
+    <svg class="ar" viewBox="0 0 920 200" role="img" aria-label="PaCoRe 推理示意">
+      <defs>
+        <marker id="arw2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0L10 5L0 10z"/></marker>
+      </defs>
+      <rect class="dg-box" x="10" y="64" width="140" height="72" rx="10"/>
+      <text class="t" x="80" y="96" text-anchor="middle">图像 + 问题</text>
+      <text class="s" x="80" y="116" text-anchor="middle">original_prompt</text>
+
+      <rect class="dg-box dg-llm" x="200" y="18" width="190" height="34" rx="8"/>
+      <rect class="dg-box dg-llm" x="200" y="58" width="190" height="34" rx="8"/>
+      <rect class="dg-box dg-llm" x="200" y="108" width="190" height="34" rx="8"/>
+      <text class="s2" x="295" y="40" text-anchor="middle">SeRe rollout 1（&lt;think&gt;…）</text>
+      <text class="s2" x="295" y="80" text-anchor="middle">SeRe rollout 2</text>
+      <text class="s" x="295" y="102" text-anchor="middle">⋮</text>
+      <text class="s2" x="295" y="130" text-anchor="middle">SeRe rollout 16</text>
+      <text class="s" x="295" y="168" text-anchor="middle">并行 proposer · 同一模型</text>
+
+      <rect class="dg-box dg-merger" x="440" y="54" width="190" height="92" rx="10"/>
+      <text class="t" x="535" y="84" text-anchor="middle">序列化为</text>
+      <text class="t" x="535" y="102" text-anchor="middle">“Reference Responses”</text>
+      <text class="s" x="535" y="124" text-anchor="middle">表 8 模板</text>
+
+      <rect class="dg-box dg-llm-hot" x="680" y="54" width="230" height="92" rx="12"/>
+      <text class="t" x="795" y="84" text-anchor="middle">综合：交叉核对后作答</text>
+      <text class="s2" x="795" y="104" text-anchor="middle">最长 131,072 token</text>
+      <text class="s" x="795" y="126" text-anchor="middle">→ 最终答案</text>
+
+      <path class="arrow" style="marker-end:url(#arw2)" d="M150 100 C175 100 175 35 196 35"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M150 100 C175 100 175 75 196 75"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M150 100 C175 100 175 125 196 125"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M390 35 C415 35 415 100 436 100"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M390 75 C415 75 415 100 436 100"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M390 125 C415 125 415 100 436 100"/>
+      <path class="arrow" style="marker-end:url(#arw2)" d="M630 100 H676"/>
+      <path class="dash" d="M80 136 V180 H795 V146"/>
+      <text class="s" x="440" y="194" text-anchor="middle">原问题同时保留在综合阶段的上下文里</text>
+    </svg>
+    <div class="cap">示意，依据 §4.1 与附录 B（表 8）。评测时 PaCoRe 把 16 条 SeRe rollout 合成一个上下文做最终推理；多轮迭代等细节原文指向 PaCoRe 论文（Hu et al., 2026）§C。</div>
+  </div>
+
+  <div class="card mod wide">
+    <h4>论文图 2 · RLVR 训练动态 <span class="tag nd-tag">本页未收录原图</span></h4>
+    <p>原文图 2（p.18）：右图 reward 在 600 步内持续上升、接近 0.8 仍未饱和；左图平均 rollout token 数先升后回落到起点附近<span class="src">§5.2 · 图 2</span>。作者解释为推理任务变长、感知任务变短，两者相互抵消。随附的 <code>figures/fig2.jpg</code> 与 <code>fig3.jpg</code> 是同一文件（内容为图 3），所以这里只做文字转述。</p>
+  </div>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="论文图 3：RLVR 期间 MathVision、We-Math、MMMU-Pro、ReMI 的变化" loading="lazy"></div>
+    <figcaption><b>RLVR 期间每 100 步评一次的下游指标</b>（MathVision、We-Math、MMMU-Pro、ReMI）：前 200 步快速上升，之后稳定线性增长，与 reward 曲线一致。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h4>为什么要 PaCoRe：「缺失痕迹」假说<span class="src">§5.2</span></h4>
+    <p>感知类任务（grounding、OCR）的 RL 收益主要来自<b>降熵</b>：剪掉多余的探索 token，把高温下的 Pass@N 收敛成稳定的 Pass@1，所以回答会变短。作者推测，人类看图时「先扫一眼再聚焦、试错再修正」的过程很少被写进语料，RL 没有可以放大的行为痕迹。PaCoRe 让多个 proposer 先把视觉假设显式写出来，再由综合步交叉核对，等于把这段隐式过程外化。附录表 7 给了一个 grounding 案例：模型汇总多份参考坐标，再推断最终点位。</p>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：同档领先，PaCoRe 再抬一截</h2>
+  <p class="sec-intro">推理设置固定为 temperature 1.0、top-p 1.0、top-k 0<span class="src">§4.1</span>。对比分两组：7–10B 开源（GLM-4.6V-Flash 9B、Qwen3-VL-Thinking 8B、InternVL-3.5 8B、MiMo-VL-RL-2508 7B），以及大 10–20 倍的模型和闭源旗舰（GLM-4.6V 106B-A12B、Qwen3-VL-Thinking 235B-A22B、Gemini-2.5-Pro、Seed-1.5-VL-Thinking）<span class="src">§4.1</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1：STEP3-VL-10B 与前沿多模态模型在六个基准上的对比柱状图" loading="lazy"></div>
+    <figcaption><b>六个代表性基准上的对比</b>（MMMU、MathVista、MathVision、MMBench、AIME2025、MultiChallenge）。图中 MMBench 的 91.8 / 92.2 分别是 SeRe / PaCoRe 下 EN、CN 的平均值。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <h3 class="wide">和大模型 / 闭源旗舰比（精选自表 3）</h3>
+  <div class="chart-cell wide">
+    <svg class="chart" viewBox="0 0 760 300" role="img" aria-label="与大模型对比"><text class="ch-t" x="0" y="16">STEP3-VL-10B vs Qwen3-VL-235B / Gemini-2.5-Pro</text><text class="ch-src" x="760" y="16" text-anchor="end">表 3</text><line class="grid-l" x1="36" y1="254.0" x2="760" y2="254.0"/><text class="ch-ax" x="30" y="257.0" text-anchor="end">0</text><line class="grid-l" x1="36" y1="210.0" x2="760" y2="210.0"/><text class="ch-ax" x="30" y="213.0" text-anchor="end">20</text><line class="grid-l" x1="36" y1="166.0" x2="760" y2="166.0"/><text class="ch-ax" x="30" y="169.0" text-anchor="end">40</text><line class="grid-l" x1="36" y1="122.0" x2="760" y2="122.0"/><text class="ch-ax" x="30" y="125.0" text-anchor="end">60</text><line class="grid-l" x1="36" y1="78.0" x2="760" y2="78.0"/><text class="ch-ax" x="30" y="81.0" text-anchor="end">80</text><line class="grid-l" x1="36" y1="34.0" x2="760" y2="34.0"/><text class="ch-ax" x="30" y="37.0" text-anchor="end">100</text><rect class="bar-qi" x="45.3" y="82.2" width="24" height="171.8" rx="2"/><text class="ch-ax" x="57.3" y="78.2" text-anchor="middle" style="font-size:8.5px">78.1</text><rect class="bar-q" x="71.3" y="77.8" width="24" height="176.2" rx="2"/><text class="ch-ax" x="83.3" y="73.8" text-anchor="middle" style="font-size:8.5px">80.1</text><rect class="bar-o" x="97.3" y="80.9" width="24" height="173.1" rx="2"/><text class="ch-ax" x="109.3" y="76.9" text-anchor="middle" style="font-size:8.5px">78.7</text><rect class="bar-o2" x="123.3" y="69.4" width="24" height="184.6" rx="2"/><text class="ch-ax" x="135.3" y="65.4" text-anchor="middle" style="font-size:8.5px">83.9</text><text class="ch-lbl" x="96.3" y="272" text-anchor="middle">MMMU</text><rect class="bar-qi" x="166.0" y="98.2" width="24" height="155.8" rx="2"/><text class="ch-ax" x="178.0" y="94.2" text-anchor="middle" style="font-size:8.5px">70.8</text><rect class="bar-q" x="192.0" y="86.9" width="24" height="167.1" rx="2"/><text class="ch-ax" x="204.0" y="82.9" text-anchor="middle" style="font-size:8.5px">76.0</text><rect class="bar-o" x="218.0" y="95.4" width="24" height="158.6" rx="2"/><text class="ch-ax" x="230.0" y="91.4" text-anchor="middle" style="font-size:8.5px">72.1</text><rect class="bar-o2" x="244.0" y="92.7" width="24" height="161.3" rx="2"/><text class="ch-ax" x="256.0" y="88.7" text-anchor="middle" style="font-size:8.5px">73.3*</text><text class="ch-lbl" x="217.0" y="272" text-anchor="middle">MathVision</text><rect class="bar-qi" x="286.7" y="51.5" width="24" height="202.5" rx="2"/><text class="ch-ax" x="298.7" y="47.5" text-anchor="middle" style="font-size:8.5px">92.0</text><rect class="bar-q" x="312.7" y="50.8" width="24" height="203.2" rx="2"/><text class="ch-ax" x="324.7" y="46.8" text-anchor="middle" style="font-size:8.5px">92.4</text><rect class="bar-o" x="338.7" y="50.1" width="24" height="203.9" rx="2"/><text class="ch-ax" x="350.7" y="46.1" text-anchor="middle" style="font-size:8.5px">92.7</text><rect class="bar-o2" x="364.7" y="49.0" width="24" height="205.0" rx="2"/><text class="ch-ax" x="376.7" y="45.0" text-anchor="middle" style="font-size:8.5px">93.2</text><text class="ch-lbl" x="337.7" y="272" text-anchor="middle">MMBench EN</text><rect class="bar-qi" x="407.3" y="63.2" width="24" height="190.8" rx="2"/><text class="ch-ax" x="419.3" y="59.2" text-anchor="middle" style="font-size:8.5px">86.8</text><rect class="bar-q" x="433.3" y="58.2" width="24" height="195.8" rx="2"/><text class="ch-ax" x="445.3" y="54.2" text-anchor="middle" style="font-size:8.5px">89.0</text><rect class="bar-o" x="459.3" y="61.9" width="24" height="192.1" rx="2"/><text class="ch-ax" x="471.3" y="57.9" text-anchor="middle" style="font-size:8.5px">87.3</text><rect class="bar-o2" x="485.3" y="65.0" width="24" height="189.0" rx="2"/><text class="ch-ax" x="497.3" y="61.0" text-anchor="middle" style="font-size:8.5px">85.9</text><text class="ch-lbl" x="458.3" y="272" text-anchor="middle">OCRBench</text><rect class="bar-qi" x="528.0" y="137.2" width="24" height="116.8" rx="2"/><text class="ch-ax" x="540.0" y="133.2" text-anchor="middle" style="font-size:8.5px">53.1</text><rect class="bar-q" x="554.0" y="133.8" width="24" height="120.2" rx="2"/><text class="ch-ax" x="566.0" y="129.8" text-anchor="middle" style="font-size:8.5px">54.6</text><rect class="bar-o" x="580.0" y="123.5" width="24" height="130.5" rx="2"/><text class="ch-ax" x="592.0" y="119.5" text-anchor="middle" style="font-size:8.5px">59.3</text><rect class="bar-o2" x="606.0" y="106.9" width="24" height="147.1" rx="2"/><text class="ch-ax" x="618.0" y="102.9" text-anchor="middle" style="font-size:8.5px">66.8</text><text class="ch-lbl" x="579.0" y="272" text-anchor="middle">SimpleVQA</text><rect class="bar-qi" x="648.7" y="61.1" width="24" height="192.9" rx="2"/><text class="ch-ax" x="660.7" y="57.1" text-anchor="middle" style="font-size:8.5px">87.7</text><rect class="bar-q" x="674.7" y="46.3" width="24" height="207.7" rx="2"/><text class="ch-ax" x="686.7" y="42.3" text-anchor="middle" style="font-size:8.5px">94.4</text><rect class="bar-o" x="700.7" y="70.1" width="24" height="183.9" rx="2"/><text class="ch-ax" x="712.7" y="66.1" text-anchor="middle" style="font-size:8.5px">83.6</text><rect class="bar-o2" x="726.7" y="69.3" width="24" height="184.7" rx="2"/><text class="ch-ax" x="738.7" y="65.3" text-anchor="middle" style="font-size:8.5px">84.0</text><text class="ch-lbl" x="699.7" y="272" text-anchor="middle">AIME2025</text><line class="axis" x1="36" y1="254" x2="760" y2="254"/></svg>
+    <div class="chart-legend"><span class="l2">STEP3-VL-10B · SeRe</span><span class="l1">STEP3-VL-10B · PaCoRe</span><span class="l3">Qwen3-VL-Thinking 235B-A22B</span><span class="l4">Gemini-2.5-Pro</span></div>
+    <p class="tbl-note">纵轴从 0 起，满分 100。<sup>*</sup> 为原文标注的「取自原论文」数值（Gemini-2.5-Pro 的 MathVision）。</p>
+  </div>
+
+  <div class="tbl-wrap wide tall"><table><thead><tr><th>基准</th><th class="q">STEP3 SeRe</th><th class="q">STEP3 PaCoRe</th><th class="">GLM-4.6V 106B-A12B</th><th class="">Qwen3-VL-Thinking 235B-A22B</th><th class="">Gemini-2.5-Pro</th><th class="">Seed-1.5-VL-Thinking</th></tr></thead><tbody><tr><td>MMMU</td><td class="q">78.11</td><td class="q">80.11</td><td class="">75.20</td><td class="">78.70</td><td class="best">83.89</td><td class="">79.11</td></tr><tr><td>MMMU-Pro</td><td class="q">64.08</td><td class="q">67.18</td><td class="">65.84</td><td class="">72.37</td><td class="best">76.96</td><td class="">70.60</td></tr><tr><td>MathVision</td><td class="q">70.81</td><td class="q best">75.95</td><td class="">63.50<sup>*</sup></td><td class="">72.10</td><td class="">73.30<sup>*</sup></td><td class="">68.70<sup>*</sup></td></tr><tr><td>MMBench EN</td><td class="q">92.05</td><td class="q">92.38</td><td class="">92.75</td><td class="">92.70</td><td class="best">93.19</td><td class="">92.11</td></tr><tr><td>SimpleVQA</td><td class="q">53.08</td><td class="q">54.64</td><td class="">57.95</td><td class="">59.30</td><td class="best">66.85</td><td class="">64.72</td></tr><tr><td>HallusionBench</td><td class="q">64.91</td><td class="q">64.54</td><td class="">60.63</td><td class="">65.58</td><td class="best">65.63</td><td class="">64.13</td></tr><tr><td>M3GIA</td><td class="q">78.33</td><td class="q">73.50</td><td class="">78.72</td><td class="">81.00</td><td class="">83.11</td><td class="best">83.22</td></tr><tr><td>CountQA</td><td class="q">33.69</td><td class="q">38.29</td><td class="">36.32</td><td class="">45.62</td><td class="">38.02</td><td class="best">48.89</td></tr><tr><td>OCRBench</td><td class="q">86.75</td><td class="q best">89.00</td><td class="">86.20</td><td class="">87.30</td><td class="">85.90</td><td class="">85.20</td></tr><tr><td>OmniOCR</td><td class="q">76.98</td><td class="q">78.14</td><td class="">84.53</td><td class="">87.20</td><td class="">66.05</td><td class="best">87.80</td></tr><tr><td>All-Angles-Bench</td><td class="q">57.21</td><td class="q">64.71</td><td class="">62.94</td><td class="">60.59</td><td class="best">65.88</td><td class="">57.65</td></tr><tr><td>MindCube-tiny</td><td class="q">62.81</td><td class="q best">68.58</td><td class="">52.83</td><td class="">47.58</td><td class="">58.92</td><td class="">39.83</td></tr><tr><td>MMLU-Pro</td><td class="q">76.02</td><td class="q">77.09</td><td class="">79.96</td><td class="">83.75</td><td class="best">86.45</td><td class="">83.39</td></tr><tr><td>SuperGPQA</td><td class="q">50.38</td><td class="q">53.15</td><td class="">53.28</td><td class="">64.20</td><td class="best">65.00</td><td class="">60.50</td></tr><tr><td>AIME2025</td><td class="q">87.66</td><td class="q best">94.43</td><td class="">71.88</td><td class="">83.59</td><td class="">83.96</td><td class="">64.06</td></tr><tr><td>HMMT25</td><td class="q">78.18</td><td class="q best">92.14</td><td class="">57.29</td><td class="">67.71</td><td class="">65.68</td><td class="">51.30</td></tr></tbody></table></div><div class="keybox"><span class="k-best">每行数值最高（本页按数值标注，非原文加粗）</span><span class="k-q">STEP3-VL-10B</span><span>* = 原文标注「取自原论文」</span></div><p class="tbl-note">精选自表 3，含 STEP3 落后的行（SimpleVQA、OmniOCR、MMLU-Pro、SuperGPQA）和 PaCoRe 反降的行（HallusionBench、M3GIA）。</p>
+
+  <h3 class="wide">PaCoRe 相对 SeRe 的增益（不全是正的）</h3>
+  <div class="chart-cell wide">
+    <svg class="chart" viewBox="0 0 700 448" role="img" aria-label="PaCoRe 相对 SeRe 的增益"><text class="ch-t" x="0" y="16">PaCoRe − SeRe（百分点）</text><text class="ch-src" x="700" y="16" text-anchor="end">表 3 · 推算</text><line class="grid-l" x1="220" y1="28" x2="220" y2="418"/><text class="ch-ax" x="220" y="434" text-anchor="middle">-5</text><line class="grid-l" x1="330" y1="28" x2="330" y2="418"/><text class="ch-ax" x="330" y="434" text-anchor="middle">0</text><line class="grid-l" x1="440" y1="28" x2="440" y2="418"/><text class="ch-ax" x="440" y="434" text-anchor="middle">+5</text><line class="grid-l" x1="550" y1="28" x2="550" y2="418"/><text class="ch-ax" x="550" y="434" text-anchor="middle">+10</text><line class="grid-l" x1="660" y1="28" x2="660" y2="418"/><text class="ch-ax" x="660" y="434" text-anchor="middle">+15</text><text class="ch-lbl" x="150" y="49" text-anchor="end">IMO-AnswerBench</text><rect class="bar-q" x="330.0" y="38" width="319.9" height="15" rx="2"/><text class="ch-val" x="655.9" y="49" text-anchor="start">+14.54</text><text class="ch-lbl" x="150" y="73" text-anchor="end">HMMT25</text><rect class="bar-q" x="330.0" y="62" width="307.1" height="15" rx="2"/><text class="ch-val" x="643.1" y="73" text-anchor="start">+13.96</text><text class="ch-lbl" x="150" y="97" text-anchor="end">BeyondAIME</text><rect class="bar-q" x="330.0" y="86" width="236.9" height="15" rx="2"/><text class="ch-val" x="572.9" y="97" text-anchor="start">+10.77</text><text class="ch-lbl" x="150" y="121" text-anchor="end">All-Angles-Bench</text><rect class="bar-q" x="330.0" y="110" width="165.0" height="15" rx="2"/><text class="ch-val" x="501.0" y="121" text-anchor="start">+7.50</text><text class="ch-lbl" x="150" y="145" text-anchor="end">AIME2025</text><rect class="bar-q" x="330.0" y="134" width="148.9" height="15" rx="2"/><text class="ch-val" x="484.9" y="145" text-anchor="start">+6.77</text><text class="ch-lbl" x="150" y="169" text-anchor="end">PhyX</text><rect class="bar-q" x="330.0" y="158" width="144.3" height="15" rx="2"/><text class="ch-val" x="480.3" y="169" text-anchor="start">+6.56</text><text class="ch-lbl" x="150" y="193" text-anchor="end">SpatialViz-Bench</text><rect class="bar-q" x="330.0" y="182" width="143.4" height="15" rx="2"/><text class="ch-val" x="479.4" y="193" text-anchor="start">+6.52</text><text class="ch-lbl" x="150" y="217" text-anchor="end">MathVision</text><rect class="bar-q" x="330.0" y="206" width="113.1" height="15" rx="2"/><text class="ch-val" x="449.1" y="217" text-anchor="start">+5.14</text><text class="ch-lbl" x="150" y="241" text-anchor="end">DynaMath</text><rect class="bar-q" x="330.0" y="230" width="112.0" height="15" rx="2"/><text class="ch-val" x="448.0" y="241" text-anchor="start">+5.09</text><text class="ch-lbl" x="150" y="265" text-anchor="end">CountQA</text><rect class="bar-q" x="330.0" y="254" width="101.2" height="15" rx="2"/><text class="ch-val" x="437.2" y="265" text-anchor="start">+4.60</text><text class="ch-lbl" x="150" y="289" text-anchor="end">OCRBench</text><rect class="bar-q" x="330.0" y="278" width="49.5" height="15" rx="2"/><text class="ch-val" x="385.5" y="289" text-anchor="start">+2.25</text><text class="ch-lbl" x="150" y="313" text-anchor="end">MMMU</text><rect class="bar-q" x="330.0" y="302" width="44.0" height="15" rx="2"/><text class="ch-val" x="380.0" y="313" text-anchor="start">+2.00</text><text class="ch-lbl" x="150" y="337" text-anchor="end">MMBench EN</text><rect class="bar-q" x="330.0" y="326" width="7.3" height="15" rx="2"/><text class="ch-val" x="343.3" y="337" text-anchor="start">+0.33</text><text class="ch-lbl" x="150" y="361" text-anchor="end">MMVP</text><rect class="bar-neg" x="326.5" y="350" width="3.5" height="15" rx="2"/><text class="ch-val" x="320.5" y="361" text-anchor="end">−0.16</text><text class="ch-lbl" x="150" y="385" text-anchor="end">HallusionBench</text><rect class="bar-neg" x="321.9" y="374" width="8.1" height="15" rx="2"/><text class="ch-val" x="315.9" y="385" text-anchor="end">−0.37</text><text class="ch-lbl" x="150" y="409" text-anchor="end">M3GIA</text><rect class="bar-neg" x="223.7" y="398" width="106.3" height="15" rx="2"/><text class="ch-val" x="217.7" y="409" text-anchor="end">−4.83</text><line class="zero" x1="330" y1="28" x2="330" y2="418"/></svg>
+    <p class="tbl-note">Δ = PaCoRe − SeRe（百分点），均来自表 3 的两列<span class="src calc">推算</span>。文本数学题涨得最多；表 3 里 PaCoRe 低于 SeRe 的只有 M3GIA、HallusionBench、MMVP 三项（橙色）。§5.2 原文报告的增益：MathVision +5.14、DynaMath +5.09、CountQA +4.6、OCRBench +2.25、All-Angles-Bench +7.50、SpatialViz-Bench +6.52。</p>
+  </div>
+
+  <h3 class="wide">同档 7–10B 对比（精选自表 1 / 表 2）</h3>
+  <div class="tbl-wrap wide tall"><table><thead><tr><th>基准</th><th class="q">STEP3-VL-10B</th><th class="">GLM-4.6V-Flash 9B</th><th class="">Qwen3-VL-Thinking 8B</th><th class="">InternVL-3.5 8B</th><th class="">MiMo-VL-RL-2508 7B</th></tr></thead><tbody><tr><td>MMMU</td><td class="q best">78.11</td><td class="">71.17</td><td class="">73.53</td><td class="">71.69</td><td class="">71.14</td></tr><tr><td>MathVision</td><td class="q best">70.81</td><td class="">54.05</td><td class="">59.60</td><td class="">52.05</td><td class="">59.65</td></tr><tr><td>MMBench EN</td><td class="q best">92.05</td><td class="">91.04</td><td class="">90.55</td><td class="">88.20</td><td class="">89.91</td></tr><tr><td>HallusionBench</td><td class="q best">64.91</td><td class="">59.92</td><td class="">62.23</td><td class="">58.79</td><td class="">63.53</td></tr><tr><td>PixMo-Count</td><td class="q">70.85</td><td class="best">76.42</td><td class="">69.51</td><td class="">63.24</td><td class="">69.98</td></tr><tr><td>HumanEval-V</td><td class="q best">66.05</td><td class="">29.26</td><td class="">26.94</td><td class="">24.31</td><td class="">31.96</td></tr><tr><td>OCRBench</td><td class="q best">86.75</td><td class="">85.97</td><td class="">82.85</td><td class="">83.70</td><td class="">85.40</td></tr><tr><td>OmniOCR</td><td class="q">76.98</td><td class="best">80.24</td><td class="">75.53</td><td class="">70.97</td><td class="">74.38</td></tr><tr><td>MindCube-tiny</td><td class="q best">62.81</td><td class="">45.00</td><td class="">41.06</td><td class="">34.65</td><td class="">39.06</td></tr><tr><td>OmniDocBench (NED) ↓</td><td class="q best">21.51</td><td class="">24.88</td><td class="">23.38</td><td class="">29.47</td><td class="">23.30</td></tr><tr><td>ScreenSpot-Pro</td><td class="q best">51.55</td><td class="">45.68</td><td class="">46.60<sup>*</sup></td><td class="">15.39</td><td class="">34.84</td></tr><tr><td>OSWorld-G</td><td class="q best">59.02</td><td class="">54.71</td><td class="">56.70<sup>*</sup></td><td class="">31.91</td><td class="">50.54</td></tr><tr><td>ScreenSpot-V2</td><td class="q">92.61</td><td class="">92.14</td><td class="best">93.60<sup>*</sup></td><td class="">84.02</td><td class="">90.82</td></tr><tr><td>MMLU-Pro</td><td class="q">76.02</td><td class="">72.30</td><td class="best">77.09</td><td class="">76.03</td><td class="">73.81</td></tr><tr><td>AIME2025</td><td class="q best">87.66</td><td class="">33.02</td><td class="">62.92</td><td class="">62.50</td><td class="">66.51</td></tr><tr><td>HMMT25</td><td class="q best">78.18</td><td class="">19.17</td><td class="">45.21</td><td class="">35.78</td><td class="">47.34</td></tr><tr><td>BeyondAIME</td><td class="q">63.23</td><td class="">11.80</td><td class="">30.59</td><td class="best">66.56</td><td class="">43.94</td></tr><tr><td>LiveCodeBench (2408-2505)</td><td class="q best">75.77</td><td class="">22.17</td><td class="">51.05</td><td class="">45.90</td><td class="">39.65</td></tr><tr><td>Arena-Hard-V2</td><td class="q best">58.57</td><td class="">9.26</td><td class="">47.34</td><td class="">15.57</td><td class="">28.59</td></tr></tbody></table></div><div class="keybox"><span class="k-best">每行数值最高（本页按数值标注，非原文加粗）</span><span class="k-q">STEP3-VL-10B</span><span>* = 原文标注「取自原论文」</span></div><p class="tbl-note">精选自表 1（多模态）与表 2（文本，最后 6 行）。完整表见下方折叠区。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>强项 <span class="tag ok-tag">表 1 / 表 2</span></h4>
+      <ul>
+        <li>视觉编码：HumanEval-V 66.05，次优为 31.96。</li>
+        <li>GUI：ScreenSpot-Pro 51.55，OSWorld-G 59.02，MMBench-GUI L2 81.50。</li>
+        <li>空间：MindCube-tiny 62.81，次优 45.00；SpatialViz-Bench 45.51。原文称空间方向<b>没有专门构造数据</b><span class="src">§4.2</span>。</li>
+        <li>文本：AIME2025 87.66，HMMT25 78.18，LiveCodeBench 75.77，Arena-Hard-V2 58.57。</li>
+      </ul></div>
+    <div class="card mod"><h4>不占优的项 <span class="tag nd-tag">表 1 / 表 2</span></h4>
+      <ul>
+        <li>计数：CountBench、CountQA、PixMo-Count 都输给 GLM-4.6V-Flash。</li>
+        <li>OCR：OmniOCR 76.98 vs GLM-4.6V-Flash 80.24。</li>
+        <li>空间：CVBench、RealWorldQA、V* 输给 GLM-4.6V-Flash。</li>
+        <li>Design2Code / (hard)：输给 MiMo-VL-RL-2508（82.54 / 59.38）。</li>
+        <li>ScreenSpot-V2 92.61 vs Qwen3-VL-8B 93.60<sup>*</sup>；CharXiv (RQ) 59.52 vs GLM-4.6V-Flash 59.70；MM-MT-Bench、MIA-Bench 略低于 Qwen3-VL-8B。</li>
+        <li>MMLU-Pro、LiveBench、IFEval、HealthBench、CNMO2024：Qwen3-VL-8B 更高。</li>
+      </ul></div>
+  </div>
+
+  <details class="more wide">
+    <summary>表 1 全表：7–10B 开源模型 · 多模态基准<span class="hint">55 行</span></summary>
+    <div class="body"><div class="tbl-wrap wide tall"><table><thead><tr><th>基准</th><th class="q">STEP3-VL-10B</th><th class="">GLM-4.6V-Flash 9B</th><th class="">Qwen3-VL-Thinking 8B</th><th class="">InternVL-3.5 8B</th><th class="">MiMo-VL-RL-2508 7B</th></tr></thead><tbody><tr class="grp"><td colspan="6">STEM / 多模态推理</td></tr><tr><td>MMMU</td><td class="q best">78.11</td><td class="">71.17</td><td class="">73.53</td><td class="">71.69</td><td class="">71.14</td></tr><tr><td>MMMU-Pro</td><td class="q best">64.08</td><td class="">59.93</td><td class="">60.94</td><td class="">59.11</td><td class="">60.29</td></tr><tr><td>MathVision</td><td class="q best">70.81</td><td class="">54.05</td><td class="">59.60</td><td class="">52.05</td><td class="">59.65</td></tr><tr><td>MathVista</td><td class="q best">83.97</td><td class="">82.85</td><td class="">78.50</td><td class="">76.78</td><td class="">79.86</td></tr><tr><td>LogicVista</td><td class="q best">66.89</td><td class="">60.29</td><td class="">64.37</td><td class="">54.03</td><td class="">63.37</td></tr><tr><td>DynaMath</td><td class="q best">56.39</td><td class="">48.40</td><td class="">45.11</td><td class="">39.47</td><td class="">51.65</td></tr><tr><td>ZeroBench (main)</td><td class="q best">1.00</td><td class="">0.50</td><td class="">0.50</td><td class="">0.75</td><td class="">0.50</td></tr><tr><td>ZeroBench (sub)</td><td class="q best">27.54</td><td class="">24.03</td><td class="">20.58</td><td class="">18.56</td><td class="">21.18</td></tr><tr><td>MathVerse (vision)</td><td class="q best">75.73</td><td class="">71.41</td><td class="">73.19</td><td class="">65.18</td><td class="">73.19</td></tr><tr><td>We-Math</td><td class="q best">73.03</td><td class="">61.86</td><td class="">67.31</td><td class="">51.26</td><td class="">63.24</td></tr><tr><td>VisuLogic</td><td class="q best">29.68</td><td class="">26.50</td><td class="">27.82</td><td class="">27.20</td><td class="">24.52</td></tr><tr><td>PhyX</td><td class="q best">59.45</td><td class="">52.28</td><td class="">57.67</td><td class="">50.51</td><td class="">56.00</td></tr><tr><td>HLE</td><td class="q best">10.73</td><td class="">3.82</td><td class="">5.98</td><td class="">4.51</td><td class="">5.90</td></tr><tr class="grp"><td colspan="6">识别 / 通用 VQA</td></tr><tr><td>MMBench EN</td><td class="q best">92.05</td><td class="">91.04</td><td class="">90.55</td><td class="">88.20</td><td class="">89.91</td></tr><tr><td>MMBench CN</td><td class="q best">91.55</td><td class="">89.56</td><td class="">89.75</td><td class="">86.24</td><td class="">88.79</td></tr><tr><td>SimpleVQA</td><td class="q best">53.08</td><td class="">52.09</td><td class="">48.69</td><td class="">41.43</td><td class="">49.65</td></tr><tr><td>MMStar</td><td class="q best">77.48</td><td class="">74.26</td><td class="">73.58</td><td class="">69.83</td><td class="">72.93</td></tr><tr><td>HallusionBench</td><td class="q best">64.91</td><td class="">59.92</td><td class="">62.23</td><td class="">58.79</td><td class="">63.53</td></tr><tr><td>MMVP</td><td class="q best">68.16</td><td class="">63.33</td><td class="">57.17</td><td class="">51.33</td><td class="">63.50</td></tr><tr><td>ReMI</td><td class="q best">67.29</td><td class="">60.75</td><td class="">57.17</td><td class="">52.65</td><td class="">63.13</td></tr><tr><td>M3GIA</td><td class="q best">78.36</td><td class="">76.66</td><td class="">76.86</td><td class="">62.38</td><td class="">65.84</td></tr><tr><td>DoYouSeeMe</td><td class="q best">67.48</td><td class="">65.52</td><td class="">56.90</td><td class="">38.22</td><td class="">60.92</td></tr><tr class="grp"><td colspan="6">计数</td></tr><tr><td>CountBench</td><td class="q">88.75</td><td class="best">90.22</td><td class="">88.85</td><td class="">82.18</td><td class="">83.60</td></tr><tr><td>CountQA</td><td class="q">33.69</td><td class="best">33.79</td><td class="">23.35</td><td class="">22.32</td><td class="">27.41</td></tr><tr><td>PixMo-Count</td><td class="q">70.85</td><td class="best">76.42</td><td class="">69.51</td><td class="">63.24</td><td class="">69.98</td></tr><tr class="grp"><td colspan="6">指令遵循</td></tr><tr><td>MM-MT-Bench</td><td class="q">8.14</td><td class="">6.94</td><td class="best">8.16</td><td class="">7.46</td><td class="">8.08</td></tr><tr><td>MIA-Bench</td><td class="q">92.00</td><td class="">89.99</td><td class="best">92.35</td><td class="">90.89</td><td class="">90.91</td></tr><tr><td>MM-IFEval</td><td class="q best">61.87</td><td class="">60.78</td><td class="">60.93</td><td class="">60.80</td><td class="">61.28</td></tr><tr class="grp"><td colspan="6">多模态代码</td></tr><tr><td>HumanEval-V</td><td class="q best">66.05</td><td class="">29.26</td><td class="">26.94</td><td class="">24.31</td><td class="">31.96</td></tr><tr><td>Design2Code</td><td class="q">79.55</td><td class="">25.93</td><td class="">72.21</td><td class="">64.15</td><td class="best">82.54</td></tr><tr><td>Design2Code (hard)</td><td class="q">54.69</td><td class="">19.37</td><td class="">48.75</td><td class="">46.25</td><td class="best">59.38</td></tr><tr class="grp"><td colspan="6">OCR</td></tr><tr><td>OCRBench</td><td class="q best">86.75</td><td class="">85.97</td><td class="">82.85</td><td class="">83.70</td><td class="">85.40</td></tr><tr><td>OmniOCR</td><td class="q">76.98</td><td class="best">80.24</td><td class="">75.53</td><td class="">70.97</td><td class="">74.38</td></tr><tr><td>CC-OCR (Multi-Lang-OCR)</td><td class="q best">76.59</td><td class="">70.85</td><td class="">69.25</td><td class="">66.42</td><td class="">72.06</td></tr><tr class="grp"><td colspan="6">2D / 3D 空间</td></tr><tr><td>BLINK</td><td class="q best">66.79</td><td class="">64.90</td><td class="">62.78</td><td class="">55.40</td><td class="">62.57</td></tr><tr><td>CVBench</td><td class="q">83.49</td><td class="best">86.01</td><td class="">84.81</td><td class="">77.52</td><td class="">82.04</td></tr><tr><td>MMSI-Bench</td><td class="q best">32.18</td><td class="">31.13</td><td class="">29.05</td><td class="">28.12</td><td class="">29.60</td></tr><tr><td>ERQA</td><td class="q best">48.87</td><td class="">45.13</td><td class="">44.31</td><td class="">38.88</td><td class="">41.94</td></tr><tr><td>OmniSpatial</td><td class="q best">51.58</td><td class="">49.41</td><td class="">46.56</td><td class="">47.49</td><td class="">46.74</td></tr><tr><td>All-Angles-Bench</td><td class="q best">57.21</td><td class="">53.24</td><td class="">45.88</td><td class="">45.29</td><td class="">51.62</td></tr><tr><td>MindCube-tiny</td><td class="q best">62.81</td><td class="">45.00</td><td class="">41.06</td><td class="">34.65</td><td class="">39.06</td></tr><tr><td>RealWorldQA</td><td class="q">74.44</td><td class="best">76.93</td><td class="">71.93</td><td class="">66.93</td><td class="">72.78</td></tr><tr><td>SpatialViz-Bench</td><td class="q best">45.51</td><td class="">33.79</td><td class="">35.15</td><td class="">32.42</td><td class="">28.94</td></tr><tr><td>STARE</td><td class="q best">61.75</td><td class="">56.45</td><td class="">54.95</td><td class="">48.20</td><td class="">55.06</td></tr><tr><td>CoreCognition</td><td class="q best">66.69</td><td class="">65.11</td><td class="">64.04</td><td class="">61.70</td><td class="">65.30</td></tr><tr><td>V*</td><td class="q">82.85</td><td class="best">83.51</td><td class="">81.02</td><td class="">66.89</td><td class="">83.38</td></tr><tr><td>ViewSpatial</td><td class="q best">46.14</td><td class="">43.26</td><td class="">45.20</td><td class="">35.96</td><td class="">40.19</td></tr><tr class="grp"><td colspan="6">文档与图表</td></tr><tr><td>CharXiv (RQ)</td><td class="q">59.52</td><td class="best">59.70</td><td class="">53.48</td><td class="">47.15</td><td class="">59.32</td></tr><tr><td>AI2D</td><td class="q best">89.35</td><td class="">88.93</td><td class="">83.32</td><td class="">82.34</td><td class="">84.96</td></tr><tr><td>CSVQA</td><td class="q best">63.33</td><td class="">54.99</td><td class="">61.32</td><td class="">46.62</td><td class="">60.23</td></tr><tr><td>OmniDocBench (NED) ↓</td><td class="q best">21.51</td><td class="">24.88</td><td class="">23.38</td><td class="">29.47</td><td class="">23.30</td></tr><tr class="grp"><td colspan="6">GUI Grounding</td></tr><tr><td>ScreenSpot-Pro</td><td class="q best">51.55</td><td class="">45.68</td><td class="">46.60<sup>*</sup></td><td class="">15.39</td><td class="">34.84</td></tr><tr><td>OSWorld-G</td><td class="q best">59.02</td><td class="">54.71</td><td class="">56.70<sup>*</sup></td><td class="">31.91</td><td class="">50.54</td></tr><tr><td>ScreenSpot-V2</td><td class="q">92.61</td><td class="">92.14</td><td class="best">93.60<sup>*</sup></td><td class="">84.02</td><td class="">90.82</td></tr><tr><td>MMBench-GUI (L2)</td><td class="q best">81.50</td><td class="">78.46</td><td class="">76.60</td><td class="">63.95</td><td class="">75.69</td></tr></tbody></table></div><div class="keybox"><span class="k-best">每行数值最高（本页按数值标注，非原文加粗）</span><span class="k-q">STEP3-VL-10B</span><span>* = 原文标注「取自原论文」</span></div><p class="tbl-note">来源：论文表 1。OmniDocBench 为 NED，越低越好。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>表 2 全表：7–10B 开源模型 · 文本基准<span class="hint">17 行</span></summary>
+    <div class="body"><div class="tbl-wrap wide tall"><table><thead><tr><th>基准</th><th class="q">STEP3-VL-10B</th><th class="">GLM-4.6V-Flash 9B</th><th class="">Qwen3-VL-Thinking 8B</th><th class="">InternVL-3.5 8B</th><th class="">MiMo-VL-RL-2508 7B</th></tr></thead><tbody><tr class="grp"><td colspan="6">考试</td></tr><tr><td>MMLU-Pro</td><td class="q">76.02</td><td class="">72.30</td><td class="best">77.09</td><td class="">76.03</td><td class="">73.81</td></tr><tr><td>GPQA-Diamond</td><td class="q best">70.83</td><td class="">49.37</td><td class="">67.55</td><td class="">65.12</td><td class="">59.97</td></tr><tr><td>SuperGPQA</td><td class="q best">50.38</td><td class="">42.95</td><td class="">49.52</td><td class="">42.35</td><td class="">45.69</td></tr><tr><td>LiveBench(2024-11-25)</td><td class="q">69.71</td><td class="">44.11</td><td class="best">70.79</td><td class="">55.62</td><td class="">54.35</td></tr><tr class="grp"><td colspan="6">数学</td></tr><tr><td>AIME2024</td><td class="q best">90.94</td><td class="">37.92</td><td class="">74.06</td><td class="">78.18</td><td class="">75.36</td></tr><tr><td>AIME2025</td><td class="q best">87.66</td><td class="">33.02</td><td class="">62.92</td><td class="">62.50</td><td class="">66.51</td></tr><tr><td>HMMT25</td><td class="q best">78.18</td><td class="">19.17</td><td class="">45.21</td><td class="">35.78</td><td class="">47.34</td></tr><tr><td>CNMO2024</td><td class="q">78.20</td><td class="">61.72</td><td class="best">79.22</td><td class="">66.56</td><td class="">76.17</td></tr><tr><td>BeyondAIME</td><td class="q">63.23</td><td class="">11.80</td><td class="">30.59</td><td class="best">66.56</td><td class="">43.94</td></tr><tr><td>IMO-AnswerBench</td><td class="q best">62.12</td><td class="">22.62</td><td class="">38.69</td><td class="">35.00</td><td class="">48.44</td></tr><tr class="grp"><td colspan="6">代码</td></tr><tr><td>LiveCodeBench (2408-2505)</td><td class="q best">75.77</td><td class="">22.17</td><td class="">51.05</td><td class="">45.90</td><td class="">39.65</td></tr><tr class="grp"><td colspan="6">指令遵循</td></tr><tr><td>IFEval</td><td class="q">82.16</td><td class="">74.86</td><td class="best">83.23</td><td class="">79.72</td><td class="">68.62</td></tr><tr><td>IFBench</td><td class="q best">43.28</td><td class="">27.47</td><td class="">36.65</td><td class="">28.14</td><td class="">23.47</td></tr><tr><td>MultiChallenge</td><td class="q best">62.64</td><td class="">42.49</td><td class="">49.82</td><td class="">37.73</td><td class="">44.69</td></tr><tr class="grp"><td colspan="6">主观</td></tr><tr><td>Arena-Hard-V2</td><td class="q best">58.57</td><td class="">9.26</td><td class="">47.34</td><td class="">15.57</td><td class="">28.59</td></tr><tr><td>WildBench</td><td class="q best">86.04</td><td class="">34.04</td><td class="">72.36</td><td class="">56.45</td><td class="">63.09</td></tr><tr class="grp"><td colspan="6">医疗</td></tr><tr><td>HealthBench</td><td class="q">44.67</td><td class="">31.80</td><td class="best">47.45</td><td class="">35.54</td><td class="">43.58</td></tr></tbody></table></div><div class="keybox"><span class="k-best">每行数值最高（本页按数值标注，非原文加粗）</span><span class="k-q">STEP3-VL-10B</span><span>* = 原文标注「取自原论文」</span></div><p class="tbl-note">来源：论文表 2。InternVL-3.5 的 BeyondAIME 与 CNMO2024 同为 66.56，疑似抄录错误，见「局限与存疑」。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>表 3 全表：对比大 10–20 倍的模型与闭源旗舰<span class="hint">51 行</span></summary>
+    <div class="body"><div class="tbl-wrap wide tall"><table><thead><tr><th>基准</th><th class="q">STEP3 SeRe</th><th class="q">STEP3 PaCoRe</th><th class="">GLM-4.6V 106B-A12B</th><th class="">Qwen3-VL-Thinking 235B-A22B</th><th class="">Gemini-2.5-Pro</th><th class="">Seed-1.5-VL-Thinking</th></tr></thead><tbody><tr class="grp"><td colspan="7">STEM / 多模态推理</td></tr><tr><td>MMMU</td><td class="q">78.11</td><td class="q">80.11</td><td class="">75.20</td><td class="">78.70</td><td class="best">83.89</td><td class="">79.11</td></tr><tr><td>MMMU-Pro</td><td class="q">64.08</td><td class="q">67.18</td><td class="">65.84</td><td class="">72.37</td><td class="best">76.96</td><td class="">70.60</td></tr><tr><td>MathVision</td><td class="q">70.81</td><td class="q best">75.95</td><td class="">63.50<sup>*</sup></td><td class="">72.10</td><td class="">73.30<sup>*</sup></td><td class="">68.70<sup>*</sup></td></tr><tr><td>MathVista</td><td class="q">83.97</td><td class="q">85.50</td><td class="">83.51</td><td class="">85.10</td><td class="">83.88</td><td class="best">85.60</td></tr><tr><td>LogicVista</td><td class="q">66.89</td><td class="q">71.36</td><td class="">64.88</td><td class="best">73.15</td><td class="">69.80</td><td class="">72.93</td></tr><tr><td>DynaMath</td><td class="q">56.39</td><td class="q best">61.48</td><td class="">56.29</td><td class="">60.30</td><td class="">52.30</td><td class="">58.88</td></tr><tr><td>ZeroBench (main)</td><td class="q">1.00</td><td class="q best">5.00</td><td class="">1.00</td><td class="">3.00</td><td class="">4.00</td><td class="">1.00</td></tr><tr><td>ZeroBench (sub)</td><td class="q">27.54</td><td class="q">29.94</td><td class="">29.04</td><td class="">28.40</td><td class="best">33.53</td><td class="">31.74</td></tr><tr><td>MathVerse (vision)</td><td class="q">75.73</td><td class="q best">78.30</td><td class="">72.84</td><td class="">76.65</td><td class="best">78.30</td><td class="">77.79</td></tr><tr><td>We-Math</td><td class="q">73.03</td><td class="q">73.90</td><td class="">71.14</td><td class="">74.70</td><td class="best">80.10</td><td class="">79.05</td></tr><tr><td>VisuLogic</td><td class="q">29.68</td><td class="q">32.70</td><td class="">28.30</td><td class="">31.80</td><td class="">31.40</td><td class="best">34.30</td></tr><tr><td>PhyX</td><td class="q">59.45</td><td class="q">66.01</td><td class="">59.70</td><td class="">66.30</td><td class="best">67.56</td><td class="">62.53</td></tr><tr class="grp"><td colspan="7">识别 / 通用 VQA</td></tr><tr><td>MMBench EN</td><td class="q">92.05</td><td class="q">92.38</td><td class="">92.75</td><td class="">92.70</td><td class="best">93.19</td><td class="">92.11</td></tr><tr><td>MMBench CN</td><td class="q">91.55</td><td class="q">91.96</td><td class="">91.88</td><td class="">91.80</td><td class="best">93.13</td><td class="">91.76</td></tr><tr><td>SimpleVQA</td><td class="q">53.08</td><td class="q">54.64</td><td class="">57.95</td><td class="">59.30</td><td class="best">66.85</td><td class="">64.72</td></tr><tr><td>MMStar</td><td class="q">77.48</td><td class="q">77.64</td><td class="">75.30</td><td class="">76.80</td><td class="best">79.18</td><td class="">77.91</td></tr><tr><td>HallusionBench</td><td class="q">64.91</td><td class="q">64.54</td><td class="">60.63</td><td class="">65.58</td><td class="best">65.63</td><td class="">64.13</td></tr><tr><td>MMVP</td><td class="q">68.16</td><td class="q">68.00</td><td class="">71.33</td><td class="">71.30</td><td class="">70.67</td><td class="best">74.00</td></tr><tr><td>ReMI</td><td class="q">67.29</td><td class="q">69.12</td><td class="">64.42</td><td class="best">74.70</td><td class="">71.69</td><td class="">72.19</td></tr><tr><td>M3GIA</td><td class="q">78.33</td><td class="q">73.50</td><td class="">78.72</td><td class="">81.00</td><td class="">83.11</td><td class="best">83.22</td></tr><tr><td>DoYouSeeMe</td><td class="q">67.48</td><td class="q">68.54</td><td class="">67.50</td><td class="best">72.89</td><td class="">71.19</td><td class="">71.94</td></tr><tr class="grp"><td colspan="7">计数</td></tr><tr><td>CountBench</td><td class="q">88.75</td><td class="q">88.80</td><td class="">92.06</td><td class="best">92.46</td><td class="">87.78</td><td class="">91.85</td></tr><tr><td>CountQA</td><td class="q">33.69</td><td class="q">38.29</td><td class="">36.32</td><td class="">45.62</td><td class="">38.02</td><td class="best">48.89</td></tr><tr><td>PixMo-Count</td><td class="q">70.85</td><td class="q">71.61</td><td class="">76.47</td><td class="">79.80</td><td class="">75.54</td><td class="best">83.38</td></tr><tr class="grp"><td colspan="7">OCR</td></tr><tr><td>OCRBench</td><td class="q">86.75</td><td class="q best">89.00</td><td class="">86.20</td><td class="">87.30</td><td class="">85.90</td><td class="">85.20</td></tr><tr><td>OmniOCR</td><td class="q">76.98</td><td class="q">78.14</td><td class="">84.53</td><td class="">87.20</td><td class="">66.05</td><td class="best">87.80</td></tr><tr><td>CC-OCR (Multi-Lang-OCR)</td><td class="q">76.59</td><td class="q">77.51</td><td class="">74.08</td><td class="">80.80</td><td class="best">81.10</td><td class="">78.82</td></tr><tr class="grp"><td colspan="7">2D / 3D 空间</td></tr><tr><td>BLINK</td><td class="q">66.79</td><td class="q">67.39</td><td class="">68.17</td><td class="">67.12</td><td class="best">72.01</td><td class="">71.54</td></tr><tr><td>CVBench</td><td class="q">83.49</td><td class="q">85.92</td><td class="">83.72</td><td class="best">87.86</td><td class="">84.36</td><td class="">86.27</td></tr><tr><td>MMSI-Bench</td><td class="q">32.18</td><td class="q">36.40</td><td class="">30.80</td><td class="">32.50</td><td class="best">40.40</td><td class="">30.60</td></tr><tr><td>ERQA</td><td class="q">48.87</td><td class="q">51.75</td><td class="">47.75</td><td class="">53.50</td><td class="best">62.25</td><td class="">48.50</td></tr><tr><td>OmniSpatial</td><td class="q">51.58</td><td class="q">52.58</td><td class="">50.49</td><td class="">53.10</td><td class="best">55.64</td><td class="">51.99</td></tr><tr><td>All-Angles-Bench</td><td class="q">57.21</td><td class="q">64.71</td><td class="">62.94</td><td class="">60.59</td><td class="best">65.88</td><td class="">57.65</td></tr><tr><td>MindCube-tiny</td><td class="q">62.81</td><td class="q best">68.58</td><td class="">52.83</td><td class="">47.58</td><td class="">58.92</td><td class="">39.83</td></tr><tr><td>RealWorldQA</td><td class="q">74.44</td><td class="q">75.56</td><td class="">77.78</td><td class="">78.80</td><td class="">77.78</td><td class="best">79.61</td></tr><tr><td>SpatialViz-Bench</td><td class="q">45.51</td><td class="q best">52.03</td><td class="">37.46</td><td class="">46.36</td><td class="">45.34</td><td class="">35.25</td></tr><tr><td>STARE</td><td class="q">61.75</td><td class="q">64.57</td><td class="">60.38</td><td class="best">70.89</td><td class="">62.36</td><td class="">62.99</td></tr><tr><td>CoreCognition</td><td class="q">66.69</td><td class="q">71.54</td><td class="">69.50</td><td class="">72.66</td><td class="best">78.78</td><td class="">72.38</td></tr><tr><td>V*</td><td class="q">82.85</td><td class="q">84.29</td><td class="">85.86</td><td class="">89.53</td><td class="">80.63</td><td class="best">90.58</td></tr><tr><td>ViewSpatial</td><td class="q">46.14</td><td class="q">48.41</td><td class="">43.87</td><td class="best">48.58</td><td class="">44.15</td><td class="">44.14</td></tr><tr class="grp"><td colspan="7">文本 · 考试</td></tr><tr><td>MMLU-Pro</td><td class="q">76.02</td><td class="q">77.09</td><td class="">79.96</td><td class="">83.75</td><td class="best">86.45</td><td class="">83.39</td></tr><tr><td>GPQA-Diamond</td><td class="q">70.83</td><td class="q">73.99</td><td class="">69.19</td><td class="">77.68</td><td class="best">84.06</td><td class="">71.91</td></tr><tr><td>SuperGPQA</td><td class="q">50.38</td><td class="q">53.15</td><td class="">53.28</td><td class="">64.20</td><td class="best">65.00</td><td class="">60.50</td></tr><tr><td>LiveBench(2024-11-25)</td><td class="q">69.71</td><td class="q">71.69</td><td class="">62.75</td><td class="best">80.14</td><td class="">76.34</td><td class="">65.62</td></tr><tr class="grp"><td colspan="7">文本 · 数学</td></tr><tr><td>AIME2024</td><td class="q">90.94</td><td class="q best">93.33</td><td class="">80.63</td><td class="">91.93</td><td class="">79.53</td><td class="">79.48</td></tr><tr><td>AIME2025</td><td class="q">87.66</td><td class="q best">94.43</td><td class="">71.88</td><td class="">83.59</td><td class="">83.96</td><td class="">64.06</td></tr><tr><td>HMMT25</td><td class="q">78.18</td><td class="q best">92.14</td><td class="">57.29</td><td class="">67.71</td><td class="">65.68</td><td class="">51.30</td></tr><tr><td>CNMO2024</td><td class="q">78.20</td><td class="q">81.17</td><td class="">72.11</td><td class="best">88.36</td><td class="">74.53</td><td class="">83.67</td></tr><tr><td>BeyondAIME</td><td class="q">63.23</td><td class="q best">74.00</td><td class="">39.83</td><td class="">57.42</td><td class="">54.45</td><td class="">42.83</td></tr><tr><td>IMO-AnswerBench</td><td class="q">62.12</td><td class="q best">76.66</td><td class="">51.25</td><td class="">69.25</td><td class="">72.00</td><td class="">44.75</td></tr><tr class="grp"><td colspan="7">文本 · 代码</td></tr><tr><td>LiveCodeBench (2408-2505)</td><td class="q">75.77</td><td class="q best">76.43</td><td class="">48.71</td><td class="">69.45</td><td class="">72.01</td><td class="">57.10</td></tr></tbody></table></div><div class="keybox"><span class="k-best">每行数值最高（本页按数值标注，非原文加粗）</span><span class="k-q">STEP3-VL-10B</span><span>* = 原文标注「取自原论文」</span></div><p class="tbl-note">来源：论文表 3。SeRe = 顺序推理（默认），PaCoRe = 并行协同推理（16 条 SeRe 综合）。</p></div>
+  </details>
+  <details class="more wide">
+    <summary>评测协议细节<span class="hint">附录 C</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>文本基准重复评测取平均</b>：AIME 2024/2025、HMMT25、CNMO2024、BeyondAIME 各 64 次；GPQA-Diamond、LiveCodeBench 各 16 次；IFEval、IFBench 各 4 次；其余 1 次<span class="src">附录 C.2</span>。</li>
+        <li><b>多模态每个基准都公开了 prompt 模板</b>；多数选择题要求以 “Final answer: [option]” 收尾；图像默认放在问题之前，原题图文交错时保留原位置<span class="src">附录 C.1</span>。</li>
+        <li>MMBench 报的是 <b>v1.1 Dev</b>；DynaMath 用 worst-case accuracy；MathVerse 只测 Vision-only 子集；MMVP 150 对，两题都对才算对；OmniDocBench 用 NED（越低越好）<span class="src">附录 C.1</span>。</li>
+        <li>HLE、SimpleVQA、MIA-Bench 按官方协议用 LLM 判分<span class="src">附录 C.1</span>。</li>
+        <li>GUI grounding 四个基准共用一个 prompt：输出 JSON 格式的坐标点<span class="src">附录 C.1</span>。</li>
+        <li>正文还提到一个内部 Elo 偏好评测，说 STEP3-VL-10B 的偏好分追平大得多的开源模型，<span class="nd">没有给出数值</span><span class="src">§4.3</span>。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>把 PaCoRe 做成一个独立的 RL 阶段，并配套数据过滤</h4>
+      <p>不只在推理时并行再综合：先单独训 500 步严格 on-policy 的 PaCoRe RL（64k 上下文），训练数据经过 Synthesis Filtration，把参考答案喂回去之后仍是 some-accept 的题才保留<span class="src">§3.2.4</span>。</p>
+      <p class="why">可核对：表 3 的 SeRe / PaCoRe 两列；PaCoRe 方法本身来自同团队的 Hu et al., 2026。</p></div>
+    <div class="card nv"><h4>对感知 RL 回答变短的观察和解释</h4>
+      <p>RLVR 的 rollout 长度先升后回落，作者拆解为推理任务变长、感知任务因降熵变短，两者抵消；进而提出「缺失痕迹」假说，作为引入 PaCoRe 的理由<span class="src">§5.2 · 图 2</span>。</p>
+      <p class="why">注意：假说部分没有按任务拆开的长度曲线来直接验证。</p></div>
+    <div class="card nv"><h4>三轴 RLVR 数据过滤，加上惩罚“答案对、过程错”的判官</h4>
+      <p>可验证性（判官 4 次全一致）× 视觉相关性（图与题互相需要）× 难度（24 次 rollout 取 some-accept）；判分用 GPT-OSS-120B，答案对但推理有缺陷也判错<span class="src">§3.2.2–3.2.3</span>。</p>
+      <p class="why">每一步都说“不可或缺”，但没有给逐项消融。</p></div>
+    <div class="card nv"><h4>RLHF 里加了引用核验和认知校准两类惩罚</h4>
+      <p>发现编造的引用或链接，reward 直接置零；对无依据的过度自信加惩罚；另有语言一致性惩罚<span class="src">§3.2.2</span>。</p>
+      <p class="why">只有设计描述，没有量化效果。</p></div>
+    <div class="card nv"><h4>10B 规模的「减法」型架构选择都有消融</h4>
+      <p>PE-lang 对 DINOv3、AdamW 对 Muon、去掉 DeepStack，三组都给了 10 个基准的对照<span class="src">表 4–6</span>。结论本身不新（语言对齐编码器更好），价值在于给出了负面结果（DeepStack 无收益、Muon 因初始化不匹配被弃用）。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPL -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">STEP3-VL-10B 不是编辑模型，但它的 caption 选择、合成数据约束、RL 数据过滤和评测协议都能直接搬。每条先写论文做法，再写<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">Caption</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>多候选 + 对齐分择优，不靠单次生成</h4>
+        <p class="paper">论文：交错网页里每张图取上方、下方文本和 alt-text 三类候选，用 CLIP 相似度评对齐、用美学分评图像质量，选出最合适的一条<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令也按「候选池 → 打分 → 择优」来做：用户原话、VLM 改写、模板指令各出一条，用 src/tgt 差异描述与指令的对齐分（VLM 或差分 CLIP）挑一条；美学分只用来过滤 tgt 图，不参与指令选择。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>多份描述先汇总再定稿，提升召回</h4>
+        <p class="paper">论文：PaCoRe 先并行生成 16 条回答再综合；在依赖高召回的任务上增益明显，如 CountQA +4.6、OCRBench +2.25<span class="src">§5.2</span>；但 HallusionBench、MMVP 略降，M3GIA 降 4.83<span class="src">表 3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>为编辑对写「改了什么 / 没改什么」的密集 caption 时，可以采 N 份 VLM 描述再让模型合并去重，减少漏写的改动；合并后要单独过一遍幻觉检查，因为综合步可能把少数描述里的错误吸收进来。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>结构化的界面 caption 单列一个子集</h4>
+        <p class="paper">论文：GUI 数据里单独做了 700K 条 UI 详细 caption，专讲页面布局和功能区域，和 grounding、轨迹数据分开<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的 caption 可分层：全局场景描述、区域级「对象 + 位置」描述、编辑操作描述各成子集，分别控制配比，而不是一段话全塞进去。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>合成数据用规则渲染，保证 GT 精确</h4>
+        <p class="paper">论文：15M+ 合成信息图不完全交给 LLM，而是在多种渲染工具上强制细粒度渲染规则；文档转代码时显式处理引用和超链接，防止图文不一致<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑、海报/版式编辑这类任务，用程序化渲染同时产出 src、tgt 和像素级 mask，得到可精确评测的 GT；凡是渲染后可能和源码对不上的元素（换行、截断、字体回退），在渲染阶段就校验。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>标注和生成同步产出，不事后补标</h4>
+        <p class="paper">论文：GUI 的 grounding 标注和轨迹数据<b>同步生成</b>，保证动作执行与感知监督一致<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>生成编辑对时，在同一条流水线里记录 op 类型、目标 bbox/mask、保留区域，不要先出图再让另一个模型反推标注，以免指令、mask 与实际改动三者不一致。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>概念均衡重采样</h4>
+        <p class="paper">论文：开源图文对（LAION、COYO 等）用 CLIP 聚类做概念均衡重采样，缓解长尾概念不平衡<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按「编辑类型 × 主体类别」两维聚类后重采样，避免人像换背景、加文字这类高频操作挤占长尾操作。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>三轴筛 RL / 偏好数据</h4>
+        <p class="paper">论文：GPT-OSS-120B 判 4 次全一致才留；早期模型检查图和题是否互相需要；24 次 rollout 只留 some-accept<span class="src">§3.2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的 prompt 池可照搬：VLM 判官多次判「指令是否可判定」，全一致才留；剔除不看图也能完成的指令；用当前模型采样 N 次，去掉全过或全挂的指令，只留有梯度信号的中间难度。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>训练集对评测集做 n-gram 去污染</h4>
+        <p class="paper">论文：SFT 数据对基准做精确匹配 + 64-gram 匹配去污染<span class="src">§3.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑训练集与自建评测集之间同时做指令文本 n-gram 去重和图像感知哈希去重，两个都查才算干净。</p></div>
+    </div>
+
+    <div class="impl-group">评测协议与判官</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>判官先写理由再打分，并对照参考答案</h4>
+        <p class="paper">论文：GenRM 把 rollout 和更强 teacher 的回答成对比较，先显式推理再给细粒度标量分；可验证判官惩罚“答案对、过程错”<span class="src">§3.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>VLM 编辑评测判官改为「对照参考输出成对比较 + 先列证据再打分」；对指令遵循维度，额外检查「看起来对、但改错了区域」的情况，相当于编辑版的“过程错”。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>高方差基准多跑几次取平均，并公开 prompt</h4>
+        <p class="paper">论文：AIME 等跑 64 次、GPQA 跑 16 次取平均；温度固定 1.0；附录列出每个基准的 prompt 模板<span class="src">附录 C</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测报告每条样本的生成种子数和重复次数，判官 prompt 与模板随结果一起发布；小集合（百条级）至少多种子平均，并报方差。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>测试时扩展的结果单独列，并写清算力</h4>
+        <p class="paper">论文：表 3 把 SeRe 和 PaCoRe 分两列报，但 PaCoRe 的推理成本没有给出<span class="src">表 3 · §4.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型用 best-of-N、判官重排时，和单次生成的结果分开报，并写明 N、判官模型和每样本耗时，避免把多采样的收益算成模型本身的收益。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>配比全未披露。</b>六个多模态域与文本语料的占比、第二相「更高质量配比」的构成、SFT 各领域采样权重，原文都没给，只有样本规模<span class="src">§2.2–§3.1</span>。</li>
+    <li class="key"><b>PaCoRe 对比算力不对等。</b>PaCoRe 每题先跑 16 条 SeRe 再综合，上下文最长 131,072；对比模型是单次结果。原文没有报告推理 token 数或延迟<span class="src">§4.1 · 表 3</span>。</li>
+    <li><b>摘要数字的模式没有标注。</b>摘要和引言里的 MMMU 80.11、MathVision 75.95、AIME2025 94.43、MMBench 92.2 都是 PaCoRe 结果，正文第 1 节没有说明<span class="src">摘要 · §1 · 表 3</span>。</li>
+    <li><b>“PaCoRe 一致优于 SeRe”与表 3 不完全一致。</b>M3GIA 78.33→73.50，HallusionBench 64.91→64.54，MMVP 68.16→68.00<span class="src">§4.4 · 表 3</span>。</li>
+    <li><b>“在感知、识别上超过 GLM-4.6V”与表 3 不完全一致。</b>SeRe 模式下 MMBench EN 92.05 vs 92.75、SimpleVQA 53.08 vs 57.95、CountBench 88.75 vs 92.06、OmniOCR 76.98 vs 84.53 都是 GLM-4.6V 更高<span class="src">§4.4 · 表 3</span>。</li>
+    <li><b>预训练规模口径对不上。</b>370K 迭代 × batch 8,192 × 序列 4,096 ≈ 12.4T token 容量，而正文写的是 1.2T<span class="src calc">推算</span>。可能 batch 不是按满长度序列计数，原文没有解释<span class="src">§2.3</span>。</li>
+    <li><b>“GUI 领跑”的措辞偏强。</b>正文说 ScreenSpot-V2 92.61 “dominates the leaderboard”，但表 1 中 Qwen3-VL-Thinking 8B 为 93.60<sup>*</sup>（取自原论文）<span class="src">§4.2 · 表 1</span>。</li>
+    <li><b>表间数值不一致。</b>M3GIA 在表 1 是 78.36，在表 3 的 SeRe 列是 78.33<span class="src">表 1 · 表 3</span>。</li>
+    <li><b>表 2 有疑似抄录错误。</b>InternVL-3.5 的 BeyondAIME（66.56）和它的 CNMO2024 完全相同，且高于 STEP3-VL-10B 的 63.23；正文却称 STEP3-VL-10B 在数学上显著领先<span class="src">表 2 · §4.3</span>。</li>
+    <li><b>消融可信度有限。</b>编码器只有 300M，checkpoint 没训到最终，few-shot 评测，单次运行没有方差；Δ 正负混杂（如 DINOv3 在 BLINK、SimpleVQA 更高）<span class="src">表 4–6 · 附录 C.3</span>。RL 三个阶段、SFT 两阶段比例、三轴过滤都没有逐项消融。</li>
+    <li><b>对比数值来源混杂。</b>只有部分数值标了 <sup>*</sup>（取自原论文，如 Qwen3-VL-8B 的 GUI 三项、表 3 里 GLM-4.6V / Gemini / Seed 的 MathVision），其余是否自测、闭源模型用什么协议，原文没有逐项说明<span class="src">表 1 · 表 3</span>。</li>
+    <li><b>内部评测不可复现。</b>“内部 Elo 偏好评测追平更大开源模型”没有数值；RLVR 数据里的内部 K-12 资源、RLHF 的内部指令池、SFT 蒸馏用的内部前沿模型都未公开<span class="src">§3 · §4.3</span>。</li>
+    <li><b>GUI 数据口径。</b>前四个子集合计约 22.7M，与总量约 23M 吻合；约 30M 网页的 OCR 子集是否计入总量，原文未说明<span class="src">§2.2</span><span class="src calc">推算</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>与前沿多模态模型在六个基准上的对比柱状图（p.1）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 2</td><td>RLVR 训练中 rollout 长度与 reward 曲线（p.18）</td><td><a href="#train">训练配方</a>（文字转述；裁图文件与图 3 重复，未收录）</td></tr>
+        <tr><td>图 3</td><td>RLVR 期间 MathVision / We-Math / MMMU-Pro / ReMI 的变化（p.18）</td><td><a href="#train">训练配方</a></td></tr>
+        <tr><td>图 4–7</td><td>附录定性案例：Morse 码表、LaTeX 编辑器截图计数、失焦显示器品牌识别、带权图最短边（p.34–37）</td><td>未收录（不是架构图）</td></tr>
+        <tr><td>表 1</td><td>与 7–10B 开源模型的多模态对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 2</td><td>与 7–10B 开源模型的文本对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 3</td><td>与大 10–20 倍的模型、闭源旗舰对比（含 SeRe / PaCoRe）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 4–6</td><td>编码器、优化器、DeepStack 消融</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 7</td><td>PaCoRe 的一个感知案例（grounding 综合推理）</td><td><a href="#train">训练配方</a>（文字转述）</td></tr>
+        <tr><td>表 8</td><td>PaCoRe 综合阶段的输入序列化模板</td><td><a href="#train">训练配方</a>（示意图）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本文基于 <a href="https://arxiv.org/abs/2601.09668" target="_blank" rel="noopener">STEP3-VL-10B Technical Report（arXiv:2601.09668）</a>，v1 发布于 2026-01-14；本页依据 v2（2026-01-15）全文核对。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」是本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

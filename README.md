@@ -33,11 +33,14 @@
 | LLM | [MiniMax-M2 Series](./reports/llm/minimax-m2/) | MiniMax | 2026-05-26 | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) |
 | LLM（稀疏注意力方法） | [MiniMax Sparse Attention (M3)](./reports/llm/minimax-msa-m3/) | MiniMax | 2026-06-11 | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) |
 | LLM | [Nemotron 3.5 Super and Lightning](./reports/llm/nemotron-3.5-super/) | NVIDIA | 2026-10-28 | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) |
+| LLM（模型卡） | [Seed2.0](./reports/llm/seed2.0/) | ByteDance Seed | 2026-06-30 | [arXiv:2607.00248](https://arxiv.org/abs/2607.00248) |
+| LLM | [Olmo 3](./reports/llm/olmo-3/) | Ai2 / Olmo Team | 2025-12-15 | [arXiv:2512.13961](https://arxiv.org/abs/2512.13961) |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
 | VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
 | VLM | [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/) | Qwen Team | 2026-04-17 | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) |
 | VLM | [Kimi K2.5](./reports/vlm/kimi-k2.5/) | Kimi Team, Moonshot AI | 2026-02-02 | [arXiv:2602.02276](https://arxiv.org/abs/2602.02276) |
 | VLM | [GLM-5V-Turbo](./reports/vlm/glm-5v-turbo/) | Z.ai & Tsinghua University | 2026-04-29 | [arXiv:2604.26752](https://arxiv.org/abs/2604.26752) |
+| VLM | [STEP3-VL-10B](./reports/vlm/step3-vl-10b/) | StepFun | 2026-01-14 | [arXiv:2601.09668](https://arxiv.org/abs/2601.09668) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |

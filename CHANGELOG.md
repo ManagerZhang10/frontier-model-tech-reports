@@ -38,4 +38,7 @@
   - [Nemotron 3.5 Super and Lightning](./reports/llm/nemotron-3.5-super/)（LLM）
   - [Kimi K2.5](./reports/vlm/kimi-k2.5/)（VLM）
   - [GLM-5V-Turbo](./reports/vlm/glm-5v-turbo/)（VLM）
+  - [STEP3-VL-10B](./reports/vlm/step3-vl-10b/)（VLM）
+  - [Seed2.0](./reports/llm/seed2.0/)（LLM · 模型卡）
+  - [Olmo 3](./reports/llm/olmo-3/)（LLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。
