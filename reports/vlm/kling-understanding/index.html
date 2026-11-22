@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Behind Video Generation (Kling) 中文深读 · 视频生成背后的多模态理解 | 前沿模型技术报告</title>
+<meta name="description" content="可灵团队 arXiv 2611.04916 中文深读：Kling-MLLM 底座（27B / 35B-A3B / 397B-A17B）如何专精为 captioner、RGC、PE、文本编码器、GRM/DRM 奖励模型与自动评测；数据构建、caption 语义契约、评测协议，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: chain diagram, module map, text tables */
+.chain .col-h { font: 700 12px var(--f-mono); fill: var(--accent-ink); letter-spacing: .08em; }
+.chain .col-s { font: 500 11px var(--f-body); fill: var(--muted); }
+.chain .base { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); stroke-width: 1.4; }
+.chain .chip-m { fill: var(--card); stroke: var(--line); }
+.chain .spec { stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 4 4; fill: none; }
+.chain .arr { fill: var(--accent); }
+.chain .flowl { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 640px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .35rem 0 0; color: var(--ink-2); }
+.flow3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 6px; }
+.flow3 .stage { border-top: 3px solid var(--accent); }
+.flow3 .stage:nth-child(2) { border-top-color: var(--warm); }
+.flow3 .stage:nth-child(3) { border-top-color: var(--good); }
+.flow3 .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+.flow3 ul { font-size: .86rem; margin: 4px 0 0; padding-left: 1.1em; line-height: 1.6; }
+.frz { font: 600 .72rem/1.6 var(--f-mono); padding: 0 .5em; border-radius: 6px; background: var(--bg-accent); color: var(--muted); border: 1px solid var(--line); }
+.trn { font: 600 .72rem/1.6 var(--f-mono); padding: 0 .5em; border-radius: 6px; background: var(--warm-soft); color: var(--warm); }
+.schema { font: 500 .8rem/1.6 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.ref-line { stroke: var(--warm); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.ref-t { fill: var(--warm); font: 600 9.5px var(--f-mono); }
+@media (max-width: 960px) {
+  .flow3 { grid-template-columns: 1fr; }
+  .flow3 .stage::after { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 多模态理解（服务视频生成）</div>
+    <h1>Behind Video Generation<span class="sub">Observations and Insights on Multimodal Understanding from Kling</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Kling Team, Kuaishou Technology</b></span>
+      <span>发布 <b>2026-11-03</b>（arXiv v1）</span>
+      <span>arXiv <b>2611.04916</b></span>
+      <span>底座 <b>Kling-MLLM</b></span>
+    </div>
+    <p class="lede">可灵团队把 Kling 1.0 → 4.0 的经验压成一句话：<b>视频生成质量 = 多模态理解在「数据 – 条件 – 对齐 – 评测」整条链上的投影</b><span class="src">§1</span>。一个共享底座 Kling-MLLM（27B / 35B-A3B / 397B-A17B）被专精为 captioner、参考绑定 caption（RGC）、PE、文本编码器、奖励模型与评测器<span class="src">§2.1</span>。全篇最值钱的是<b>把 caption 当「语义契约」</b>的一整套规范、验收与下游验证方法。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>观察与方法综述 · 非单一模型完整技术报告</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>权重发布：原文未提及</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>27B 稠密 · 35B-A3B / 397B-A17B MoE</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>VLM · 多模态理解（服务视频生成）</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2611.04916" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2611.04916</a>
+      <a href="https://arxiv.org/pdf/2611.04916" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#index">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+</nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">这不是「发布一个新模型」的报告，而是一个底座 + 五类下游专精模型 + 一套评测方法论的经验总结。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">报告性质</span><span class="stat-num sm">观察与方法综述</span><span class="stat-sub">每节按「观察 → 机制 → 工程含义」组织</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">底座 Kling-MLLM</span><span class="stat-num sm">27B · 35B-A3B · 397B-A17B</span><span class="stat-sub">1 个稠密 + 2 个 MoE</span><span class="src">§2.2</span></div>
+    <div class="card stat"><span class="stat-k">初始化</span><span class="stat-num sm">Qwen3.5–Qwen3.8</span><span class="stat-sub">LLM 与视觉骨干来自兼容 checkpoint，自加音频塔</span><span class="src">§2.2</span></div>
+    <div class="card stat"><span class="stat-k">输入模态</span><span class="stat-num sm">图 / 视频 / 音频 / 同步音视频 / 交错</span><span class="stat-sub">连续 token，不做离散码本</span><span class="src">§2.2</span></div>
+    <div class="card stat"><span class="stat-k">音频 token 率</span><span class="stat-num">13 / 25 <small style="font-size:.55em">tok/s</small></span><span class="stat-sub">小模型 Mel 塔 / 大模型 Mel+VAE 双分支塔</span><span class="src">§2.2</span></div>
+    <div class="card stat"><span class="stat-k">底座训练</span><span class="stat-num">4 阶段</span><span class="stat-sub">音频初始化 → 联合 → 长时序 → 长上下文巩固</span><span class="src">§2.3</span></div>
+    <div class="card stat"><span class="stat-k">Caption 覆盖</span><span class="stat-num">96.05</span><span class="stat-sub">Kling-Captioner-397B 在 VidCapBench Cov.</span><span class="src">表 8</span></div>
+    <div class="card stat"><span class="stat-k">PE · StoryEval</span><span class="stat-num">65.42 → 77.72</span><span class="stat-sub">SFT 基线 → 全部组件叠加</span><span class="src">表 13</span></div>
+    <div class="card stat"><span class="stat-k">文本编码器 GSB</span><span class="stat-num">1.27</span><span class="stat-sub">(G+S)/(S+B)，相对 Qwen TE 基线，Overall</span><span class="src">表 14</span></div>
+    <div class="card stat"><span class="stat-k">奖励模型 DRM</span><span class="stat-num">77.86%</span><span class="stat-sub">内部成对偏好 macro 准确率（Gemini-4-Argon 73.54）</span><span class="src">表 17</span></div>
+    <div class="card stat"><span class="stat-k">RM 分类体系</span><span class="stat-num">4 · 10</span><span class="stat-sub">L1 类 · L2 维度，下挂叶子缺陷标签</span><span class="src">§7.2</span></div>
+    <div class="card stat"><span class="stat-k">版本说明</span><span class="stat-num sm">v1（2026-11-03）</span><span class="stat-sub">本页依据的文本即 arXiv v1</span><span class="src">首页</span></div>
+  </div>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>一个理解底座，专精出整条链</h3><p>Kling-MLLM 统一五类输入，经任务后训练分化为 captioner / PE / TE / RM / 评测器<span class="src">§2.1</span>。底座视频侧最强项是镜头运动与时空：397B 在 Camera Motion VQA 得 <b>54.72</b>，对比方最高 37.70<span class="src">表 5</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>Caption 是「语义契约」，不是摘要</h3><p>DiT 见到的样本远少于 LLM，所以要最大化「每秒视频的描述密度」<span class="src">§1</span>。6 类信息规范 + 4 条写法 + 多专家流水线蒸馏成单次推理学生模型<span class="src">§3.1–3.2</span>。Kling-Captioner-397B 声音召回 <b>58.11</b> vs Gemini-4-Argon 29.38<span class="src">表 8</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>任意相似视频对都能变训练数据</h3><p>RGC 把一个当参考、一个当目标，写清「保留什么、改什么」，无需真实编辑过程<span class="src">§4.3</span>。Kling-RGC-397B ViDiC Avg <b>78.89</b>（Gemini-4-Argon 77.18），但 MRVBench 总分 90.31 仍低于 Gemini 91.22<span class="src">表 12</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>PE：从好视频的 caption 反推用户 prompt</h3><p>反向构造 + 忠实/合理/生动三验证器 + 文本级 RL + DiT 在环 RL + agentic 故事修复与检索，StoryEval <b>65.42 → 77.72</b><span class="src">表 13</span>。DiT 在环 RL「抬下限、压上限」<span class="src">§5.3</span>。</p></div>
+    <div class="card tl"><span class="idx">05</span><h3>TE 靠感知训练，RM 先练「看得见」</h3><p>TE 三步改造对 Qwen 基线 GSB 1.10 → 1.22 → <b>1.27</b><span class="src">表 14</span>。RM 拆成可解释 GRM + 单次 prefill 多维打分的 DRM，DRM 内部 macro <b>77.86%</b>，9 个维度中 8 个领先<span class="src">表 17 · §7.3</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>读之前先知道</h3><p>没有数据量、配比、学习率等超参；下游结果大量依赖内部集；§7.3 对公开 RM 基准的「全面领先」表述与表 18 不一致（见 <a href="#limits">局限</a>）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：一个底座 + 一条理解链</h2>
+    <p class="sec-intro">先看 Kling-MLLM 本身，再看它怎样被专精到链上的各个模块。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Kling-MLLM 架构图：多模态输入经视觉与音频路径编码，加边界标记与物理时间戳后交错送入 LLM" loading="lazy"></div>
+    <figcaption><b>Kling-MLLM 架构。</b>视频（动态帧率与帧数）和图像（保持宽高比的动态分辨率）走 ViT → 空间池化 → 视觉对齐器；音频走 Mel / 波形 VAE 双分支经标量门融合（图中是大模型版本）；四类序列都带模态边界标记和物理时间戳，交错后送入同一个 LLM。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>相对「Qwen 底座 + 通用 VLM」改了什么</h3>
+    <ul>
+      <li><b>统一连续 token 接口</b>：文本、视觉、声学嵌入在同一序列里，<em>不量化到共享离散码本</em>；模态边界 token 让多段媒体可放在任意位置<span class="src">§2.2</span>。</li>
+      <li><b>视频带物理时间戳</b>：帧率、帧数按时长和上下文预算动态选，覆盖全时长；每帧的视觉 token 块绑定真实时间戳<span class="src">§2.2</span>。</li>
+      <li><b>两套音频塔，同一接口</b>：小模型沿用 Qwen3-Omni 设计，16 kHz 单声道 → Mel → <b>13</b> token/s；大模型同时喂 16 kHz、128-bin、100 帧/秒的 Mel 和 44.1 kHz 波形给自研 VAE，VAE 特征插值对齐后经可学习标量门残差加到 Mel 分支，输出 <b>25</b> token/s<span class="src">§2.2</span>。</li>
+      <li><b>音频显式时间锚</b>：每段音频首尾写开始/结束时间戳，并<em>每 5 秒</em>插一个绝对时间锚。动机是 LLM 不能可靠地把 token 序号换算成时间；用 Gemini API 做提示实验时，在 prompt 里给出总时长就能明显改善时间定位<span class="src">§2.2</span>。</li>
+      <li><b>同步音视频合成一个元素</b>：按帧时间顺序遍历，在每个视觉块前插入「上一帧之后、当前帧之前（含）」的全部音频 token；同时刻时音频在前<span class="src">§2.2</span>。</li>
+    </ul>
+  </div>
+
+  <div class="card diagram wide">
+    <svg class="chain" viewBox="0 0 1000 300" role="img" aria-label="数据-条件-对齐-评测链示意">
+      <text class="col-h" x="20" y="26">1 · DATA 数据</text>
+      <text class="col-h" x="270" y="26">2 · CONDITIONING 条件</text>
+      <text class="col-h" x="520" y="26">3 · ALIGNMENT 对齐</text>
+      <text class="col-h" x="770" y="26">4 · EVALUATION 评测</text>
+      <rect class="dg-box" x="15" y="42" width="225" height="44" rx="10"/><text class="dg-t" x="30" y="62">Captioning</text><text class="dg-s" x="30" y="78">Kling-Captioner · §3</text>
+      <rect class="dg-box" x="15" y="96" width="225" height="44" rx="10"/><text class="dg-t" x="30" y="116">Reference-grounded captioning</text><text class="dg-s" x="30" y="132">Kling-RGC · §4</text>
+      <rect class="dg-box" x="265" y="42" width="225" height="44" rx="10"/><text class="dg-t" x="280" y="62">Prompt enhancement</text><text class="dg-s" x="280" y="78">Basic PE + Agentic PE · §5</text>
+      <rect class="dg-box" x="265" y="96" width="225" height="44" rx="10"/><text class="dg-t" x="280" y="116">Text encoder</text><text class="dg-s" x="280" y="132">感知适配 + 多层融合 · §6</text>
+      <rect class="dg-box" x="515" y="42" width="225" height="98" rx="10"/><text class="dg-t" x="530" y="62">Reward models</text><text class="dg-s" x="530" y="80">GRM：可解释、定位缺陷</text><text class="dg-s" x="530" y="98">DRM：单次 prefill 多维打分</text><text class="dg-s" x="530" y="116">基于 Kling-MLLM-27B · §7</text>
+      <rect class="dg-box" x="765" y="42" width="220" height="98" rx="10"/><text class="dg-t" x="780" y="62">Automatic evaluation</text><text class="dg-s" x="780" y="80">按任务拆分协议</text><text class="dg-s" x="780" y="98">暴露刷分捷径、追溯上游</text><text class="dg-s" x="780" y="116">综述性质 · §8</text>
+      <path class="spec" d="M127 222 V146"/><path class="arr" d="M122 150 l5 -9 l5 9z"/>
+      <path class="spec" d="M377 222 V146"/><path class="arr" d="M372 150 l5 -9 l5 9z"/>
+      <path class="spec" d="M627 222 V146"/><path class="arr" d="M622 150 l5 -9 l5 9z"/>
+      <path class="spec" d="M875 222 V146"/><path class="arr" d="M870 150 l5 -9 l5 9z"/>
+      <text class="col-s" x="140" y="190">专精（任务后训练）</text>
+      <rect class="base" x="15" y="222" width="970" height="62" rx="12"/>
+      <text class="dg-t" x="34" y="250" style="font-size:15px">Kling-MLLM</text>
+      <text class="dg-s" x="34" y="270">共享多模态底座 · §2</text>
+      <rect class="chip-m" x="300" y="238" width="90" height="30" rx="8"/><text class="dg-s" x="345" y="258" text-anchor="middle">image</text>
+      <rect class="chip-m" x="400" y="238" width="90" height="30" rx="8"/><text class="dg-s" x="445" y="258" text-anchor="middle">video</text>
+      <rect class="chip-m" x="500" y="238" width="90" height="30" rx="8"/><text class="dg-s" x="545" y="258" text-anchor="middle">audio</text>
+      <rect class="chip-m" x="600" y="238" width="120" height="30" rx="8"/><text class="dg-s" x="660" y="258" text-anchor="middle">audio–video</text>
+      <rect class="chip-m" x="730" y="238" width="110" height="30" rx="8"/><text class="dg-s" x="785" y="258" text-anchor="middle">interleaved</text>
+    </svg>
+    <p class="cap"><b>示意</b>：按原文图 1 的四列版式用文字重绘（裁图包里没有可用的图 1 原图）。虚线只表示「从 Kling-MLLM 专精而来」<span class="src">§1 · §2.1</span>；各模块用哪个尺寸的底座，除 Captioner（35B-A3B / 397B-A17B）、RM（27B）外原文未披露。</p>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>下游模块</th><th>从哪里来</th><th>输出 / 用途</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Kling-Captioner</td><td>Kling-MLLM-35B-A3B、397B-A17B + 定向后训练数据</td><td>生成导向的稠密音视频 caption（DiT 训练数据）</td><td><span class="src">§3.5</span></td></tr>
+        <tr><td>Kling-RGC</td><td>在 Kling-Captioner 上用跨模态对应数据继续后训练</td><td>带参考指针与作用范围的 caption</td><td><span class="src">§4.6</span></td></tr>
+        <tr><td>Basic / Agentic PE</td><td>Kling-MLLM 专精；底座尺寸 <span class="nd">原文未披露</span></td><td>把用户请求改写进 caption 分布</td><td><span class="src">§1 · §5</span></td></tr>
+        <tr><td>Text encoder</td><td>Kling-MLLM + 稠密视频描述与感知任务适配；尺寸 <span class="nd">原文未披露</span></td><td>多层融合的条件序列 H<sub>cond</sub></td><td><span class="src">§6.2</span></td></tr>
+        <tr><td>GRM / DRM</td><td>Kling-MLLM-27B，三阶段训练</td><td>可解释缺陷定位 / 快速多维打分</td><td><span class="src">§7.2</span></td></tr>
+        <tr><td>自动评测</td><td>综述：信号指标 + 专家模型 + MLLM checklist 判官</td><td>按任务的评测协议</td><td><span class="src">§8</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：底座语料 + 五条下游数据线</h2>
+    <p class="sec-intro">全文<b>没有给出任何语料总量或配比数字</b>，但流程、过滤和标注规范写得很细。下面按「底座 → caption → RGC → PE → RM」展开。</p>
+  </div>
+
+  <h3 class="prose">4.1 已披露规模一览</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>项目</th><th>原文给出的</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Kling-MLLM 训练总量（token / 样本）</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>四阶段各自配比</td><td>只有定性描述：S1 全部音频；S2 音频与同步音视频占最大份额；S3 偏向音频、视频、音视频；S4 放各模态最高质量数据。具体比例 <span class="nd">原文未披露</span></td><td><span class="src">§2.3</span></td></tr>
+        <tr><td>数据来源三类</td><td>公开数据 / Kling 任务数据 / agent 数据；各自占比 <span class="nd">原文未披露</span></td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>Caption / RGC 训练集规模</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>PE 检索上下文</td><td>每个请求取 Top-<b>5</b> 条精彩视频 caption</td><td><span class="src">§5.4</span></td></tr>
+        <tr><td>PE 文本验证打分</td><td>三项各 <b>1–5</b> 分；SFT 对必须三项全过（阈值 <span class="nd">原文未披露</span>）</td><td><span class="src">§5.2</span></td></tr>
+        <tr><td>RM Stage 1 回放</td><td>后续阶段保留 <b>20%</b> Stage 1 数据回放</td><td><span class="src">§7.2</span></td></tr>
+        <tr><td>RM 标注语料规模</td><td><span class="nd">原文未披露</span>（只说明字段：缺陷类别、时间区间、逐帧框、理由）</td><td><span class="src">§7.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">因为没有比例，本页不画任何配比条形图。</p>
+
+  <h3 class="prose">4.2 底座语料：公开数据的三段式自动入库</h3>
+  <div class="prose">
+    <p>所有来源统一成「对话式 schema」，保留媒体元数据与模态边界，一个 loader 就能拼出图、视频、音频、同步音视频和交错样本<span class="src">§2.4</span>。公开数据走 <b>AutoResearch → Auto Data Process → Auto Revise</b>，修过的记录回流重新校验<span class="src">§2.4</span>：</p>
+  </div>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>步骤 1</span><span>步骤 2</span><span>步骤 3</span></div>
+    <div class="pipe-row"><span class="lbl">AutoResearch</span><span class="chip">Agent A 盯 HF Daily Papers，筛文本 / 图 / 视频 / 音频 / 多模态底座方向论文，抽候选数据集</span><span class="chip">Agent B 盯 HF 热门数据集；两路结果互相去重，再对历史登记库去重</span><span class="chip m">剔除：含敏感内容、许可证不兼容、<b>与任何评测集重叠</b>的数据集</span></div>
+    <div class="pipe-row"><span class="lbl">Auto Data Process</span><span class="chip">下载选中数据集</span><span class="chip">按模态调用转换 skill（文本 / 图 / 视频 / 音频 / 音视频 / 交错）</span><span class="chip m">归一化与校验见表 1（去重、分镜、VAD、同步校验…）</span></div>
+    <div class="pipe-row"><span class="lbl">Auto Revise</span><span class="chip">粗检：抽样看格式与问题多样性</span><span class="chip">精检 1：Qwen3-Omni 算困惑度；精检 2：抽样多模态内容和 QA 对交 Gemini 审</span><span class="chip o">错误报告交人工复核 → 合格数据分配到训练阶段；低质删除或修复后回流</span></div>
+  </div>
+  <div class="legend-dots wide"><span>处理</span><span class="m">过滤 / 校验</span><span class="o">出口</span></div>
+
+  <details class="more wide">
+    <summary>表 1 · 各模态的归一化与监督形式<span class="hint">原文表 1</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table class="txt">
+          <thead><tr><th>模态</th><th>转换时归一化与校验</th><th>代表性监督</th></tr></thead>
+          <tbody>
+            <tr><td>文本</td><td>编码与语言检查、文档去重、对话轮次归一化</td><td>next-token、指令跟随、推理</td></tr>
+            <tr><td>图像</td><td>解码与分辨率检查、感知去重、宽高比处理、OCR/元数据抽取</td><td>短/稠密 caption、VQA、OCR、grounding、计数、姿态</td></tr>
+            <tr><td>视频</td><td>解码检查、镜头切分、带时间戳抽帧、可选 OCR；音频送同步分支</td><td>时序 caption、事件与运动 QA、镜头理解、多镜头推理</td></tr>
+            <tr><td>音频</td><td>波形/声道归一化、切段、VAD 与信号质量检查、转写对齐</td><td>ASR、音频 caption 与 QA、声学事件推理、时间定位</td></tr>
+            <tr><td>音视频</td><td>同步校验、构建共享时间戳 token 时间线</td><td>联合转写、跨模态 QA、grounding、caption</td></tr>
+            <tr><td>交错媒体</td><td>保持文档/对话顺序、媒体引用检查、跨记录去重</td><td>多个异构媒体上的上下文 QA 与推理</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 1。</p>
+    </div>
+  </details>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Kling 任务数据 <span class="tag">§2.4</span></h4>
+      <ul>
+        <li>世界知识：交错图文 + 受控的动作 / 声音 / 主体 / 场景分类体系</li>
+        <li>图像感知：多种文字外观与版式的中英 OCR、计数、grounding、带元数据描述、姿态</li>
+        <li>稠密图像 / 视频 caption：场景、主体、运动、风格、镜头行为、多镜头结构</li>
+        <li><b>编辑与参考理解</b>：成对的 source–target 图像或视频，增 / 删 / 改指令，多参考条件</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>多模态 agent 数据 <span class="tag">§2.4</span></h4>
+      <ul>
+        <li>通用：多步 API / 事务流、搜索与有据研究、软件工程与终端、结构化推理、安全日常助手</li>
+        <li>多模态：图像检索与推理、基于截屏的 GUI 交互、在长视频里搜证据的 agentic 视频理解、Blender 可控 3D 场景 / 相机 / 渲染</li>
+        <li>可用模型生成的指令、轨迹、回复构造或扩充，<b>之后做一致性检查</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="prose">4.3 Caption 数据：生成导向的语义契约</h3>
+  <div class="prose">
+    <p>核心观察：caption 排行榜奖励「和参考像」，生成训练要的是<b>忠实、完整、有时序、格式一致</b>的结构化描述<span class="src">§3</span>。还要防「会认不会说」：VQA 强不代表能自主说全<span class="src">§3</span>。规范从下游生成器的可控因素和失败模式倒推：</p>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>信息族</th><th>必须写的元素</th><th>漏写 / 写错时下游的失败</th></tr></thead>
+      <tbody>
+        <tr><td>主体与动作</td><td>不同实体、动作阶段、交互对象、结果状态</td><td>静态摆拍、角色互换、动作没完成</td></tr>
+        <tr><td>空间与构图</td><td>左右 / 前后关系、入画出画方向、景别、景深</td><td>运动反向、主体错位、构图失控</td></tr>
+        <tr><td>摄影与光</td><td>景别、视角、运镜、焦点转移、光向与光质、反差、色温</td><td>运镜千篇一律、风格好看但复现不了</td></tr>
+        <tr><td>时间与镜头</td><td>事件顺序、状态变化、镜头边界、时间戳、复现主体</td><td>写成逐帧清单、不连贯、意外切镜或定格</td></tr>
+        <tr><td>可见与可听文字</td><td>忠实 OCR、对白 / 旁白、环境声与动作声、音乐、时间锚</td><td>字拼错、幻听、音画事件错位</td></tr>
+        <tr><td>美学</td><td>具体质感、色板、媒介、风格、成片感</td><td>「cinematic」这类不可执行的空词</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：表 6。主体、动作、时序是必填；OCR、语音、音效、多镜头只在输入支持时才写；短 caption 适合检索、稠密 caption 用于生成，两者混用必须有明确策略<span class="src">§3.1</span>。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>四条写法约定 <span class="tag">§3.1</span></h4>
+      <ol>
+        <li><b>实体命名明确且一致</b>：跨句跨镜头沿用同一判别性名词短语，不写可能有歧义的 he / it / the other person。</li>
+        <li><b>镜头时间戳当对齐信号</b>：单调、经校验，与内容一一对应。</li>
+        <li><b>可见文字照抄</b>：保留原字符和显著样式，不意译；漏写等于告诉模型「字是不受控纹理」。</li>
+        <li><b>音频按时间嵌入画面叙述</b>；只有真的检查过音轨才激活音频字段。</li>
+      </ol>
+    </div>
+    <div class="card mod"><h4>五步生产流水线 <span class="tag">§3.2</span></h4>
+      <ol>
+        <li>检查与路由：按内容类型、时长、运动、镜头密度、有无音频分配专家路径</li>
+        <li>保留感知证据：降采样、去黑帧、音频解码、OCR/ASR</li>
+        <li>专家出断言：通用视觉专家认主体场景，专项模型抽运镜、空间关系、光照、镜头边界</li>
+        <li>整合与冲突裁决：对照源证据解决冲突、统一术语、分配稳定实体名、去冗余</li>
+        <li>合取式质量门：准确、覆盖、多样性同时过阈值，并做跨模态、跨镜头一致性检查；被拒样本进<b>按难度索引的错误池</b></li>
+      </ol>
+      <p>串行流水线延迟太高，所以把输出<b>蒸馏成单次推理的学生模型</b>部署<span class="src">§3.2</span>。</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>只优化这一项</th><th>典型捷径</th><th>下游后果</th></tr></thead>
+      <tbody>
+        <tr><td>事实准确</td><td>不写不确定或复杂的属性</td><td>条件欠定 → 退回数据先验</td></tr>
+        <tr><td>语义覆盖</td><td>加看似合理但未经核实的细节</td><td>幻觉出实体、动作、关系、文字</td></tr>
+        <tr><td>有益多样性</td><td>不受控的同义词、诗化用语</td><td>TE 分布碎片化 → 控制不稳</td></tr>
+        <tr><td>内部一致</td><td>套死模板、忽略局部细节</td><td>丢失动态状态变化 → 生成僵硬</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：表 7。四个标准必须<b>同时满足</b>（合取）<span class="src">§3.3</span>。</p>
+
+  <div class="card mod wide"><h4>验收：原子事实 + 判官稳定性 + 下游验证 <span class="tag">§3.3–3.4</span></h4>
+    <ul>
+      <li><b>评测单元是「有源可查的原子信息项」</b>：检查候选 caption 是否正确表达预定义的关键事实及其时间范围，基本与措辞无关。</li>
+      <li>基准至少四个视角：内容有效性 / 生成专属维度（动作进程、空间方向、摄影、构图、光、时序、转场、OCR、语音、声音）/ 接口合规（解析率、时间戳有效性、术语合规、标记有效性）/ 难度切片（时长、镜头数、实体数、事件数、运动速度、OCR 密度、音频复杂度、领域）。</li>
+      <li>自动判官上线前要测：同一 caption 的判分方差、在分层子集上对齐人工、跨模型族排序稳健性；<b>控制 caption 长度</b>，防止把啰嗦当覆盖。判官模型、prompt、解码参数、预处理一起<b>版本化</b>。</li>
+      <li>下游：匹配 caption 长度与已核实事实数；做定向干预（例如只改运镜描述）看能力是否转移；小规模微调或冻结生成器做评估，再上大规模训练。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">4.4 RGC 数据：任意相似视频对 → 参考条件训练样本</h3>
+  <div class="prose">
+    <p>RGC caption = <b>参考指针</b> + <b>补充描述（参考给不了的事实）</b> + <b>有范围的保留 / 改动记录</b><span class="src">§4.1</span>。难度主要取决于参考之间是否容易区分、属性绑定有多复杂，不只是参考数量<span class="src">§4.1</span>。</p>
+    <p><b>关系监督</b><span class="src">§4.3</span>：只要两段视频在画面或声音上足够相似，就一个当参考、一个当目标，标注「共享什么、要改什么」。不需要来自编辑流程，也不需要原始编辑指令；相似可以只覆盖部分内容（同一动作不同人、同一说话人不同台词）。同一目标可配多个参考（和 A 共享主体、和 B 共享动作），一段视频能产出多条参考条件样本，加上它的标准 caption。</p>
+  </div>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>三条合取契约 <span class="tag">表 10 · §4.2</span></h4>
+      <ul>
+        <li><b>Scoped binding</b>：指针要说明源证据、目标实体、授权属性、时间范围。「Use image 2」不够，要写「PERSON_1 的身份和服装取自 IMG_2；背景不参考」。</li>
+        <li><b>Residual sufficiency</b>：参考给不了的生成相关事实必须写出；「同参考」这类含糊说法会漏掉动作、运镜、时间、音频。</li>
+        <li><b>Authority consistency</b>：交给参考的属性，文本不再另给不兼容的值；要覆盖必须显式声明范围。</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>统一表示（四件套） <span class="tag">§4.4</span></h4>
+      <ol>
+        <li>紧凑的参考登记表：稳定 ID、模态、角色、允许范围</li>
+        <li>用登记 ID 写的目标视频基础描述</li>
+        <li>编辑与续写的显式保留 / 修改记录</li>
+        <li>镜头或事件时间戳，把绑定连到生效区间</li>
+      </ol>
+      <p>标准 caption 被当作「零参考」特例，因此大量标准 caption 数据和较少的多参考数据可以共用 captioner、TE、PE 和校验器。</p>
+    </div>
+  </div>
+
+  <details class="more wide">
+    <summary>RGC 七步流水线 + 表 11 各参考模态的权威与歧义<span class="hint">§4.5 · 表 11</span></summary>
+    <div class="body">
+      <ol>
+        <li><b>给任务和参考定型</b>：每个输入提供身份 / 外观 / 运动 / 镜头 / 声音 / 风格 / 指令中的哪一项；记录模态、质量、时间范围、允许迁移的范围。</li>
+        <li><b>目标与参考分别描述</b>：保留标准目标描述；并行从每个参考抽实体、属性、动作、镜头、音频事件，不预设对应关系。</li>
+        <li><b>提出并验证绑定</b>：检测、分割、跟踪、OCR/ASR、运动特征 + MLLM 推理，跨视角、跨时间联合验证候选匹配。</li>
+        <li><b>判定保留与剩余充分性</b>：区分请求的改动、保留属性、附带变化、证据不足的部分。</li>
+        <li><b>裁决权威与冲突</b>：建「实体 × 属性 × 时间」表，每格标明以哪个输入为准；在写成文字之前裁决专家冲突。</li>
+        <li><b>按统一格式一次写成</b>：插入有范围的指针，保留参考未提供的目标事实；不要多轮串行改写导致反复改名、重绑。</li>
+        <li><b>确定性 + 语义门</b>：指针有效性、绑定覆盖、禁止越界迁移、文本–参考冲突、时间对齐、四项 caption 标准。</li>
+      </ol>
+      <div class="tbl-wrap">
+        <table class="txt">
+          <thead><tr><th>参考</th><th>典型权威</th><th>主要歧义</th><th>caption 侧应对</th></tr></thead>
+          <tbody>
+            <tr><td>图像</td><td>身份、外观、物体细节、场景/风格</td><td>迁移哪个实体、图像的哪一部分</td><td>绑定显式 ID 与范围；写明目标动作、位置、镜头、变化</td></tr>
+            <tr><td>视频</td><td>运动、状态、表演、连续性、镜头</td><td>时间对齐；迁移还是保留；切点</td><td>声明源区间与角色；新事件和保留内容加时间戳</td></tr>
+            <tr><td>音频</td><td>音色、对白、节奏、音效</td><td>说话人/声源归属与音画同步</td><td>把说话人/事件 ID 绑到可见动作；不臆造看不见的画面</td></tr>
+            <tr><td>文本</td><td>编辑指令、脚本、名字、约束</td><td>与源冲突或过度指定</td><td>当作类型化的改动规格；在属性层面裁决权威</td></tr>
+            <tr><td>混合</td><td>以上联合组合</td><td>权威重叠、重复、矛盾</td><td>先建属性级权威表再写最终 caption</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：§4.5、表 11。</p>
+    </div>
+  </details>
+
+  <h3 class="prose">4.5 PE 数据：从精彩视频的 caption 反向构造</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>反向构造 <span class="tag">§5.1</span></h4>
+      <ul>
+        <li>从真实视频的 caption 出发，由 teacher 写出「可能产生它的用户 prompt」，PE 学 prompt → caption。</li>
+        <li>合成 prompt 跟随<b>真实流量统计</b>，不跟 teacher 的文风：每对从日志查询中采样目标长度、语言混合、语域、<b>错字率</b>、省略哪些槽位；参考、多镜头、显式排除按观测频率加入。</li>
+        <li><b>泄漏 caption 骨架的 prompt 拒掉</b>（例如按 caption 顺序列出每个动作阶段），否则 PE 学会抄而不是补全。</li>
+        <li>排除项改写成正面描述：「no people」→「空旷街道、人行道无遮挡」；没有正面等价物的排除送 negative 条件字段或采样时拒绝。</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>源 caption 选「精彩视频」 <span class="tag">§5.1</span></h4>
+      <ul>
+        <li>随机抽训练视频当源，PE 会把所有请求扩写成「合格但平」的描述：构图雷同、光照平均、动作平淡。</li>
+        <li>改从本身就精彩的视频取：专业拍摄、有清晰戏剧节拍的表演、刻意设计运镜的片段，用<b>美学分、运动分和 §5.2 的生动度指标</b>筛选。</li>
+        <li><b>领域与长度配额</b>防止塌缩到少数类型。</li>
+        <li>结论：PE 继承目标 caption 的「性格」，在数据层面解决比改模型或目标更早。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card mod wide"><h4>F / R / V 文本验证器：既当 SFT 过滤器，也当 RL 奖励 <span class="tag">§5.2</span></h4>
+    <ul>
+      <li><b>Faithfulness</b>：判官把用户 prompt 拆成原子需求清单（实体、属性、数量、动作、空间关系、镜头指令、引号文字、音频、参考绑定、排除项），逐项标满足 / 违反 / 未处理；<em>违反比遗漏扣得重</em>，与需求矛盾的添加算违反。</li>
+      <li><b>Reasonableness</b>：逐句增量建<b>空间图</b>（相对位置、接触、包含、视角随时间）和<b>交互图</b>（施事、动作、受事、前置条件、结果状态），新句子与两图及常识对照，冲突扣分并指出是哪句引入的。例：「把杯子放桌上走到门口，开门时喝一口」——杯子还在桌上。</li>
+      <li><b>Vividness</b>：按表演、运镜、光色、节奏、声音设计抽表达元素，与从精彩视频和摄影资料整理的<b>专业技法库</b>匹配；每轴去重并封顶，且只计通过合理性检查的元素，堆术语不涨分。</li>
+      <li>检索增强训练对用<b>严格拒绝采样</b>：引入了既不来自用户 prompt、也不是从检索 caption 有意且兼容借用的实体 / 属性 / 事件就拒；还刻意放入「5 条检索全不相关、目标忽略它们」的样本<span class="src">§5.4</span>。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">4.6 RM 数据：先治「赢家缺陷没人标」</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>三类监督源（GRM） <span class="tag">§7.2</span></h4>
+      <ul>
+        <li>开源数据集的 <b>train split</b>（val / test 从不使用）</li>
+        <li>人工标注的取证语料：缺陷类别 + 时间区间 [t<sub>start</sub>, t<sub>end</sub>] + 逐帧框 + 理由</li>
+        <li>由 rubric 生成的 checklist VQA，<b>在看不到偏好标签的情况下</b>写成</li>
+      </ul>
+      <p>Stage 1 感知数据：自然片段与其 VAE 重建版配对做判别；从 RL 对和单视频缺陷日志生成模板化缺陷探针<span class="src">§7.2</span>。</p>
+    </div>
+    <div class="card mod"><h4>标注偏差与对策 <span class="tag">§7.1–7.2</span></h4>
+      <ul>
+        <li><b>以输家为中心的归因</b>：标注员会可靠地写下输家的决定性缺陷，但常漏标赢家的缺陷；把未标注的赢家当干净负例，或从带元数据捷径的候选对比里推标准，会污染决策边界。</li>
+        <li>维度和总偏好强耦合 → 每个 L2 维度单独打分。</li>
+        <li><b>只罚伪影会奖励静止</b>：慢或冻住的视频错误少，所以运动幅度单列为维度，在 DiT RL 中做配重。</li>
+        <li>DRM 用投票聚合的软标签；音视频 checklist 每视频多个原子问题；随机抽一部分 checklist 项配<b>每 1 秒一个二值字段</b>标出事件发生时刻<span class="src">§7.2</span>。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING RECIPE</div>
+    <h2>训练配方</h2>
+    <p class="sec-intro">学习率、batch、步数、序列长度具体值<span class="nd">原文未披露</span>；下面只列原文写明的冻结关系与少数比例。</p>
+  </div>
+
+  <h3 class="prose">5.1 Kling-MLLM 四阶段课程</h3>
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>音频初始化</h4>
+      <dl><dt>训练</dt><dd><span class="trn">音频塔</span></dd><dt>冻结</dt><dd><span class="frz">ViT · LLM</span></dd><dt>序列</dt><dd>短</dd></dl>
+      <p>数据全是音频：中英及多语 ASR、口语 QA、语音续写、指令跟随；环境声、音乐、非语言发声、说话人/口音；长录音提供长上下文。</p></div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>联合多模态</h4>
+      <dl><dt>训练</dt><dd><span class="trn">全部三模块</span></dd><dt>序列</dt><dd>短</dd></dl>
+      <p>音频与同步音视频占最大份额；图、视频、文本以较小比例保留防遗忘（稠密 caption、<b>编辑指令推断</b>、多图组合、计数、OCR、图表等）。</p></div>
+    <div class="card stage"><span class="sid">STAGE 3</span><h4>时序容量扩展</h4>
+      <dl><dt>训练</dt><dd><span class="trn">全部</span></dd><dt>序列</dt><dd>长</dd></dl>
+      <p>偏向音频、视频、音视频：时间定位、多镜头叙事、异常动作、播放速度敏感的运动；另加镜头边界理解、视觉伪影定位、参考条件下的生成 prompt 改写。</p></div>
+    <div class="card stage"><span class="sid">STAGE 4</span><h4>长上下文巩固</h4>
+      <dl><dt>训练</dt><dd><span class="trn">仅 LLM</span></dd><dt>冻结</dt><dd><span class="frz">两个模态塔</span></dd><dt>序列</dt><dd>长</dd></dl>
+      <p>各模态最高质量数据放在这里：长视频检索、多段时间定位、长音频事件定位与分段、音视频交叉推理。</p></div>
+  </div>
+  <p class="footnote wide">几个大数据源按阶段切分，课程是「模态耦合 + 任务多样性」的递进，不是四份互不相交的语料<span class="src">§2.3</span>。另外，<b>合并 Stage 1 与 Stage 4 的 checkpoint 优于单独任一个</b>（无数字）<span class="src">§2.3</span>。</p>
+
+  <h3 class="prose">5.2 Basic PE 三阶段 + Agentic PE</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig5.jpg" alt="PE 推理阶段：用户 prompt 经 agentic PE 的故事修复与检索 Top-5，再由 basic PE 写最终条件送入文本编码器与 DiT" loading="lazy"></div>
+    <figcaption><b>PE 推理链路。</b>用户 prompt（常由 AI 写）→ agentic PE（故事修复解决情节矛盾；检索 Top-5 精彩视频 caption）→ basic PE 从 Top-5 中挑选可用内容并用 caption 方言写最终条件 → 文本编码器 + DiT。本裁图只含原图下半部分，上半部分的训练三阶段见下方卡片。<span class="from">来源：论文图 5（下半）</span></figcaption>
+  </figure>
+  <div class="flow3 wide">
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>Caption 对齐 SFT</h4>
+      <ul><li>精彩视频 caption 当目标</li><li>按真实流量格式反向构造的 prompt</li><li>只用 F/R/V 三项全过的数据对</li><li>RAG 对经拒绝采样</li></ul></div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>文本级 RL（GRPO）</h4>
+      <ul><li>奖励 = F / R / V 三分组合</li><li><b>忠实度做门</b>：违反显式需求则生动度不计分</li><li>可加分布项，惩罚超出 caption 长度与词表范围</li><li>不渲染视频，便宜，可覆盖大量 prompt</li></ul></div>
+    <div class="card stage"><span class="sid">STAGE 3</span><h4>DiT 在环 RL</h4>
+      <ul><li>PE → 冻结 TE → 冻结 DiT，每 prompt 多个改写各渲染一条</li><li>组相对策略梯度；奖励全来自 DRM：视觉质量、运动质量、文本对齐（checklist）</li><li>从文本级 RL checkpoint 起步，prompt 数远少于 Stage 2</li></ul></div>
+  </div>
+  <div class="prose">
+    <p><b>故事修复三规则</b><span class="src">§5.4</span>：引号对白、数量、参考绑定、指定运镜等硬约束不动，除非彼此冲突（此时做最小改动并记录）；只做局部最小编辑（重排、合并、删事件、修属性），不加新角色、不改前提；输出先过合理性判官和「非冲突部分」的忠实度清单。找不到连贯改法时原样透传并打冲突标记，交产品层询问用户。</p>
+  </div>
+
+  <h3 class="prose">5.3 Text encoder</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>做法 <span class="tag">§6.1–6.4</span></h4>
+      <ul>
+        <li>筛选：在<b>最小对比描述</b>上直接探测 prefill 隐状态序列，纯文本即可过滤候选骨干与 checkpoint，不用先训 DiT。</li>
+        <li>适配：在 Kling-MLLM 上用稠密视频描述与感知理解任务继续训练。</li>
+        <li>多层：聚合多个编码层，而不是只取单层。</li>
+        <li>稳定：抑制可学习融合模块的层权重在扩散训练各阶段漂移。</li>
+      </ul>
+    </div>
+    <div class="card mod"><h4>没写的 <span class="tag nd-tag">原文未披露</span></h4>
+      <ul>
+        <li>TE 使用的 Kling-MLLM 尺寸、取哪些层</li>
+        <li>融合模块结构与「稳定化」具体方法（正文只引 [22][23]）</li>
+        <li>对比基线「Qwen text encoder」的具体型号</li>
+      </ul>
+      <p>依据的观察：多模态预训练优于纯文本 LLM，但宽泛多任务指令微调无可靠收益，偏推理的后训练甚至会损害 prefill 隐状态（引自 [22]）<span class="src">§6.2</span>。</p>
+    </div>
+  </div>
+
+  <h3 class="prose">5.4 奖励模型：三阶段（起点 Kling-MLLM-27B）</h3>
+  <div class="flow3 wide">
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>视觉适配</h4>
+      <ul><li><span class="trn">ViT + aligner</span> <span class="frz">LLM 冻结</span></li><li>VAE 重建判别 + 模板化缺陷探针</li><li>运动 / 伪影维度用密集帧；VQ 维度用原生高分辨率稀疏帧</li><li>后续阶段保留 <b>20%</b> 回放</li></ul></div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>GRM</h4>
+      <ul><li>冷启动 SFT：结构化批评 + 缺陷证据管（区间 + 逐帧框）+ 序数评分；评分的概率加权期望当标量分</li><li>视觉:LLM 学习率比 <b>1 : 10</b>，<b>20%</b> Stage 1 回放</li><li>RLVR：GRPO，每视频 <b>G = 8</b> rollouts；奖励受格式有效性门控，含评分校准、缺陷有无、标签集 F1、时空 mIoU 四项；<b>未匹配的真值缺陷扣分</b></li></ul></div>
+    <div class="card stage"><span class="sid">STAGE 3</span><h4>DRM（由 GRM 初始化）</h4>
+      <ul><li>决策头预热：冻结骨干只训决策头（通用多选语料），再全量训视频批评与时间定位；软交叉熵 + 序数字段加 RPS</li><li>点式 + 成对联合 SFT 与 TA grounding</li><li>对称校准：worse / better 字段对称 KL + 交换顺序的 Bradley–Terry 损失；推理时<b>置信门</b>只对低 margin 样本跑交换顺序的第二遍</li></ul></div>
+  </div>
+  <div class="prose">
+    <p><b>DRM 读出</b><span class="src">§7.2</span>：一次 prefill 回答 K 个问题（分类体系缺陷检查、原子 prompt 验证项、成对维度比较）；决策头就是 LM head 里选项字母对应的行，在占位符位置读出，<em>不加参数</em>（读出方式改自 Intern-Decision）。一个 prefill 放一或两个视频；占位符固定在前缀里，前面的答案不会泄露给后面的字段，再配合选项字母随机化、字段置换、只在占位符算 loss。</p>
+  </div>
+  <div class="schema">[user]
+## State: Video 1: &lt;video&gt; | Video 2: &lt;video&gt; | Prompt: ...
+## Decision schema:
+   1. Human Anatomy (Video 1): ... A=no | B=yes
+   3. Subject Action (Video 1, "a cat leaps onto the chair"): ... A=yes | B=partial | C=no
+   5. Motion Quality - Worse: ... A=Video 1 | B=Video 2 | C=Tie
+   6. Motion Quality - Better: ... A=Video 1 | B=Video 2 | C=Tie
+[assistant]
+{"Human Anatomy (Video 1)": &lt;|fim_pad|&gt;, ..., "Motion Quality - Better": &lt;|fim_pad|&gt;}</div>
+  <p class="tbl-note wide">节选自原文 §7.2 的两视频模板（省略部分字段）。每个占位符对该字段选项字母的 logits 归一化，得到连续分数和概率。</p>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测</h2>
+    <p class="sec-intro">底座用 LMMs-Eval（已集成基准用默认 prompt）<span class="src">§2.5</span>；下游模块多为内部集或 Kling 团队参与的基准。注意对比对象在不同表之间会变。</p>
+  </div>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 200" role="img" aria-label="Camera Motion VQA 对比">
+        <text class="ch-t" x="0" y="14">Camera Motion VQA ↑</text><text class="ch-src" x="360" y="14" text-anchor="end">表 5</text>
+        <line class="axis" x1="125" y1="26" x2="125" y2="182"/>
+        <text class="ch-lbl" x="118" y="44" text-anchor="end">Qwen3-VL-32B</text><rect class="bar-o" x="125" y="34" width="53.4" height="14" rx="2"/><text class="ch-val" x="183" y="45">26.71</text>
+        <text class="ch-lbl" x="118" y="68" text-anchor="end">Doubao2.0-Lite think</text><rect class="bar-o" x="125" y="58" width="70.8" height="14" rx="2"/><text class="ch-val" x="200" y="69">35.42</text>
+        <text class="ch-lbl" x="118" y="92" text-anchor="end">Qwen3.5-Omni-Plus</text><rect class="bar-o" x="125" y="82" width="75.4" height="14" rx="2"/><text class="ch-val" x="205" y="93">37.70</text>
+        <text class="ch-lbl" x="118" y="116" text-anchor="end">Kling-MLLM-35B-A3B</text><rect class="bar-qi" x="125" y="106" width="84.0" height="14" rx="2"/><text class="ch-val" x="214" y="117">42.02</text>
+        <text class="ch-lbl" x="118" y="140" text-anchor="end">Kling-MLLM-27B</text><rect class="bar-qi" x="125" y="130" width="94.5" height="14" rx="2"/><text class="ch-val" x="224" y="141">47.23</text>
+        <text class="ch-lbl" x="118" y="164" text-anchor="end">Kling-MLLM-397B</text><rect class="bar-q" x="125" y="154" width="109.4" height="14" rx="2"/><text class="ch-val" x="239" y="165">54.72</text>
+        <text class="ch-ax" x="125" y="196">0</text><text class="ch-ax" x="325" y="196" text-anchor="end">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 200" role="img" aria-label="TE 人评偏好比">
+        <text class="ch-t" x="0" y="14">TE 人评 Overall (G+S)/(S+B)</text><text class="ch-src" x="360" y="14" text-anchor="end">表 14</text>
+        <line class="axis" x1="125" y1="26" x2="125" y2="150"/>
+        <line class="ref-line" x1="267.9" y1="26" x2="267.9" y2="150"/><text class="ref-t" x="267.9" y="162" text-anchor="middle">1.00 = 持平 Qwen 基线</text>
+        <text class="ch-lbl" x="118" y="52" text-anchor="end">多模态适配</text><rect class="bar-qi" x="125" y="40" width="157.1" height="16" rx="2"/><text class="ch-val" x="287" y="53">1.10</text>
+        <text class="ch-lbl" x="118" y="84" text-anchor="end">+ 多粒度条件</text><rect class="bar-qi" x="125" y="72" width="174.3" height="16" rx="2"/><text class="ch-val" x="304" y="85">1.22</text>
+        <text class="ch-lbl" x="118" y="116" text-anchor="end">+ 条件稳定</text><rect class="bar-q" x="125" y="104" width="181.4" height="16" rx="2"/><text class="ch-val" x="311" y="117">1.27</text>
+        <text class="ch-ax" x="125" y="182">0</text><text class="ch-ax" x="325" y="182" text-anchor="end">1.4</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 200" role="img" aria-label="奖励模型内部成对准确率 macro">
+        <text class="ch-t" x="0" y="14">RM 内部成对准确率 Macro (%)</text><text class="ch-src" x="360" y="14" text-anchor="end">表 17</text>
+        <line class="axis" x1="125" y1="26" x2="125" y2="150"/>
+        <text class="ch-lbl" x="118" y="48" text-anchor="end">Gemini-3.8-Flash†</text><rect class="bar-o" x="125" y="37" width="135.2" height="15" rx="2"/><text class="ch-val" x="265" y="49">67.59</text>
+        <text class="ch-lbl" x="118" y="76" text-anchor="end">Gemini-4-Argon†</text><rect class="bar-o2" x="125" y="65" width="147.1" height="15" rx="2"/><text class="ch-val" x="277" y="77">73.54</text>
+        <text class="ch-lbl" x="118" y="104" text-anchor="end">GRM</text><rect class="bar-qi" x="125" y="93" width="149.4" height="15" rx="2"/><text class="ch-val" x="279" y="105">74.72</text>
+        <text class="ch-lbl" x="118" y="132" text-anchor="end">DRM‡</text><rect class="bar-q" x="125" y="121" width="155.7" height="15" rx="2"/><text class="ch-val" x="286" y="133">77.86</text>
+        <text class="ch-ax" x="125" y="168">0</text><text class="ch-ax" x="325" y="168" text-anchor="end">100</text>
+      </svg>
+    </div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">Kling 最大 / 最终模型</span><span class="l2">Kling 其他配置</span><span class="l3">对比模型</span><span class="l4">对比模型（最强）</span></div>
+  <p class="tbl-note wide">三图横轴都从 0 起。† / ‡ 含义见 6.5。</p>
+
+  <h3 class="prose">6.1 底座 Kling-MLLM：视频（精选列）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>LongVideo<br>Bench ↑</th><th>VSI-<br>Bench ↑</th><th>DSI-<br>Bench ↑</th><th>Event-<br>Bench ↑</th><th>Motion-<br>Bench ↑</th><th>TimeLens<br>Overall ↑</th><th>CameraMotion<br>VQA ↑</th><th>VidCapBench<br>Acc | Cov ↑</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen3-VL-32B</td><td>67.61</td><td>64.16 / 61.5</td><td>53.36</td><td>74.89</td><td>67.32</td><td>52.16</td><td>26.71</td><td>20.01 | 87.49</td></tr>
+        <tr><td>Qwen3.5-Omni-Plus (DashScope)</td><td>69.26</td><td>60.67</td><td>59.36</td><td>76.62</td><td>71.55</td><td>33.31</td><td>37.70</td><td>18.29 | 92.60</td></tr>
+        <tr><td>Qwen3.5-397B-A17B</td><td>68.44</td><td>58.68</td><td>58.68</td><td>76.16</td><td>68.62</td><td>38.74</td><td>32.90</td><td>16.44 | 90.34</td></tr>
+        <tr><td>Doubao2.0-Lite (thinking, high)</td><td class="best">75.17</td><td>53.03</td><td>58.62</td><td>72.69</td><td>71.98</td><td class="best">62.35</td><td>35.42</td><td>20.08 | 91.36</td></tr>
+        <tr><td>Kling-MLLM-35B-A3B</td><td class="q">73.37</td><td class="q best">75.07</td><td class="q">57.94</td><td class="q">77.31</td><td class="q">70.98</td><td class="q">60.64</td><td class="q">42.02</td><td class="q">19.87 | 85.59</td></tr>
+        <tr><td>Kling-MLLM-27B</td><td class="q">73.22</td><td class="q">73.20</td><td class="q">62.86</td><td class="q">76.35</td><td class="q">71.83</td><td class="q">58.25</td><td class="q">47.23</td><td class="q">19.35 | 88.20</td></tr>
+        <tr class="hl"><td>Kling-MLLM-397B-A17B</td><td>72.48</td><td>74.77</td><td class="best">65.52</td><td class="best">78.58</td><td class="best">73.94</td><td>60.55</td><td class="best">54.72</td><td>19.51 | <b>93.81</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">本表行内最佳（VidCapBench Acc 最佳为 Doubao 20.08，Cov 最佳为 397B 93.81）</span><span class="k-q">Kling-MLLM</span></div>
+  <p class="tbl-note wide">「a / b」= 本文评测值 / 开源模型开发者报告值；「|」在 VidCapBench 表示 Accuracy | Coverage<span class="src">§2.5</span>。原文结论：397B 领先 DSI-Bench、Event-Bench、MotionBench、Camera Motion VQA、VidCapBench coverage 五列，35B-A3B 领先 VSI-Bench；Doubao2.0-Lite（thinking）领先 LongVideoBench、MME-VideoOCR、ShortVid-Bench、TimeLens 全部和 VidCapBench accuracy<span class="src">§2.5</span>。表中省略了 Qwen3-Omni、MiniCPM-o-4.5、Gemma-4-31B-IT 三行和 MVBench 等列。</p>
+
+  <details class="more wide">
+    <summary>表 2 / 3 / 4 · 音频、音视频、交错、图像（全量）<span class="hint">原文表 2–4</span></summary>
+    <div class="body">
+      <p class="mini-h">表 2 · 音频（LATBench 的「|」= 中文 | 英文）</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>模型</th><th>LibriSpeech clean ↓</th><th>other ↓</th><th>WorldSense ↑</th><th>TREA ↑</th><th>LAT mIoU ↑</th><th>R@0.3 ↑</th><th>R@0.5 ↑</th><th>R@0.7 ↑</th><th>FENSE ↑</th></tr></thead>
+          <tbody>
+            <tr><td>Qwen3-Omni-30B-A3B-Instruct</td><td>1.32 / 1.22</td><td>2.66 / 2.48</td><td>46.03</td><td>71.0</td><td>14.8|15.8</td><td>21.4|26.4</td><td>12.4|16.0</td><td>7.0|7.0</td><td>28.4|31.0</td></tr>
+            <tr><td>MiniCPM-o-4.5</td><td>1.54 / 1.4</td><td>3.79 / 2.8</td><td>44.99</td><td>54.8</td><td>3.0|5.2</td><td>4.0|7.4</td><td>2.1|3.7</td><td>0.8|2.0</td><td>41.1|41.9</td></tr>
+            <tr><td>Qwen3.5-Omni-Plus (DashScope)</td><td>1.32</td><td>3.14</td><td>63.90</td><td>87.7</td><td>60.2|51.2</td><td>81.1|71.1</td><td>63.2|54.5</td><td>40.5|33.8</td><td>64.2|53.5</td></tr>
+            <tr><td>Doubao2.0-Lite (non-thinking)</td><td>1.28</td><td>2.41</td><td>53.94</td><td>71.5</td><td>53.1|53.2</td><td>73.9|73.2</td><td>58.9|57.9</td><td>38.2|37.2</td><td>57.4|48.7</td></tr>
+            <tr><td>Doubao2.0-Lite (thinking, high)</td><td>1.35</td><td>2.55</td><td>66.77</td><td>79.2</td><td>52.6|55.1</td><td>72.4|77.5</td><td>59.1|61.9</td><td>39.0|37.8</td><td>58.7|42.1</td></tr>
+            <tr><td>Kling-MLLM-35B-A3B</td><td class="q">1.68</td><td class="q">3.30</td><td class="q">61.92</td><td class="q">93.0</td><td class="q">58.8|51.4</td><td class="q">81.8|71.2</td><td class="q">61.3|55.1</td><td class="q">38.7|35.4</td><td class="q">66.5|72.0</td></tr>
+            <tr><td>Kling-MLLM-27B</td><td class="q">1.32</td><td class="q">2.93</td><td class="q">61.79</td><td class="q">93.2</td><td class="q">61.0|62.7</td><td class="q">82.0|87.7</td><td class="q">66.2|71.9</td><td class="q">42.2|43.8</td><td class="q">67.6|70.5</td></tr>
+            <tr class="hl"><td>Kling-MLLM-397B-A17B</td><td>1.18</td><td>2.71</td><td>63.56</td><td>91.2</td><td>65.0|61.7</td><td>86.4|85.4</td><td>68.1|68.2</td><td>47.4|43.4</td><td>70.8|68.9</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mini-h">表 3 · 音视频与交错</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>模型</th><th>OmniBench ↑</th><th>v-SALMONN Miss ↓</th><th>Halluc. ↓</th><th>Total err ↓</th><th>UGC-VideoCap ↑</th><th>OmniCap-IF CSR ↑</th><th>ISR ↑</th><th>IV-Bench ↑</th><th>MVU-Eval ↑</th></tr></thead>
+          <tbody>
+            <tr><td>Qwen3-Omni-30B-A3B-Instruct</td><td>60.35</td><td>36.32</td><td>16.87</td><td>53.20</td><td>80.01</td><td>65.87</td><td>9.06</td><td>35.02</td><td>56.41</td></tr>
+            <tr><td>MiniCPM-o-4.5</td><td>52.04</td><td>33.37</td><td>15.35</td><td>48.72</td><td>78.45</td><td>70.84</td><td>11.69</td><td>24.70</td><td>47.81</td></tr>
+            <tr><td>Qwen3.5-Omni-Plus (DashScope)</td><td>67.61</td><td>17.47</td><td>21.67</td><td>39.13</td><td>87.78</td><td>75.90</td><td>18.95</td><td>53.31</td><td>60.64</td></tr>
+            <tr><td>Doubao2.0-Lite (non-thinking)</td><td>57.79</td><td>28.20</td><td>17.26</td><td>45.46</td><td>84.22</td><td>76.56</td><td>20.29</td><td>43.48</td><td>60.42</td></tr>
+            <tr><td>Doubao2.0-Lite (thinking, high)</td><td>70.18</td><td>19.47</td><td>19.97</td><td>39.45</td><td>91.05</td><td>78.21</td><td>21.62</td><td>61.41</td><td>63.71</td></tr>
+            <tr><td>Kling-MLLM-35B-A3B</td><td class="q">61.15</td><td class="q">21.63</td><td class="q">18.55</td><td class="q">40.19</td><td class="q">85.65</td><td class="q">81.02</td><td class="q">25.39</td><td class="q">54.23</td><td class="q">61.18</td></tr>
+            <tr><td>Kling-MLLM-27B</td><td class="q">62.57</td><td class="q">22.47</td><td class="q">18.02</td><td class="q">40.49</td><td class="q">84.61</td><td class="q">81.55</td><td class="q">26.06</td><td class="q">57.31</td><td class="q">61.02</td></tr>
+            <tr class="hl"><td>Kling-MLLM-397B-A17B</td><td>69.38</td><td>20.00</td><td>17.07</td><td>37.07</td><td>88.21</td><td>82.75</td><td>28.13</td><td>61.05</td><td>63.16</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mini-h">表 4 · 图像（TextPecker：+ 越高越好，− 越低越好）</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>模型</th><th>MMBench EN ↑</th><th>MMBench CN ↑</th><th>OCRBench ↑</th><th>TP EN+ ↑</th><th>EN− ↓</th><th>CN+ ↑</th><th>CN− ↓</th><th>PerceptionBench ↑</th></tr></thead>
+          <tbody>
+            <tr><td>Qwen3-Omni-30B-A3B-Instruct</td><td>87.29</td><td>83.68</td><td>86.80</td><td>0.032</td><td>0.078</td><td>0.047</td><td>0.041</td><td>32.17</td></tr>
+            <tr><td>MiniCPM-o-4.5</td><td>85.22</td><td>82.99</td><td>61.00 / 87.6</td><td>0.094</td><td>0.099</td><td>0.024</td><td>0.085</td><td>29.37</td></tr>
+            <tr><td>Gemma-4-31B-IT</td><td>87.11</td><td>87.11</td><td>84.70</td><td>0.252</td><td>0.054</td><td>0.187</td><td>0.072</td><td>47.23</td></tr>
+            <tr><td>Qwen3-VL-32B</td><td>87.63</td><td>86.17</td><td>84.80 / 89.5</td><td>0.159</td><td>0.166</td><td>0.171</td><td>0.069</td><td>33.97</td></tr>
+            <tr><td>Qwen3.5-Omni-Plus (DashScope)</td><td>91.24</td><td>88.75</td><td>85.20</td><td>0.106</td><td>0.060</td><td>0.072</td><td>0.038</td><td>37.50</td></tr>
+            <tr><td>Qwen3.5-397B-A17B</td><td>90.03 / 93.7</td><td>89.09</td><td>83.70 / 93.1</td><td>0.187</td><td>0.078</td><td>0.087</td><td>0.044</td><td>47.47</td></tr>
+            <tr><td>Doubao2.0-Lite (non-thinking)</td><td>89.60</td><td>87.54</td><td>82.90</td><td>0.430</td><td>0.071</td><td>0.347</td><td>0.045</td><td>44.13</td></tr>
+            <tr><td>Doubao2.0-Lite (thinking, high)</td><td>91.84</td><td>89.26</td><td>84.50</td><td>0.453</td><td>0.078</td><td>0.371</td><td>0.049</td><td>53.93</td></tr>
+            <tr><td>Kling-MLLM-35B-A3B</td><td class="q">88.40</td><td class="q">86.94</td><td class="q">84.90</td><td class="q">0.649</td><td class="q">0.092</td><td class="q">0.774</td><td class="q">0.053</td><td class="q">39.00</td></tr>
+            <tr><td>Kling-MLLM-27B</td><td class="q">87.29</td><td class="q">87.54</td><td class="q">83.10</td><td class="q">0.536</td><td class="q">0.103</td><td class="q">0.702</td><td class="q">0.049</td><td class="q">40.90</td></tr>
+            <tr class="hl"><td>Kling-MLLM-397B-A17B</td><td>90.55</td><td>89.52</td><td>87.20</td><td>0.660</td><td>0.090</td><td>0.782</td><td>0.036</td><td>48.63</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 2–4。原文小结：图像、语音识别、视频 caption、交错理解上各家互有胜负；397B 最明显的优势在视频感知与时序、音频时间定位、音视频 caption<span class="src">§2.5</span>。</p>
+    </div>
+  </details>
+
+  <h3 class="prose">6.2 Kling-Captioner</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead>
+        <tr><th rowspan="2">模型</th><th colspan="4">VidCapBench</th><th colspan="4">UGC-VideoCap</th><th colspan="2">Motion（内部）</th><th colspan="2">Camera（内部）</th><th colspan="2">Sound（内部）</th></tr>
+        <tr><th>Acc.</th><th>Pre.</th><th>Cov.</th><th>Con.</th><th>Audio</th><th>Visual</th><th>Detail</th><th>Avg.</th><th>Pre.</th><th>Rec.</th><th>Pre.</th><th>Rec.</th><th>Pre.</th><th>Rec.</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Gemini-4-Argon</td><td>16.20</td><td>51.66</td><td>85.63</td><td>10.69</td><td>79.80</td><td>87.69</td><td>85.67</td><td>84.38</td><td>64.62</td><td>45.78</td><td>40.83</td><td>76.22</td><td>79.74</td><td>29.38</td></tr>
+        <tr><td>Doubao2.1-Lite (non-thinking)</td><td>17.20</td><td>51.78</td><td>87.47</td><td>8.32</td><td>82.88</td><td>90.67</td><td>88.81</td><td>87.45</td><td>62.87</td><td>56.31</td><td>28.37</td><td>61.46</td><td>73.18</td><td>26.79</td></tr>
+        <tr><td>Doubao2.1-Lite (thinking, high)</td><td>20.23</td><td>56.44</td><td>94.15</td><td>3.36</td><td>90.37</td><td>96.10</td><td>94.97</td><td>93.81</td><td>64.15</td><td>59.02</td><td>32.89</td><td>64.61</td><td>77.56</td><td>31.69</td></tr>
+        <tr><td>Kling-Captioner-35B-A3B</td><td class="q best">21.84</td><td class="q">59.28</td><td class="q">94.81</td><td class="q">3.56</td><td class="q">92.83</td><td class="q">96.46</td><td class="q">95.90</td><td class="q">95.06</td><td class="q">67.28</td><td class="q">64.75</td><td class="q">52.18</td><td class="q">80.93</td><td class="q">78.52</td><td class="q">55.83</td></tr>
+        <tr class="hl"><td>Kling-Captioner-397B-A17B</td><td>21.70</td><td class="best">60.51</td><td class="best">96.05</td><td>3.19</td><td class="best">93.41</td><td class="best">96.70</td><td class="best">96.38</td><td class="best">95.50</td><td class="best">68.11</td><td class="best">67.42</td><td class="best">54.82</td><td class="best">83.43</td><td class="best">80.21</td><td class="best">58.11</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 8。表头未标方向；Con. 列方向原文未说明，本页不标最佳。对比对象换成了 Doubao<b>2.1</b>-Lite（底座表用的是 2.0-Lite）。Motion / Camera / Sound 为内部集，不可复现。</p>
+
+  <h3 class="prose">6.3 Kling-RGC</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead>
+        <tr><th rowspan="2">模型</th><th colspan="3">ViDiC</th><th colspan="6">MRVBench</th></tr>
+        <tr><th>Avg.</th><th>Diff.</th><th>Sim.</th><th>KP-Cov</th><th>VQA</th><th>Ref-Tag-R</th><th>Ref-Bind</th><th>Subj-F1</th><th>MRVScore</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Gemini-4-Argon</td><td>77.18</td><td>75.51</td><td>81.86</td><td>93.31</td><td>74.41</td><td class="best">97.23</td><td>93.56</td><td class="best">90.37</td><td class="best">91.22</td></tr>
+        <tr><td>Doubao2.1-Lite (non-thinking)</td><td>69.24</td><td>65.27</td><td>80.33</td><td>89.45</td><td>68.09</td><td>75.43</td><td>93.35</td><td>49.45</td><td>78.10</td></tr>
+        <tr><td>Doubao2.1-Lite (thinking, high)</td><td>75.63</td><td>74.96</td><td>77.49</td><td>90.75</td><td>71.55</td><td>81.41</td><td>93.98</td><td>56.86</td><td>81.32</td></tr>
+        <tr><td>Kling-RGC-35B-A3B</td><td class="q">77.57</td><td class="q">75.59</td><td class="q">83.06</td><td class="q">94.12</td><td class="q">76.01</td><td class="q">94.80</td><td class="q">92.88</td><td class="q">84.51</td><td class="q">88.57</td></tr>
+        <tr class="hl"><td>Kling-RGC-397B-A17B</td><td class="best">78.89</td><td class="best">76.29</td><td class="best">86.12</td><td class="best">95.18</td><td class="best">76.34</td><td>95.28</td><td class="best">94.85</td><td>85.24</td><td>90.31</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 12。MRVBench 上 Ref-Tag-R、Subj-F1、MRVScore 三列 Gemini-4-Argon 更高；原文表述为「highly competitive」<span class="src">§4.6</span>。</p>
+
+  <h3 class="prose">6.4 PE 组件累加</h3>
+  <div class="card diagram wide">
+    <svg class="chart" viewBox="0 0 720 300" role="img" aria-label="PE 各组件 StoryEval">
+      <text class="ch-t" x="0" y="14">StoryEval ↑（固定生成器、采样器与 seed 策略）</text><text class="ch-src" x="720" y="14" text-anchor="end">表 13</text>
+      <line class="axis" x1="250" y1="24" x2="250" y2="276"/>
+      <text class="ch-lbl" x="242" y="40" text-anchor="end">SFT，随机源 caption</text><rect class="bar-qi" x="250" y="30" width="261.7" height="14" rx="2"/><text class="ch-val" x="517" y="41">65.42</text>
+      <text class="ch-lbl" x="242" y="64" text-anchor="end">+ 精彩视频源</text><rect class="bar-qi" x="250" y="54" width="267.5" height="14" rx="2"/><text class="ch-val" x="523" y="65">66.87</text>
+      <text class="ch-lbl" x="242" y="88" text-anchor="end">+ F/R/V 数据验证</text><rect class="bar-qi" x="250" y="78" width="287.7" height="14" rx="2"/><text class="ch-val" x="543" y="89">71.93</text>
+      <text class="ch-lbl" x="242" y="112" text-anchor="end">+ 文本级 RL</text><rect class="bar-qi" x="250" y="102" width="302.3" height="14" rx="2"/><text class="ch-val" x="558" y="113">75.58</text>
+      <text class="ch-lbl" x="242" y="136" text-anchor="end">+ DiT 在环 RL（= Basic PE）</text><rect class="bar-q" x="250" y="126" width="305.8" height="14" rx="2"/><text class="ch-val" x="561" y="137">76.46</text>
+      <text class="ch-lbl" x="242" y="166" text-anchor="end">Hailuo IR + Basic PE</text><rect class="bar-o" x="250" y="156" width="293.5" height="14" rx="2"/><text class="ch-val" x="549" y="167">73.38</text>
+      <text class="ch-lbl" x="242" y="190" text-anchor="end">Gemini 4 Argon + Basic PE</text><rect class="bar-o" x="250" y="180" width="302.9" height="14" rx="2"/><text class="ch-val" x="558" y="191">75.73</text>
+      <text class="ch-lbl" x="242" y="214" text-anchor="end">Agentic：随机 few-shot + 反思</text><rect class="bar-qi" x="250" y="204" width="307.2" height="14" rx="2"/><text class="ch-val" x="563" y="215">76.79</text>
+      <text class="ch-lbl" x="242" y="238" text-anchor="end">+ 故事修复</text><rect class="bar-qi" x="250" y="228" width="310.1" height="14" rx="2"/><text class="ch-val" x="566" y="239">77.53</text>
+      <text class="ch-lbl" x="242" y="262" text-anchor="end">+ 检索 Top-5</text><rect class="bar-q" x="250" y="252" width="310.9" height="14" rx="2"/><text class="ch-val" x="566" y="263">77.72</text>
+      <text class="ch-ax" x="250" y="292">0</text><text class="ch-ax" x="650" y="292" text-anchor="end">100</text>
+    </svg>
+    <p class="cap">横轴从 0 起，差距看起来小是真实比例。行是累加的：每行在上一行基础上加一个组件<span class="src">§5.5</span>。</p>
+  </div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead>
+        <tr><th rowspan="2">设置</th><th colspan="2">Faithfulness</th><th colspan="2">Reasonableness</th><th colspan="2">Vividness</th><th rowspan="2">StoryEval</th><th rowspan="2">T2AV-<br>Compass</th><th rowspan="2">AVE-<br>Compass</th><th rowspan="2">MultiRef-<br>Compass</th></tr>
+        <tr><th>Avg.</th><th>≥4 (%)</th><th>Avg.</th><th>≥4 (%)</th><th>Avg.</th><th>≥4 (%)</th></tr>
+      </thead>
+      <tbody>
+        <tr class="grp"><td colspan="11">Basic PE</td></tr>
+        <tr><td>SFT，随机源 caption</td><td>4.02</td><td>75.42</td><td>3.95</td><td>69.17</td><td>3.72</td><td>62.33</td><td>65.42</td><td>70.15</td><td>56.2</td><td>4.6137</td></tr>
+        <tr><td>+ 精彩视频源</td><td>4.00</td><td>74.92</td><td>3.92</td><td>68.08</td><td>4.03</td><td>72.58</td><td>66.87</td><td>70.60</td><td>56.7</td><td>4.6224</td></tr>
+        <tr><td>+ F/R/V 数据验证</td><td>4.27</td><td>80.83</td><td>4.18</td><td>74.33</td><td>4.11</td><td>75.08</td><td>71.93</td><td>73.07</td><td>57.9</td><td>4.6591</td></tr>
+        <tr><td>+ 文本级 RL</td><td class="best">4.45</td><td class="best">86.67</td><td>4.31</td><td>79.25</td><td>4.25</td><td>79.83</td><td>75.58</td><td>75.34</td><td>58.4</td><td>4.7012</td></tr>
+        <tr><td>+ DiT 在环 RL</td><td>4.38</td><td>83.50</td><td>4.42</td><td>83.67</td><td>4.23</td><td>81.42</td><td>76.46</td><td>75.91</td><td>59.3</td><td>4.7163</td></tr>
+        <tr class="grp"><td colspan="11">Agentic PE + Basic PE</td></tr>
+        <tr><td>Hailuo IR（替代 agentic）</td><td>4.19</td><td>77.17</td><td>4.51</td><td>85.83</td><td>4.21</td><td>80.08</td><td>73.38</td><td>74.62</td><td>58.1</td><td>4.6987</td></tr>
+        <tr><td>Gemini 4 Argon（替代 agentic）</td><td>4.34</td><td>81.75</td><td>4.57</td><td>88.58</td><td>4.30</td><td>83.17</td><td>75.73</td><td>75.37</td><td>58.8</td><td>4.7098</td></tr>
+        <tr><td>Agentic，随机 few-shot + 反思</td><td>4.43</td><td>85.25</td><td>4.48</td><td>85.50</td><td>4.22</td><td>81.33</td><td>76.79</td><td class="best">76.12</td><td class="best">59.5</td><td>4.7142</td></tr>
+        <tr><td>+ 故事修复</td><td>4.41</td><td>84.58</td><td class="best">4.67</td><td class="best">91.92</td><td>4.26</td><td>82.25</td><td>77.53</td><td>76.03</td><td>–</td><td class="best">4.7249</td></tr>
+        <tr class="hl"><td>+ 检索（Top-5）</td><td>4.36</td><td>82.17</td><td>4.65</td><td>91.42</td><td class="best">4.44</td><td class="best">87.33</td><td class="best">77.72</td><td>75.68</td><td>–</td><td>4.7158</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 13。文本指标在留出的真实用户 prompt 上计算，1–5 分均值与 ≥4 分占比（代表可直接使用）。StoryEval 为 7 项均值；T2AV-Compass 为 IF 与 Realism 均值；AVE-Compass 为 Editing Intent、Fidelity Preserving、Realism 均值；MultiRef-Compass 为 IF 与 RC 均值<span class="src">§5.5</span>。「–」= 原文未给出。注意：DiT 在环 RL 让 faithfulness 从 4.45 降到 4.38；检索让 faithfulness、T2AV、MultiRef 小幅回落。</p>
+
+  <h3 class="prose">6.5 Text encoder 与奖励模型</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>Kling-MLLM TE 配置（相对同一 Qwen TE 基线）</th><th>Overall</th><th>Instruction Following</th><th>Aesthetics</th></tr></thead>
+      <tbody>
+        <tr><td>多模态适配</td><td>1.10</td><td>1.04</td><td>1.11</td></tr>
+        <tr><td>+ 多粒度条件</td><td>1.22</td><td>1.11</td><td>1.22</td></tr>
+        <tr class="hl"><td>+ 条件稳定</td><td class="best">1.27</td><td class="best">1.14</td><td class="best">1.25</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 14。指标 (G+S)/(S+B)，大于 1.00 为净收益；同一 DiT、数据流、训练步数，在分层内部集上做成对人评<span class="src">§6.5</span>。G / S / B 原始计数与样本量 <span class="nd">原文未披露</span>。</p>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead>
+        <tr><th rowspan="2">模型</th><th colspan="2">Avg</th><th colspan="2">VQ</th><th colspan="3">MQ</th><th colspan="2">Consistency</th><th colspan="2">TA</th></tr>
+        <tr><th>Macro</th><th>Micro</th><th>Content Integrity</th><th>Aesthetics</th><th>Basic Motion</th><th>Motion Aesth. &amp; Narr.</th><th>Magnitude</th><th>Input Image</th><th>Multi-Shot</th><th>Basic Prompt</th><th>Multi-Shot Prompt</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Gemini-3.8-Flash<sup>†</sup></td><td>67.59</td><td>67.13</td><td>66.27</td><td>67.03</td><td>61.99</td><td>69.81</td><td>88.89</td><td>75.00</td><td>58.93</td><td>47.10</td><td>73.33</td></tr>
+        <tr><td>Gemini-4-Argon<sup>†</sup></td><td>73.54</td><td>72.59</td><td>72.78</td><td>76.92</td><td>65.42</td><td>72.96</td><td>85.71</td><td>75.00</td><td>66.07</td><td>60.30</td><td class="best">86.67</td></tr>
+        <tr><td>GRM</td><td class="q">74.72</td><td class="q">73.32</td><td class="q">75.15</td><td class="q">79.67</td><td class="q">70.40</td><td class="q">75.47</td><td class="q">93.65</td><td class="q">72.50</td><td class="q">71.43</td><td class="q">65.30</td><td class="q">68.89</td></tr>
+        <tr class="hl"><td>DRM<sup>‡</sup></td><td class="best">77.86</td><td class="best">75.53</td><td class="best">78.11</td><td class="best">81.32</td><td class="best">72.27</td><td class="best">78.62</td><td class="best">96.83</td><td class="best">77.50</td><td class="best">75.89</td><td class="best">66.90</td><td>73.33</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 17，内部成对偏好准确率（%），覆盖 10 个 L2 维度中的 9 个（不含 1.1 清晰度与压缩）<span class="src">§7.3</span>。<b>†</b> 通过内部 API 网关调用；同一 Gemini 模型换网关 macro 最多相差 1.8 分。<b>‡</b> 运动类维度判断时不给 prompt，其余维度给 prompt。GRM → DRM macro +3.14<span class="src calc">推算</span>（原文写 3.1）。</p>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>VideoScore-Bench-v2</th><th>VideoPhy2-test</th><th>VideoGen-RewardBench</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">提示词驱动的 MLLM</td></tr>
+        <tr><td>Gemini-3.8-Flash</td><td>36.90</td><td class="best flag">47.80</td><td>54.37</td></tr>
+        <tr><td>Gemini-4-Argon</td><td>33.60</td><td>43.70</td><td>56.00</td></tr>
+        <tr class="grp"><td colspan="4">视频奖励 / 打分模型</td></tr>
+        <tr><td>VideoReward</td><td>–</td><td>31.33</td><td class="best flag">59.69</td></tr>
+        <tr><td>UnifiedReward</td><td>25.07</td><td>22.02</td><td>53.31</td></tr>
+        <tr><td>VideoPhy2</td><td>22.35</td><td>37.64</td><td>30.75</td></tr>
+        <tr><td>VideoScore1.1</td><td>38.41</td><td>27.95</td><td>16.79</td></tr>
+        <tr><td>VideoScore2</td><td>44.35</td><td>33.58</td><td>51.53</td></tr>
+        <tr><td>Dover</td><td>34.00</td><td>28.21</td><td>54.27</td></tr>
+        <tr class="grp"><td colspan="4">Ours</td></tr>
+        <tr><td>GRM</td><td class="q">51.60</td><td class="q">38.53</td><td class="q">55.24</td></tr>
+        <tr class="hl"><td>DRM</td><td class="best">52.00</td><td>44.23</td><td>57.33</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 18（准确率 %）。橙框标出的两格比 DRM 高：VideoPhy2-test 上 Gemini-3.8-Flash 47.80 &gt; 44.23，VideoGen-RewardBench 上 VideoReward 59.69 &gt; 57.33。DRM 只在 VideoScore-Bench-v2 上全表第一。</p>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">只列能在原文里核对、且不只是常规工程的点。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>Caption 质量的「合取验收 + 下游裁决」体系</h4><p>把 caption 的四个标准定义为必须同时满足，并逐一列出单独优化每个标准会走的捷径（表 7）；评测单元换成有源可查的原子事实，要求控制长度、判官版本化，最终以生成器效果为准<span class="src">§3.3–3.4</span>。</p><p class="why">相比只报 VidCapBench 分数的做法，它给出的是一套可以落地执行的验收规范。</p></div>
+    <div class="card nv"><h4>RGC 的关系监督：相似视频对即训练样本</h4><p>不依赖编辑流程或原始指令，用「范围绑定 / 剩余充分 / 权威一致」三条契约把任意相似视频对写成参考条件 caption，一个目标可配多个参考<span class="src">§4.2–4.3</span>。</p><p class="why">直接扩大了参考生成与编辑数据的来源；但原文没有给出这类数据的量和单独消融。</p></div>
+    <div class="card nv"><h4>PE 的反向构造 + 文本先行的验证器</h4><p>从精彩视频 caption 反推符合真实流量统计的 prompt（含错字率、省略槽位），拒掉泄漏骨架的样本；用空间图 / 交互图做合理性判分，先在文本层完成 RL，再上 DiT 在环 RL<span class="src">§5.1–5.3</span>。表 13 给出了逐项累加结果。</p><p class="why">附带一个坦率的负面观察：DiT 在环 RL 抬下限、压上限<span class="src">§5.3</span>。</p></div>
+    <div class="card nv"><h4>DRM：前缀里决策，一次 prefill 多维打分</h4><p>占位符固定在前缀、读选项字母 logits，不加参数；两视频同 prefill 的点式 + 成对字段；对称 KL + 交换顺序 BT 损失 + 置信门，用接近单次推理的延迟达到多次推理的准确率<span class="src">§7.2</span>。</p><p class="why">读出方式改自 Intern-Decision [18]；本文新增的是对称校准、门控推理和视频场景的字段设计。</p></div>
+    <div class="card nv"><h4>音频显式时间锚与同步音视频序列化</h4><p>每 5 秒一个绝对时间锚 + 首尾时间戳；同步音视频按帧时间把音频 token 插在视觉块前；大模型的 Mel + 波形 VAE 双分支经标量门融合<span class="src">§2.2</span>。</p><p class="why">这部分没有单独消融；动机来自 Gemini API 上的提示实验（正文没给数字）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这篇讲的是视频，但「caption 是生成器的语言」「RGC 的保留 / 改动契约」「编辑评测的乘法式打分」几乎可以直接搬到图像编辑。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>规范从生成器的失败模式倒推</h4><p class="paper">论文：6 类信息族，每类都写明「漏写时生成器会怎么坏」，例如左右关系 → 运动反向，美学空词 → 不可执行<span class="src">表 6</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>为编辑 caption 建一张同样的表：编辑区域 / 对象、保留属性、左右与遮挡、光照一致性、文字内容、风格；每一行配上该维度在当前模型上的典型失败 case，作为标注规范和 badcase 归因的共同索引。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>实体命名稳定 + 文字照抄</h4><p class="paper">论文：同一实体跨句跨镜头用同一判别性名词短语、避免代词；可见文字保留原字符和样式，不意译<span class="src">§3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>多主体编辑指令里固定使用「左侧穿红外套的女人」这类判别性称呼，全条不换说法；文字编辑类样本把原文字和目标文字逐字写进 caption，并用 OCR 自动校验，不一致就打回。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>四个标准合取 + 控制长度</h4><p class="paper">论文：单独优化准确会漏写、单独优化覆盖会幻觉、单独优化多样性会让 TE 分布碎片化、单独优化一致性会模板化<span class="src">表 7</span>；判官评测要控制 caption 长度<span class="src">§3.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption 版本对比时同时报原子事实的 precision / recall、术语合规率和长度分桶结果；只在某一个长度桶里涨分的新版本不予采纳。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>多专家出断言、整合层裁决、再蒸馏</h4><p class="paper">论文：通用专家 + 运镜 / 空间 / 光照 / 镜头边界专项模型 → 对照源证据裁决冲突 → 合取质量门 → 被拒样本进按难度索引的错误池 → 蒸馏成单次推理学生<span class="src">§3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的 diff caption 也拆成「区域检测 / 光照判断 / OCR / 通用 VLM」几路断言后再合并；被拒样本按失败维度入池，用于定向补数据，而不是直接丢弃。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>相似对即编辑对</h4><p class="paper">论文：任意两段足够相似的视频，一个当参考、一个当目标，写清共享什么、要改什么，不需要编辑流程和原始指令<span class="src">§4.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>从图库挖近重复对（同场景不同时刻、同商品不同颜色、同人不同姿态），用 VLM 写「保留 X、把 Y 改成 Z」作为编辑指令；入库前过一遍保留区域的像素或特征一致性检查，过滤掉相机移动过大的对。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>权威一致：文本别重述参考已经决定的东西</h4><p class="paper">论文：交给参考的属性，文本不再给不兼容的值；用实体 × 属性 × 时间的权威表裁决后一次写成<span class="src">§4.2 · §4.5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑指令只写改动和显式覆盖的范围，不再重新描述源图里的身份、服装等细节；多参考编辑先生成一张「属性 → 来源图」的表，再据此写指令，减少属性串到别的主体上。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>按真实流量统计反向构造用户指令</h4><p class="paper">论文：从目标 caption 反推 prompt，按日志采样长度、语言混合、语域、错字率、省略槽位；拒掉泄漏 caption 骨架的 prompt；「no people」改写成正面描述<span class="src">§5.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑指令改写器的训练对从「稠密 diff caption → 口语化短指令」反向生成，错字、省略、中英混写按线上日志的比例注入；顺序和 caption 完全一致的指令视为泄漏，直接剔除。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>入库流水线三道审</h4><p class="paper">论文：公开数据在下载前就剔除敏感、许可证不兼容、与评测集重叠的数据集；入库后先粗检格式与多样性，再算 Qwen3-Omni 困惑度、交 Gemini 抽审，最后人工复核错误报告<span class="src">§2.4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>外部编辑数据集接入时把「与内部评测集查重」放在下载前的第一步；困惑度或 VLM 抽审只用来生成错误报告，最终由人决定是删除还是修复后回流。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>编辑分 = 指令跟随 × 保真，再加响应门控</h4><p class="paper">论文（综述 AVE-Compass）：EI = IF × FP，乘法让「不改」和「全部重画」都拿不到高分；只有目标模态确实响应了编辑，才评保真和真实感，不响应记为指令失败<span class="src">§8.1 式 3</span>。参考生成还有反粘贴系数<span class="src">式 2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>图像编辑主指标改成乘法形式，并先判断「是否有可见改动」再计算保真分；参考图编辑额外检测直接贴图（如与参考图局部 SSIM 过高）并扣分。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>只罚缺陷会奖励「什么都不做」</h4><p class="paper">论文：只惩罚伪影会让生成器靠少动来降低风险，所以运动幅度单列为维度做配重<span class="src">§7.2</span>；DiT 在环 RL 让 PE 学会避开复杂内容<span class="src">§5.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 里保真奖励的对应风险是「改得越少分越高」，需要单独设一个「编辑完成度 / 改动幅度」维度作为配重，并同时监控上限指标，不只看平均分。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>判官漏报也要罚</h4><p class="paper">论文：GRM 的 RLVR 奖励对未匹配的真值缺陷扣分，漏报和错报同样有代价<span class="src">§7.2</span>；成对标注存在「赢家缺陷不标」的偏差，不能把未标注的赢家当干净样本<span class="src">§7.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>训练编辑缺陷判官时按召回而不只是精度验收；GSB 标注里的胜方另做一轮单图缺陷标注，再拿来当正样本。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>评测配置即协议，分三档运行</h4><p class="paper">论文：帧率、分辨率、token 预算属于协议；判官要对齐人工、控制已知偏差、固定配置；按维度和难度切片报告；小时级冒烟 / 日级回归 / 发版级全量三档<span class="src">§8.2–8.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测把输入分辨率、判官模型版本、prompt 一起写进评测版本号；日级回归固定一个锚点模型做差值，发版级评测加入隐藏 prompt 集和人工抽检。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>能在文本层解决的先在文本层解决</h4><p class="paper">论文：忠实度清单、空间 / 交互图合理性、技法库生动度都不用渲染就能验证，先做文本级 RL，再上 DiT 在环 RL<span class="src">§5.2</span>；TE 候选可以只靠文本筛<span class="src">§6.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑指令改写器上线前先用 checklist 判官检查是否丢了用户约束，用合理性判官检查编辑在物理上是否可行（例如被遮挡的物体还能不能改），两项通过后再进入出图评测。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>正文与表格不一致：</b>§7.3 称 DRM 在 VideoScore-Bench-v2、VideoPhy2-test、VideoGen-RewardBench 上都「leading」，但表 18 中 VideoPhy2-test 的 Gemini-3.8-Flash（47.80）和 VideoGen-RewardBench 的 VideoReward（59.69）都高于 DRM（44.23 / 57.33）。</li>
+    <li class="key"><b>核心配方数字缺失：</b>没有语料总量、四阶段配比、caption / RGC / PE 训练集规模、学习率、batch、步数；能找到的只有 1 : 10 学习率比、20% 回放、G = 8、Top-5 等少数数字<span class="src">§2–7</span>。</li>
+    <li><b>大量内部集，无法复现：</b>Captioner 的 Motion / Camera / Sound、RM 的成对基准、TE 的分层人评都是内部数据，GSB 原始计数和样本量也没有给出<span class="src">表 8 · 14 · 17</span>。</li>
+    <li><b>对比对象不统一：</b>底座表用 Doubao2.0-Lite，Captioner / RGC 表换成 Doubao2.1-Lite；Gemini 通过内部网关调用，同一模型 macro 最多相差 1.8 分<span class="src">表 2–5 · 8 · 12 · 17†</span>。</li>
+    <li><b>RGC 没有全面领先：</b>MRVBench 的 Ref-Tag-R、Subj-F1、MRVScore 三列都低于 Gemini-4-Argon<span class="src">表 12</span>；关系监督数据对 DiT 的收益没有给出定量结果<span class="src">§4.3</span>。</li>
+    <li><b>PE 的取舍没有完全量化：</b>「压上限」只有定性描述，表 13 没有上限类指标；DiT 在环 RL 和检索都让 faithfulness 回落；最后两行 AVE-Compass 为「–」。另外，文本指标是否由训练奖励用的同一组判官打分，原文没有说明。</li>
+    <li><b>TE 细节缺失：</b>取哪些层、融合模块结构、如何稳定、Qwen 基线是哪个型号均未披露；表 14 是累加配置，没有逐项单独消融<span class="src">§6</span>。</li>
+    <li><b>几处结论没有数字：</b>Stage 1 + Stage 4 合并更好、音频时间锚的收益、多专家流水线优于单一标注器，都只有文字描述<span class="src">§2.2–2.3 · §3.2</span>。</li>
+    <li><b>§8 是综述：</b>任务化评测部分主要回顾外部基准（其中不少有 Kling 团队成员参与，如 VidCapBench、MultiRef-Compass、AVE-Compass），本节没有新实验。</li>
+    <li><b>开放性：</b>原文没有提到发布任何 Kling-MLLM / Captioner / RM 权重或许可证。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>数据–条件–对齐–评测链与 Kling-MLLM。裁图包里的 <code>fig1.jpg</code> / <code>fig0-teaser.jpg</code> 实际是首页摘要区，不是图 1，本页未使用；改用文字重绘的示意图</td><td><a href="#arch">§03 示意</a></td></tr>
+        <tr><td>图 2</td><td>Kling-MLLM 架构（<code>figures/fig2.jpg</code>，p.5）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 3 / 4</td><td>流畅 caption vs 生成导向 caption；RGC 示例（无裁图）</td><td>文字转述于 <a href="#data">§04</a></td></tr>
+        <tr><td>图 5</td><td>PE 总览（<code>figures/fig5.jpg</code> 仅含下半部分推理链路，p.20）</td><td><a href="#train">§05</a></td></tr>
+        <tr><td>图 6 / 7</td><td>caption 对齐三层级；RM 三阶段训练（无裁图）</td><td>文字转述于 <a href="#train">§05</a></td></tr>
+        <tr><td>表 1</td><td>各模态归一化与监督</td><td><a href="#data">§04 折叠</a></td></tr>
+        <tr><td>表 2–5</td><td>底座：音频 / 音视频与交错 / 图像 / 视频</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 6 / 7</td><td>caption 规范；单项优化捷径</td><td><a href="#data">§04</a></td></tr>
+        <tr><td>表 8</td><td>Kling-Captioner</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 9–11</td><td>RGC 产品任务 / 契约 / 各模态权威（表 9 未单独复刻）</td><td><a href="#data">§04</a></td></tr>
+        <tr><td>表 12</td><td>Kling-RGC</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 13</td><td>PE 组件累加</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 14</td><td>TE 人评偏好比</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 15 / 16</td><td>RM 应用场景；统一评测分类体系（4 L1 · 10 L2）</td><td>要点见 <a href="#data">§04</a> / <a href="#train">§05</a></td></tr>
+        <tr><td>表 17 / 18</td><td>RM 内部 / 公开基准</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 19</td><td>按任务的评测分类</td><td>要点见 <a href="#impl">§08</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Kling Team《Behind Video Generation: Observations and Insights on Multimodal Understanding from Kling》（<a href="https://arxiv.org/abs/2611.04916" target="_blank" rel="noopener">arXiv:2611.04916</a> v1，2026-11-03）撰写。所有数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

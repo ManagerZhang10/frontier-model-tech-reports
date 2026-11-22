@@ -21,6 +21,7 @@
 | 类别 | 模型 | 厂商 | 日期 | 原文 |
 | --- | --- | --- | --- | --- |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
+| VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |
@@ -29,12 +30,14 @@
 | 图像生成 | [ERNIE-Image](./reports/image/ernie-image/) | ERNIE Team, Baidu | 2026-05-25 | [arXiv:2605.25347](https://arxiv.org/abs/2605.25347) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0-RL](./reports/image/qwen-image-2.0-rl/) | Qwen Team | 2026-06-25 | [arXiv:2606.27608](https://arxiv.org/abs/2606.27608) |
 | 统一多模态 | [InternVL-U](./reports/image/internvl-u/) | Shanghai AI Laboratory 等 | 2026-03-10 | [arXiv:2603.09877](https://arxiv.org/abs/2603.09877) |
+| 图像评测基准 | [Qwen-Image-Bench](./reports/image/qwen-image-bench/) | Qwen Team | 2026-05-27 | [arXiv:2605.28091](https://arxiv.org/abs/2605.28091) |
 | 视频生成 | [HunyuanVideo 1.5](./reports/video/hunyuanvideo-1.5/) | Tencent Hunyuan Foundation Model Team | 2025-11-24 | [arXiv:2511.18870](https://arxiv.org/abs/2511.18870) |
 | 视频生成 | [Kling-Omni](./reports/video/kling-omni/) | Kling Team, Kuaishou Technology | 2025-12-18 | [arXiv:2512.16776](https://arxiv.org/abs/2512.16776) |
 | 视频生成 | [Seedance 2.0](./reports/video/seedance-2.0/) | ByteDance Seed | 2026-04-15 | [arXiv:2604.14148](https://arxiv.org/abs/2604.14148) |
 | 视频生成（音画联合） | [Seedance 1.5 pro](./reports/video/seedance-1.5-pro/) | ByteDance Seed | 2025-12-15 | [arXiv:2512.13507](https://arxiv.org/abs/2512.13507) |
 | 视频生成（音画联合） | [LTX-2](./reports/video/ltx-2/) | Lightricks | 2026-01-06 | [arXiv:2601.03233](https://arxiv.org/abs/2601.03233) |
 | 实时交互音视频 | [Wan-Streamer](./reports/video/wan-streamer/) | Wan Team, Alibaba Group | 2026-06-23 | [arXiv:2606.25041](https://arxiv.org/abs/2606.25041) |
+| 世界模型 / 视频与动作 | [Cosmos 3](./reports/video/cosmos-3/) | NVIDIA | 2026-06-01 | [arXiv:2606.02800](https://arxiv.org/abs/2606.02800) |
 
 
 更多候选见 [`CANDIDATES.md`](./CANDIDATES.md)。更新记录见 [`CHANGELOG.md`](./CHANGELOG.md)。

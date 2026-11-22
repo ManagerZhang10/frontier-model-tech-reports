@@ -240,6 +240,54 @@
       "one_liner": "端到端全双工实时交互：单一块因果 Transformer 同时把文本、音频、视频当输入和输出，流式单元 160 ms，模型侧约 200 ms、含 350 ms 双向网络后总交互约 550 ms。参数量与开源情况未披露。",
       "path": "reports/video/wan-streamer/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "cosmos-3",
+      "title": "Cosmos 3",
+      "subtitle": "Cosmos 3: Omnimodal World Models for Physical AI",
+      "vendor": "NVIDIA",
+      "vendor_key": "nvidia",
+      "category": "video",
+      "date": "2026-06-01",
+      "paper": "https://arxiv.org/abs/2606.02800",
+      "arxiv": "2606.02800",
+      "open_weights": true,
+      "params": "Nano 16B / Super 64B（Edge 4B 后续发布）",
+      "one_liner": "Mixture-of-Transformers 双塔统一语言、图像、视频、音频与动作；Nano 16B / Super 64B 开源（OpenMDW-1.1），Artificial Analysis 文生图与图生视频开源榜第 1（2026-05-28 快照）。Edge 4B 权重尚未发布。",
+      "path": "reports/video/cosmos-3/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "kling-understanding",
+      "title": "可灵：视频生成背后的多模态理解",
+      "subtitle": "Behind Video Generation: Observations and Insights on Multimodal Understanding from Kling",
+      "vendor": "Kling Team, Kuaishou Technology",
+      "vendor_key": "kuaishou",
+      "category": "vlm",
+      "date": "2026-11-03",
+      "paper": "https://arxiv.org/abs/2611.04916",
+      "arxiv": "2611.04916",
+      "open_weights": false,
+      "params": "Kling-MLLM 27B / 35B-A3B / 397B-A17B",
+      "one_liner": "可灵团队的方法观察报告，而非单卡模型发布：共享底座 Kling-MLLM（27B / 35B-A3B / 397B-A17B）专精为 captioner、RGC、PE、文本编码器、奖励模型与评测器；核心是把 caption 当「语义契约」。权重未发布。",
+      "path": "reports/vlm/kling-understanding/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "qwen-image-bench",
+      "title": "Qwen-Image-Bench",
+      "subtitle": "Qwen-Image-Bench: From Generation to Creation in Text-to-Image Evaluation",
+      "vendor": "Qwen Team",
+      "vendor_key": "qwen",
+      "category": "image",
+      "date": "2026-05-27",
+      "paper": "https://arxiv.org/abs/2605.28091",
+      "arxiv": "2605.28091",
+      "open_weights": true,
+      "params": "Q-Judger（Qwen3.6-27B）",
+      "one_liner": "文生图评测基准（不是生成模型）：5 支柱 / 23 子能力 / 56 细项，1,000 条中英双语 prompt，13 万+ 条专业标注训练裁判模型 Q-Judger。基准与裁判已公开。",
+      "path": "reports/image/qwen-image-bench/",
+      "added": "2026-11-22"
     }
   ]
 }

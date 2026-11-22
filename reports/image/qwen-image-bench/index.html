@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen-Image-Bench 中文深读 · 面向创作者的文生图评测基准 · 前沿模型技术报告</title>
+<meta name="description" content="Qwen-Image-Bench 精读：5 支柱 / 23 子能力 / 56 细项的分层体系、1,000 条中英双语 prompt、13 万人工标注训练的 Q-Judger，以及 18 个文生图模型的评测结论。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* 页面特有：评测框架示意图 + 分层体系表 */
+  .qb-box { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+  .qb-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); stroke-width: 1.2; }
+  .qb-warm { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+  .qb-good { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.2; }
+  .qb-arrow { stroke: var(--muted); stroke-width: 1.6; fill: none; marker-end: url(#qb-ah); }
+  .qb-ah { fill: var(--muted); }
+  .qb-t { fill: var(--ink); font: 700 13px var(--f-body); }
+  .qb-s { fill: var(--muted); font: 500 11.5px var(--f-body); }
+  .qb-k { fill: var(--accent-ink); font: 700 11px var(--f-mono); }
+  .qb-score { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+  .qb-score .card { padding: 10px 12px; text-align: center; }
+  .qb-score b { display: block; font: 700 1.3rem/1.2 var(--f-head); }
+  .qb-score span { font-size: .84rem; color: var(--muted); }
+  .qb-score .f b { color: var(--warn); }
+  .qb-score .p b { color: var(--ink); }
+  .qb-score .e b { color: var(--good); }
+  table.tax td { white-space: normal; text-align: left; vertical-align: top; }
+  table.tax td.n { text-align: right; white-space: nowrap; }
+  @media (max-width: 640px) {
+    .qb-score { grid-template-columns: 1fr 1fr; }
+    .hero h1 { font-size: 2.15rem; overflow-wrap: anywhere; }
+    .chart-grid.two { grid-template-columns: 1fr !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成评测基准（不是生成模型本身）</div>
+    <h1>Qwen-Image-Bench<span class="sub">From Generation to Creation in Text-to-Image Evaluation</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Qwen Team（阿里巴巴）</b></span>
+      <span>arXiv v1 <b>2026-05-27</b></span>
+      <span>本文据 <b>v2（2026-06-25）</b>写成</span>
+      <span>编号 <b>2605.28091</b></span>
+    </div>
+    <p class="lede">这是一个<b>文生图评测基准</b>，不是生成模型。它把评测从「图文对不对得上」推到「能不能干专业创作的活」：和艺术从业者共建 <b>5 支柱 / 23 子能力 / 56 细项</b>的分层体系，配 <b>1,000 条中英双语 prompt</b>，再用 <b>13 万+ 条</b>美院背景标注员的人工打分训练一个裁判模型 <b>Q-Judger</b>，对每张图逐项打 0/1/2 分。<span class="src">摘要</span><span class="src">§3</span></p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>评测基准 · 非生成模型</span>
+      <span class="badge">类别：文生图（T2I）评测</span>
+      <span class="badge">开放：prompt 集 + Q-Judger 权重<span class="src">§1 · §4.1</span></span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">裁判模型：基于 Qwen3.6-27B 微调<span class="src">§3.3</span></span>
+      <span class="badge">被测：18 个 T2I 模型 × 中 / 英<span class="src">§4.2</span></span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2605.28091" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2605.28091</a>
+      <a href="https://huggingface.co/datasets/Qwen/Qwen-Image-Bench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>HF 数据集</a>
+      <a href="https://www.modelscope.cn/datasets/Qwen/Qwen-Image-Bench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/></svg>ModelScope</a>
+      <a href="https://github.com/QwenLM/Qwen-Image-Bench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.3 6.4-1.5 6.4-7A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.8c0 5.4 3.3 6.6 6.4 7A3.4 3.4 0 0 0 9 18.1V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/Qwen/Qwen-Image-Bench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg>Q-Judger（HF）</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">评测框架</a></li>
+      <li><a href="#data">基准怎么建</a></li>
+      <li><a href="#judge">怎么评分</a></li>
+      <li><a href="#eval">评测结果</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自原文；带「推算」的是本文自行计算。</div>
+  </nav>
+
+  <main>
+
+<!-- 1 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance">
+    <div class="card stat"><div class="stat-k">性质</div><div class="stat-num sm">T2I 评测基准 + 裁判模型</div><div class="stat-sub">不训练生成模型</div><span class="src">§3</span></div>
+    <div class="card stat"><div class="stat-k">能力体系</div><div class="stat-num">5 / 23 / 56</div><div class="stat-sub">L1 支柱 / L2 子能力 / L3 细项</div><span class="src">§3.1</span></div>
+    <div class="card stat"><div class="stat-k">Prompt 数</div><div class="stat-num">1,000</div><div class="stat-sub">500 短 + 500 长，各有中英两版</div><span class="src">§3.2</span></div>
+    <div class="card stat"><div class="stat-k">应用场景</div><div class="stat-num">17 个</div><div class="stat-sub">艺术从业者从真实创作案例定的范围</div><span class="src">§3.2</span></div>
+    <div class="card stat"><div class="stat-k">裁判训练数据</div><div class="stat-num">13 万+</div><div class="stat-sub">中英双语 prompt–图像对，全部人工标注</div><span class="src">§3.3</span></div>
+    <div class="card stat"><div class="stat-k">标注团队</div><div class="stat-num">80 人</div><div class="stat-sub">美院背景；盲标，每对 ≥3 人</div><span class="src">§3.3</span></div>
+    <div class="card stat"><div class="stat-k">与人评排序相关</div><div class="stat-num">ρ 0.92 / 0.90</div><div class="stat-sub">总分，中 / 英；N = 18 个模型</div><span class="src">表 1</span></div>
+    <div class="card stat"><div class="stat-k">榜首</div><div class="stat-num sm">GPT Image 2</div><div class="stat-sub">中 64.69 / 英 65.23，五个支柱都第一</div><span class="src">表 2 · 表 5</span></div>
+    <div class="card stat"><div class="stat-k">版本</div><div class="stat-num sm">v1 2026-05-27</div><div class="stat-sub">本页依据的 PDF 为 v2（2026-06-25）</div><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 2 TL;DR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>先说结论</h2></div>
+  <div class="tldr">
+    <div class="card tl"><span class="idx">01</span><h3>是基准，不是模型</h3><p>交付物是 1,000 条双语 prompt、56 细项的打分细则，以及一个按细则逐项打分的裁判模型 Q-Judger（Qwen3.6-27B 微调）。论文没有训练任何生成模型。<span class="src">§1 · §3</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>裁判用人工标签训，不用 MLLM 标签</h3><p>训练标签全部来自 80 名美院背景标注员，13 万+ 对，盲标、每对 ≥3 人互审。论文明确拿 UniGenBench++ 用 Gemini-2.5 产标签做反例。<span class="src">§3.3</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>拉开差距的是两个新支柱</h3><p>Creative Generation 的支柱间方差是 Quality 的 11 倍以上；18 个模型在它上面最高与最低分差 30.6 分，五个支柱里最大。<span class="src">§4.5</span><span class="src">§4.7</span></p></div>
+    <div class="card tl"><span class="idx">04</span><h3>五个全行业天花板</h3><p>Physical Logic、Anatomical Fidelity、Animals、Objects、Contact Interaction，最强模型在这五项上也都低于 44 分；Anatomical Fidelity 最好只有 20.9。<span class="src">§4.4</span><span class="src">§4.8</span></p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>人评对齐只在模型排序层面验证</h3><p>ρ = 0.92 是 18 个模型的排序相关，不是逐图、逐细项的一致率；人评用的是每支柱 1–10 整体分，和 Q-Judger 的 0/1/2 细项分不是同一套协议。<span class="src">表 1 · 表 4</span></p></div>
+  </div>
+</section>
+
+<!-- 3 架构 -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · FRAMEWORK</div><h2>评测框架：分层体系 → prompt 工厂 → 裁判 → 自下而上汇总</h2>
+  <p class="sec-intro">基准没有「模型架构」，对应的是三件紧耦合的组件。<span class="src">§3</span></p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="Qwen-Image-Bench 评测维度图（Creative Generation 部分）" loading="lazy"></div>
+    <figcaption><b>评测维度示例。</b>每个 L3 细项配一张由某个被测模型生成的示例图；本裁图只含 Creative Generation 支柱下的 Imagination、Logical Resolution、Feature Matching、Text Rendering、Design Applications、Visual Storytelling。完整的 5 支柱划分见下表。<span class="from">来源：论文图 1（局部）</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 980 230" role="img" aria-label="Qwen-Image-Bench 评测流程示意">
+      <defs><marker id="qb-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="qb-ah" d="M0 0L10 5L0 10z"/></marker></defs>
+      <rect class="qb-acc" x="10" y="20" width="210" height="110" rx="12"/>
+      <text class="qb-k" x="24" y="44">§3.1</text>
+      <text class="qb-t" x="24" y="66">分层能力体系</text>
+      <text class="qb-s" x="24" y="88">5 支柱 → 23 子能力 → 56 细项</text>
+      <text class="qb-s" x="24" y="108">每个细项一条可核对的打分细则</text>
+      <rect class="qb-warm" x="260" y="20" width="220" height="110" rx="12"/>
+      <text class="qb-k" x="274" y="44">§3.2</text>
+      <text class="qb-t" x="274" y="66">专家在环的 prompt 工厂</text>
+      <text class="qb-s" x="274" y="88">按细项采样 → LLM 双语起草</text>
+      <text class="qb-s" x="274" y="108">→ 专家审改 → 长度扩写</text>
+      <rect class="qb-box" x="520" y="20" width="200" height="110" rx="12"/>
+      <text class="qb-k" x="534" y="44">§4.2</text>
+      <text class="qb-t" x="534" y="66">被测 T2I 模型出图</text>
+      <text class="qb-s" x="534" y="88">18 个模型 × 1,000 prompt</text>
+      <text class="qb-s" x="534" y="108">中、英两版分别测</text>
+      <rect class="qb-good" x="760" y="20" width="210" height="110" rx="12"/>
+      <text class="qb-k" x="774" y="44">§3.3 · §4.1</text>
+      <text class="qb-t" x="774" y="66">Q-Judger 逐项打分</text>
+      <text class="qb-s" x="774" y="88">每个细项 0 / 1 / 2 / N/A</text>
+      <text class="qb-s" x="774" y="108">开 thinking，贪心解码</text>
+      <path class="qb-arrow" d="M220 75 H256"/>
+      <path class="qb-arrow" d="M480 75 H516"/>
+      <path class="qb-arrow" d="M720 75 H756"/>
+      <rect class="qb-acc" x="520" y="160" width="450" height="56" rx="12"/>
+      <text class="qb-t" x="534" y="184">自下而上汇总（§3.4）</text>
+      <text class="qb-s" x="534" y="204">0/1/2 → 0/60/100；L3 → L2 → L1 → 总分，均为等权平均，N/A 剔除</text>
+      <path class="qb-arrow" d="M865 130 V156"/>
+      <rect class="qb-box" x="10" y="160" width="470" height="56" rx="12"/>
+      <text class="qb-t" x="24" y="184">人工标注训练裁判（§3.3）</text>
+      <text class="qb-s" x="24" y="204">80 名美院标注员 · 13 万+ 对 · 盲标 · 每对 ≥3 人 · 逐细项打分</text>
+      <path class="qb-arrow" d="M480 188 C 620 188, 700 150, 790 132"/>
+    </svg>
+    <div class="cap">示意。组件与顺序按 §3 原文；人工标注数据只用于训练 Q-Judger，评测阶段不再人工打分。</div>
+  </div>
+
+  <div class="prose">
+    <h3>和同类基准的差别</h3>
+    <ul>
+      <li><b>维度：</b>在 Quality / Aesthetics / Alignment 三个常规支柱之外，加了 <em>Real-world Fidelity</em> 与 <em>Creative Generation</em> 两个「应用驱动」支柱；56 个细项里有 28 个落在这两个支柱下。<span class="src">§1</span><span class="src">表 7</span></li>
+      <li><b>体系怎么来：</b>按专业创作流程（构思 → 定风格 → 迭代精修）自上而下拆，而不是平铺一张检查清单；每个 L3 只属于一个 L2 和一个 L1，可以确定地向上汇总。<span class="src">§3.1</span></li>
+      <li><b>Prompt 长度：</b>对照组 HRS-Bench 平均 16.43 token、T2I-CompBench 12.65 token；DPG-Bench、UniGenBench++ 这类密集 prompt 集一般封顶在 80–160 token。本基准刻意五五开长短 prompt。<span class="src">§1</span></li>
+      <li><b>裁判：</b>一个统一裁判出全部 56 项分，标签来自人工；对照的是「用单个 MLLM 的输出当标签」的做法（UniGenBench++ 用 Gemini-2.5）。<span class="src">§3.3</span></li>
+    </ul>
+  </div>
+
+  <details class="more wide">
+    <summary>完整分层体系：5 支柱 × 23 子能力 × 56 细项<span class="hint">表 7 · 点开</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table class="tax">
+          <thead><tr><th>L1 支柱</th><th>L2 子能力 → L3 细项</th><th>L2 / L3 数<span class="src calc">推算</span></th></tr></thead>
+          <tbody>
+            <tr><td>Quality</td><td>Realism（Physical Logic、Material Texture）· Detail（Noise、Edge Clarity、Naturalness）· Resolution（Resolution）</td><td class="n">3 / 6</td></tr>
+            <tr><td>Aesthetics</td><td>Composition · Color Harmony · Lighting（Lighting &amp; Atmosphere）· Anatomical Portraiture（Anatomical Fidelity）· Emotional Expression · Style Control —— 每个 L2 下各 1 个同名 / 对应细项</td><td class="n">6 / 6</td></tr>
+            <tr><td>Alignment</td><td>Attributes（Quantity、Facial Expression、Material Properties、Color、Shape、Size）· Actions（Contact Interaction、Non-contact Interaction、Full-body Action）· Layout（2D Space、3D Space）· Relations（Composition Relationship、Difference/Similarity、Containment）· Scene（Real-world Scene、Virtual Scene）</td><td class="n">5 / 16</td></tr>
+            <tr class="hl"><td>Real-world Fidelity</td><td>Fairness（Social Bias、Cultural Fairness）· Safety &amp; Compliance · World Knowledge（Animals、Objects、Information Visualization、Temporal Characteristics、Cultural Elements）</td><td class="n">3 / 8</td></tr>
+            <tr class="hl"><td>Creative Generation</td><td>Imagination · Feature Matching · Logical Resolution · Text Rendering（Text Accuracy、Text Layout、Font、Cross-lingual Generation）· Design Applications（Graphic、Product、Spatial Design、Fashion Styling、Game Design、Art Design）· Visual Storytelling（Cinematic Style、Camera/Lens Style、Storyboard Creation、Shot Sizes、Composition、Angles、Comic Creation）</td><td class="n">6 / 20</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">合计 23 / 56，与原文一致；两个应用驱动支柱共 28 个细项（高亮行）。注意 Anatomical Fidelity 归在 Aesthetics，Objects、Animals 归在 Real-world Fidelity 的 World Knowledge 下。每项英文细则见原文表 7 与附录 A.4.2。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 4 数据 -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · BUILDING THE BENCHMARK</div><h2>基准怎么建：prompt 工厂与裁判训练数据</h2>
+  <p class="sec-intro">两份数据：被测用的 1,000 条 prompt，以及训练 Q-Judger 用的 13 万+ 条人工打分。前者全文给了流程，后者只给了规模和协议。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="真实应用场景 prompt 构建流程" loading="lazy"></div>
+    <figcaption><b>真实应用场景 prompt 的构建流程。</b>左：场景类别环（Storyboard Creation、Product Design、Comic Creation、World Knowledge 等）；右上：一条「辣椒炒肉手账页」示例 prompt 与 Nano Banana Pro 出图；下：专家驱动的 prompt 工程，起草模型为 Qwen3-Max 与 ChatGPT-5.2。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <h3 class="prose">Prompt 工厂：四步</h3>
+  <div class="flow wide">
+    <div class="card stage"><div class="sid">STEP 1</div><h4>按细项定向采样</h4><dl><dt>每条</dt><dd>从 56 个 L3 里采 k ≥ 3 个</dd><dt>约束</dt><dd>每个细项、每个支柱出现频率大致相等</dd><dt>尽量</dt><dd>跨 ≥3 个 L1 支柱</dd></dl><span class="src">§3.2 式 1</span></div>
+    <div class="card stage"><div class="sid">STEP 2</div><h4>LLM 双语起草</h4><dl><dt>模型</dt><dd>Qwen3-Max、ChatGPT-5.2</dd><dt>产出</dt><dd>中、英草稿 + 每个细项的「落地说明」d<sub>i</sub></dd></dl><span class="src">§3.2 式 2</span></div>
+    <div class="card stage"><div class="sid">STEP 3</div><h4>专家审、改、复核</h4><dl><dt>丢弃</dt><dd>琐碎、有歧义、区分度不够的</dd><dt>重写</dt><dd>细项落得弱或泛的</dd><dt>复核</dt><dd>逐条对照细则核 (c<sub>i</sub>, d<sub>i</sub>)</dd></dl><span class="src">§3.2</span></div>
+    <div class="card stage"><div class="sid">STEP 4</div><h4>长短变体扩写</h4><dl><dt>阈值</dt><dd>中文 70 字 / 英文 235 字符</dd><dt>扩写</dt><dd>LLM 在保语义约束下扩</dd><dt>重对齐</dt><dd>细项映射重算，k′ ≤ k + 5</dd></dl><span class="src">§3.2 式 3–4</span></div>
+  </div>
+  <p class="footnote">示意，按 §3.2 文字整理。专家审阶段的丢弃率、重写比例原文未给。</p>
+
+  <h3 class="prose">已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>项目</th><th>原文数字</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">评测 prompt 集</td></tr>
+        <tr><td>Prompt 总数</td><td>1,000（500 短 + 500 长），每条有中英两版</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>应用场景范围</td><td>17 个应用领域</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>每条 prompt 覆盖</td><td>平均跨 3–5 个 L1 支柱；采样时 k ≥ 3 个 L3（摘要写「超过 4 个」）</td><td><span class="src">§3.2</span><span class="src">摘要</span></td></tr>
+        <tr><td>长短划分阈值</td><td>中文 70 字、英文 235 字符</td><td><span class="src">§3.2</span></td></tr>
+        <tr><td>各领域 / 各细项的 prompt 条数</td><td><span class="nd">原文未披露</span>（只说「大致均衡」）</td><td>—</td></tr>
+        <tr><td>专家审核淘汰比例</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr class="grp"><td colspan="3">Q-Judger 训练数据</td></tr>
+        <tr><td>标注对数</td><td>130,000+ 中英双语 prompt–图像对</td><td><span class="src">§3.3 · §4.1</span></td></tr>
+        <tr><td>标注员</td><td>80 人，美院学历，摄影 / 导演 / 纯艺背景</td><td><span class="src">§3.3</span></td></tr>
+        <tr><td>标注协议</td><td>去除模型身份（盲标）；随机分配；每对 ≥3 人独立打分并交叉复核</td><td><span class="src">§3.3</span></td></tr>
+        <tr><td>采样原则</td><td>平衡模型来源、难度、L3 覆盖</td><td><span class="src">§3.3</span></td></tr>
+        <tr><td>训练图来自哪些模型、是否含 18 个被测模型</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>标注员间一致率（κ 等）</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>各细项标签分布（0/1/2/N/A 占比）</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr class="grp"><td colspan="3">人评对齐集</td></tr>
+        <tr><td>规模</td><td>§4.1 称「留出集」；表 4 题注称每个支柱覆盖 1,000 条 prompt</td><td><span class="src">§4.1 · 表 4</span></td></tr>
+        <tr><td>打分方式</td><td>资深专家按 L1 支柱给 1–10 整体分，再按均分给模型排序</td><td><span class="src">§4.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">没有任何配比信息，所以本页不画比例条。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>标注是怎么「对齐到细则」的<span class="tag">§3.3</span></h4><p>每个训练对，标注员看到的是这条 prompt <b>预先指派的 L3 细项</b>（连同所属 L2）及其细则，逐项打分——论文称为「facet-by-facet, rubric-by-rubric」。标签因此锚定在可核对的证据上，而不是整体印象。</p></div>
+    <div class="card mod"><h4>Prompt 本身就是结构化「caption」<span class="tag">§3.2</span></h4><p>起草时 LLM 同时输出每个目标细项「在 prompt 里具体怎么体现」的说明 d<sub>i</sub>，把 prompt 内容和评测目标的映射写成显式记录；长版扩写后再让 LLM 重新对齐映射，最多新增 5 个细项。</p></div>
+  </div>
+</section>
+
+<!-- 5 judge -->
+<section class="sec" id="judge">
+  <div class="sec-head"><div class="sec-num">05 · HOW IT SCORES</div><h2>怎么评分：Q-Judger 与多粒度汇总</h2>
+  <p class="sec-intro">「训练配方」一节在这篇里只对应裁判模型的微调；论文没有训练任何生成模型。</p></div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>Q-Judger 微调<span class="tag">§4.1</span></h4>
+      <dl class="kv">
+        <dt>底座</dt><dd>Qwen3.6-27B（多模态）</dd>
+        <dt>框架</dt><dd>MS-SWIFT</dd>
+        <dt>数据</dt><dd>13 万+ 人工标注对</dd>
+        <dt>学习率 / 轮数 / 批大小</dt><dd><span class="nd">原文未披露</span></dd>
+        <dt>是否 RL / 偏好优化</dt><dd><span class="nd">原文未披露</span>（只说 fine-tune）</dd>
+        <dt>标签里是否含推理过程</dt><dd><span class="nd">原文未披露</span></dd>
+      </dl>
+    </div>
+    <div class="card mod">
+      <h4>推理设置<span class="tag">§4.1</span></h4>
+      <dl class="kv">
+        <dt>解码</dt><dd>确定性：temperature 0，top_k 1，top_p 1</dd>
+        <dt>其他</dt><dd>repetition_penalty 1.05，seed 42</dd>
+        <dt>思考</dt><dd><code>enable_thinking = True</code>，先推理再打分</dd>
+        <dt>输入</dt><dd>系统角色 + 生成 prompt + 图 + 打分规则 + 该维度 L2/L3 检查表</dd>
+        <dt>输出</dt><dd>JSON：<code>{L2: {L3: {"score": 0|1|2|"N/A"}}}</code></dd>
+      </dl>
+      <p class="footnote">模板中按 <code>{level1_dim}</code> 填入一个支柱的检查表（附录 A.4），五个支柱各一份。</p>
+    </div>
+  </div>
+
+  <h3 class="prose">打分档位与映射</h3>
+  <div class="qb-score wide">
+    <div class="card f"><b>0 → 0</b><span>Fail：有会明显降低质量的缺陷</span></div>
+    <div class="card p"><b>1 → 60</b><span>Pass：无可见缺陷，达到基线</span></div>
+    <div class="card e"><b>2 → 100</b><span>Excel：有可观察到的具体出彩处</span></div>
+    <div class="card"><b>N/A</b><span>不适用，剔出汇总</span></div>
+  </div>
+  <div class="prose">
+    <p>映射是刻意非线性的：Pass 记 60 而不是 50，放大「不可用 vs 可用」（0 vs 60）的差距、压缩「可用 vs 出色」（60 vs 100），理由是前者对用户体验影响更大。<span class="src">§3.4 式 7</span></p>
+    <p><b>汇总：</b>单张图内，L2 = 其下被激活 L3 的均值，L1 = 被激活 L2 的均值，单图总分 = 被激活 L1（3–5 个）的等权均值；模型层面再对激活该组件的所有 prompt 取均值，总分对全部 prompt 取均值。一次推理即可得到四个粒度的分数，不用重新标注或重推。<span class="src">§3.4 式 8–12 · 算法 1</span></p>
+  </div>
+</section>
+
+<!-- 6 评测 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · RESULTS</div><h2>评测结果</h2>
+  <p class="sec-intro">被测对象：18 个 T2I 模型（GPT Image 2 / 1.5 / 1、Nano Banana 2.0 / Pro、Seedream 5.0 / 4.5 / 4.0、Imagen 4.0 Ultra / 4.0、FLUX 2 Max / Pro、Qwen Image 2.0 Pro / 2512 / Qwen Image、HunyuanImage 3.0、GLM Image、Kling Image 2.1），每个模型跑完 1,000 条 prompt，中英分开测。<span class="src">§4.2</span> 原表没有 * / † 记号，只用粗体标每列最高分（下表以紫点表示）。</p></div>
+
+  <h3 class="prose">裁判可信度：与人评的排序相关</h3>
+  <div class="tbl-wrap prose">
+    <table>
+      <thead><tr><th>维度</th><th>中文 ρ</th><th>英文 ρ</th></tr></thead>
+      <tbody>
+        <tr><td>Quality</td><td>0.89</td><td>0.89</td></tr>
+        <tr><td>Aesthetics</td><td>0.89</td><td>0.90</td></tr>
+        <tr><td>Alignment</td><td>0.89</td><td>0.86</td></tr>
+        <tr><td>Real-world Fidelity</td><td>0.92</td><td>0.90</td></tr>
+        <tr><td>Creative Generation</td><td>0.92</td><td>0.90</td></tr>
+        <tr class="hl"><td>Overall</td><td>0.92</td><td>0.90</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note prose">Spearman 排序相关，N = 18 个模型，原文称全部 p &lt; 10<sup>−4</sup>。<span class="src">表 1</span> 用表 2 与表 4 的中文总分排名复算得 ρ ≈ 0.924，与原文一致。<span class="src calc">推算</span></p>
+
+  <h3 class="prose">总榜（中文 prompt）</h3>
+  <div class="card diagram wide">
+    <svg class="chart" viewBox="0 0 760 506" role="img" aria-label="18 个模型中文 prompt 总分">
+<text class="ch-t" x="0" y="14">中文 prompt 总分（0–100 量表，横轴从 0 起，截到 70）</text><text class="ch-src" x="760" y="14" text-anchor="end">表 2 / 图 3</text>
+<text class="ch-lbl" x="142" y="47" text-anchor="end">GPT Image 2</text><rect class="bar-bg" x="150" y="34" width="550" height="18" rx="3"/><rect class="bar-q" x="150" y="34" width="508.3" height="18" rx="3"/><text class="ch-val" x="664.3" y="47">64.69</text><text class="ch-ax" x="756" y="47" text-anchor="end">T1</text>
+<text class="ch-lbl" x="142" y="71" text-anchor="end">Nano Banana 2.0</text><rect class="bar-bg" x="150" y="58" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="58" width="470.0" height="18" rx="3"/><text class="ch-val" x="626.0" y="71">59.82</text><text class="ch-ax" x="756" y="71" text-anchor="end">T2</text>
+<text class="ch-lbl" x="142" y="95" text-anchor="end">GPT Image 1.5</text><rect class="bar-bg" x="150" y="82" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="82" width="468.7" height="18" rx="3"/><text class="ch-val" x="624.7" y="95">59.65</text><text class="ch-ax" x="756" y="95" text-anchor="end">T2</text>
+<text class="ch-lbl" x="142" y="119" text-anchor="end">Nano Banana Pro</text><rect class="bar-bg" x="150" y="106" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="106" width="467.1" height="18" rx="3"/><text class="ch-val" x="623.1" y="119">59.45</text><text class="ch-ax" x="756" y="119" text-anchor="end">T2</text>
+<text class="ch-lbl" x="142" y="143" text-anchor="end">Qwen Image 2.0 Pro</text><rect class="bar-bg" x="150" y="130" width="550" height="18" rx="3"/><rect class="bar-qi" x="150" y="130" width="454.5" height="18" rx="3"/><text class="ch-val" x="610.5" y="143">57.84</text><text class="ch-ax" x="756" y="143" text-anchor="end">T3</text>
+<text class="ch-lbl" x="142" y="167" text-anchor="end">Seedream 5.0</text><rect class="bar-bg" x="150" y="154" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="154" width="449.6" height="18" rx="3"/><text class="ch-val" x="605.6" y="167">57.22</text><text class="ch-ax" x="756" y="167" text-anchor="end">T3</text>
+<text class="ch-lbl" x="142" y="191" text-anchor="end">Seedream 4.5</text><rect class="bar-bg" x="150" y="178" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="178" width="446.1" height="18" rx="3"/><text class="ch-val" x="602.1" y="191">56.78</text><text class="ch-ax" x="756" y="191" text-anchor="end">T3</text>
+<text class="ch-lbl" x="142" y="215" text-anchor="end">Seedream 4.0</text><rect class="bar-bg" x="150" y="202" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="202" width="441.6" height="18" rx="3"/><text class="ch-val" x="597.6" y="215">56.21</text><text class="ch-ax" x="756" y="215" text-anchor="end">T3</text>
+<text class="ch-lbl" x="142" y="239" text-anchor="end">FLUX 2 Max</text><rect class="bar-bg" x="150" y="226" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="226" width="434.7" height="18" rx="3"/><text class="ch-val" x="590.7" y="239">55.33</text><text class="ch-ax" x="756" y="239" text-anchor="end">T4</text>
+<text class="ch-lbl" x="142" y="263" text-anchor="end">FLUX 2 Pro</text><rect class="bar-bg" x="150" y="250" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="250" width="428.8" height="18" rx="3"/><text class="ch-val" x="584.8" y="263">54.57</text><text class="ch-ax" x="756" y="263" text-anchor="end">T4</text>
+<text class="ch-lbl" x="142" y="287" text-anchor="end">GPT Image 1</text><rect class="bar-bg" x="150" y="274" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="274" width="424.8" height="18" rx="3"/><text class="ch-val" x="580.8" y="287">54.07</text><text class="ch-ax" x="756" y="287" text-anchor="end">T4</text>
+<text class="ch-lbl" x="142" y="311" text-anchor="end">Qwen Image 2512</text><rect class="bar-bg" x="150" y="298" width="550" height="18" rx="3"/><rect class="bar-qi" x="150" y="298" width="409.0" height="18" rx="3"/><text class="ch-val" x="565.0" y="311">52.06</text><text class="ch-ax" x="756" y="311" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="335" text-anchor="end">Imagen 4.0 Ultra</text><rect class="bar-bg" x="150" y="322" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="322" width="408.5" height="18" rx="3"/><text class="ch-val" x="564.5" y="335">51.99</text><text class="ch-ax" x="756" y="335" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="359" text-anchor="end">HunyuanImage 3.0</text><rect class="bar-bg" x="150" y="346" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="346" width="399.2" height="18" rx="3"/><text class="ch-val" x="555.2" y="359">50.81</text><text class="ch-ax" x="756" y="359" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="383" text-anchor="end">Imagen 4.0</text><rect class="bar-bg" x="150" y="370" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="370" width="395.1" height="18" rx="3"/><text class="ch-val" x="551.1" y="383">50.29</text><text class="ch-ax" x="756" y="383" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="407" text-anchor="end">Qwen Image</text><rect class="bar-bg" x="150" y="394" width="550" height="18" rx="3"/><rect class="bar-qi" x="150" y="394" width="386.8" height="18" rx="3"/><text class="ch-val" x="542.8" y="407">49.23</text><text class="ch-ax" x="756" y="407" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="431" text-anchor="end">Kling Image 2.1</text><rect class="bar-bg" x="150" y="418" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="418" width="379.2" height="18" rx="3"/><text class="ch-val" x="535.2" y="431">48.26</text><text class="ch-ax" x="756" y="431" text-anchor="end">T5</text>
+<text class="ch-lbl" x="142" y="455" text-anchor="end">GLM Image</text><rect class="bar-bg" x="150" y="442" width="550" height="18" rx="3"/><rect class="bar-o" x="150" y="442" width="378.6" height="18" rx="3"/><text class="ch-val" x="534.6" y="455">48.19</text><text class="ch-ax" x="756" y="455" text-anchor="end">T5</text>
+<line x1="580.6" x2="580.6" y1="30" y2="466" stroke="var(--warm)" stroke-dasharray="4 3"/><text class="ch-ax" x="584.6" y="28" fill="var(--warm)">均值 54.80</text>
+<line class="axis" x1="150.0" x2="150.0" y1="466" y2="470"/><text class="ch-ax" x="150.0" y="482" text-anchor="middle">0</text>
+<line class="axis" x1="228.6" x2="228.6" y1="466" y2="470"/><text class="ch-ax" x="228.6" y="482" text-anchor="middle">10</text>
+<line class="axis" x1="307.1" x2="307.1" y1="466" y2="470"/><text class="ch-ax" x="307.1" y="482" text-anchor="middle">20</text>
+<line class="axis" x1="385.7" x2="385.7" y1="466" y2="470"/><text class="ch-ax" x="385.7" y="482" text-anchor="middle">30</text>
+<line class="axis" x1="464.3" x2="464.3" y1="466" y2="470"/><text class="ch-ax" x="464.3" y="482" text-anchor="middle">40</text>
+<line class="axis" x1="542.9" x2="542.9" y1="466" y2="470"/><text class="ch-ax" x="542.9" y="482" text-anchor="middle">50</text>
+<line class="axis" x1="621.4" x2="621.4" y1="466" y2="470"/><text class="ch-ax" x="621.4" y="482" text-anchor="middle">60</text>
+<line class="axis" x1="700.0" x2="700.0" y1="466" y2="470"/><text class="ch-ax" x="700.0" y="482" text-anchor="middle">70</text>
+<line class="axis" x1="150" x2="700.0" y1="466" y2="466"/></svg>
+    <div class="chart-legend"><span class="l1">GPT Image 2（榜首）</span><span class="l2">Qwen 系列</span><span class="l3">其他</span></div>
+    <div class="cap">右侧 T1–T5 为原文按总分划的五个梯队：T1 64+、T2 59–60、T3 56–58、T4 54–56、T5 48–52。榜首领先第二名 Nano Banana 2.0 将近 5 分，与末位 GLM Image 相差 16.5 分。<span class="src">§4.3</span></div>
+  </div>
+
+  <details class="more wide">
+    <summary>完整表：18 个模型 × 5 支柱（中文），附英文总分<span class="hint">表 2 · 表 5</span></summary>
+    <div class="body">
+      <div class="tbl-wrap tall">
+        <table>
+          <thead><tr><th>模型</th><th>Quality</th><th>Aesthetics</th><th>Alignment</th><th>Real-world Fidelity</th><th>Creative Generation</th><th class="q">Overall（中）</th><th>梯队</th><th>Overall（英）</th></tr></thead>
+          <tbody>
+<tr><td>GPT Image 2</td><td class="best">58.65</td><td class="best">67.53</td><td class="best">65.85</td><td class="best">57.38</td><td class="best">75.23</td><td class="best">64.69</td><td>T1</td><td>65.23</td></tr>
+<tr><td>Nano Banana 2.0</td><td>54.77</td><td>61.08</td><td>62.40</td><td>54.28</td><td>67.05</td><td>59.82</td><td>T2</td><td>59.59</td></tr>
+<tr><td>GPT Image 1.5</td><td>55.14</td><td>60.88</td><td>61.72</td><td>53.95</td><td>66.35</td><td>59.65</td><td>T2</td><td>60.42</td></tr>
+<tr><td>Nano Banana Pro</td><td>55.67</td><td>60.26</td><td>61.25</td><td>54.07</td><td>66.23</td><td>59.45</td><td>T2</td><td>59.33</td></tr>
+<tr class="hl"><td>Qwen Image 2.0 Pro</td><td>54.39</td><td>58.67</td><td>59.28</td><td>51.83</td><td>64.94</td><td>57.84</td><td>T3</td><td>57.90</td></tr>
+<tr><td>Seedream 5.0</td><td>52.55</td><td>58.40</td><td>58.90</td><td>51.92</td><td>65.29</td><td>57.22</td><td>T3</td><td>57.80</td></tr>
+<tr><td>Seedream 4.5</td><td>54.41</td><td>58.72</td><td>57.31</td><td>51.69</td><td>60.64</td><td>56.78</td><td>T3</td><td>56.95</td></tr>
+<tr><td>Seedream 4.0</td><td>54.01</td><td>58.81</td><td>56.64</td><td>51.05</td><td>58.15</td><td>56.21</td><td>T3</td><td>56.48</td></tr>
+<tr><td>FLUX 2 Max</td><td>53.64</td><td>56.85</td><td>57.35</td><td>49.35</td><td>56.50</td><td>55.33</td><td>T4</td><td>56.14</td></tr>
+<tr><td>FLUX 2 Pro</td><td>52.30</td><td>56.94</td><td>57.01</td><td>47.29</td><td>56.18</td><td>54.57</td><td>T4</td><td>55.61</td></tr>
+<tr><td>GPT Image 1</td><td>52.34</td><td>55.09</td><td>56.28</td><td>48.14</td><td>55.78</td><td>54.07</td><td>T4</td><td>54.24</td></tr>
+<tr><td>Qwen Image 2512</td><td>51.76</td><td>54.74</td><td>52.72</td><td>47.00</td><td>50.19</td><td>52.06</td><td>T5</td><td>51.32</td></tr>
+<tr><td>Imagen 4.0 Ultra</td><td>50.90</td><td>54.25</td><td>54.02</td><td>45.59</td><td>51.14</td><td>51.99</td><td>T5</td><td>52.42</td></tr>
+<tr><td>HunyuanImage 3.0</td><td>50.35</td><td>53.57</td><td>52.00</td><td>44.31</td><td>49.12</td><td>50.81</td><td>T5</td><td>51.35</td></tr>
+<tr><td>Imagen 4.0</td><td>50.16</td><td>52.68</td><td>51.64</td><td>44.84</td><td>47.94</td><td>50.29</td><td>T5</td><td>51.08</td></tr>
+<tr><td>Qwen Image</td><td>48.44</td><td>52.25</td><td>50.72</td><td>43.16</td><td>47.30</td><td>49.23</td><td>T5</td><td>48.48</td></tr>
+<tr><td>Kling Image 2.1</td><td>49.11</td><td>50.15</td><td>49.18</td><td>44.74</td><td>44.67</td><td>48.26</td><td>T5</td><td>48.89</td></tr>
+<tr><td>GLM Image</td><td>49.26</td><td>50.64</td><td>47.90</td><td>44.69</td><td>45.23</td><td>48.19</td><td>T5</td><td>47.86</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">0–100 量表；紫点 = 该列最高（原文粗体）；高亮行为 Qwen Image 2.0 Pro。英文下 GPT Image 1.5（60.42）与 Nano Banana 2.0（59.59）互换第 2、3 名，梯队成员不变。<span class="src">表 2 · 表 5 · 附录 A.3</span></p>
+    </div>
+  </details>
+
+  <div class="chart-grid two wide" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 560 228" role="img" aria-label="各支柱最高减最低分差">
+<text class="ch-t" x="0" y="14">各 L1 支柱：18 个模型最高分 − 最低分</text><text class="ch-src" x="560" y="14" text-anchor="end">表 2 推算</text>
+<text class="ch-lbl" x="142" y="49" text-anchor="end">Quality</text><rect class="bar-bg" x="150" y="34" width="360" height="22" rx="3"/><rect class="bar-o" x="150" y="34" width="105.0" height="22" rx="3"/><text class="ch-val" x="261.0" y="49">10.21</text>
+<text class="ch-lbl" x="142" y="81" text-anchor="end">Aesthetics</text><rect class="bar-bg" x="150" y="66" width="360" height="22" rx="3"/><rect class="bar-o" x="150" y="66" width="178.8" height="22" rx="3"/><text class="ch-val" x="334.8" y="81">17.38</text>
+<text class="ch-lbl" x="142" y="113" text-anchor="end">Alignment</text><rect class="bar-bg" x="150" y="98" width="360" height="22" rx="3"/><rect class="bar-o" x="150" y="98" width="184.6" height="22" rx="3"/><text class="ch-val" x="340.6" y="113">17.95</text>
+<text class="ch-lbl" x="142" y="145" text-anchor="end">Real-world Fidelity</text><rect class="bar-bg" x="150" y="130" width="360" height="22" rx="3"/><rect class="bar-q" x="150" y="130" width="146.3" height="22" rx="3"/><text class="ch-val" x="302.3" y="145">14.22</text>
+<text class="ch-lbl" x="142" y="177" text-anchor="end">Creative Generation</text><rect class="bar-bg" x="150" y="162" width="360" height="22" rx="3"/><rect class="bar-q" x="150" y="162" width="314.3" height="22" rx="3"/><text class="ch-val" x="470.3" y="177">30.56</text>
+<text class="ch-ax" x="150.0" y="206" text-anchor="middle">0</text>
+<text class="ch-ax" x="201.4" y="206" text-anchor="middle">5</text>
+<text class="ch-ax" x="252.9" y="206" text-anchor="middle">10</text>
+<text class="ch-ax" x="304.3" y="206" text-anchor="middle">15</text>
+<text class="ch-ax" x="355.7" y="206" text-anchor="middle">20</text>
+<text class="ch-ax" x="407.1" y="206" text-anchor="middle">25</text>
+<text class="ch-ax" x="458.6" y="206" text-anchor="middle">30</text>
+<text class="ch-ax" x="510.0" y="206" text-anchor="middle">35</text>
+<line class="axis" x1="150" x2="510.0" y1="194" y2="194"/></svg><div class="tbl-note">新加的两个支柱（紫色）分差更大；原文给出 Creative Generation 30.6 分、Real-world Fidelity 约 14 分。<span class="src">§4.7</span></div></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 560 238" role="img" aria-label="相邻梯队平均分差">
+<text class="ch-t" x="0" y="14">相邻梯队的支柱平均分差</text><text class="ch-src" x="560" y="14" text-anchor="end">表 3</text>
+<text class="ch-lbl" x="142" y="49" text-anchor="end">Quality</text>
+<rect class="bar-q" x="150" y="34" width="124.6" height="11" rx="2"/><text class="ch-val" x="279.6" y="43">+3.46</text>
+<rect class="bar-o" x="150" y="46" width="48.6" height="11" rx="2"/><text class="ch-val" x="203.6" y="56">+1.35</text>
+<text class="ch-lbl" x="142" y="83" text-anchor="end">Aesthetics</text>
+<rect class="bar-q" x="150" y="68" width="244.4" height="11" rx="2"/><text class="ch-val" x="399.4" y="77">+6.79</text>
+<rect class="bar-o" x="150" y="80" width="75.2" height="11" rx="2"/><text class="ch-val" x="230.2" y="90">+2.09</text>
+<text class="ch-lbl" x="142" y="117" text-anchor="end">Alignment</text>
+<rect class="bar-q" x="150" y="102" width="146.2" height="11" rx="2"/><text class="ch-val" x="301.2" y="111">+4.06</text>
+<rect class="bar-o" x="150" y="114" width="135.4" height="11" rx="2"/><text class="ch-val" x="290.4" y="124">+3.76</text>
+<text class="ch-lbl" x="142" y="151" text-anchor="end">Real-world Fidelity</text>
+<rect class="bar-q" x="150" y="136" width="118.1" height="11" rx="2"/><text class="ch-val" x="273.1" y="145">+3.28</text>
+<rect class="bar-o" x="150" y="148" width="89.3" height="11" rx="2"/><text class="ch-val" x="244.3" y="158">+2.48</text>
+<text class="ch-lbl" x="142" y="185" text-anchor="end">Creative Generation</text>
+<rect class="bar-q" x="150" y="170" width="312.5" height="11" rx="2"/><text class="ch-val" x="467.5" y="179">+8.68</text>
+<rect class="bar-o" x="150" y="182" width="154.4" height="11" rx="2"/><text class="ch-val" x="309.4" y="192">+4.29</text>
+<text class="ch-ax" x="150.0" y="216" text-anchor="middle">0</text>
+<text class="ch-ax" x="222.0" y="216" text-anchor="middle">2</text>
+<text class="ch-ax" x="294.0" y="216" text-anchor="middle">4</text>
+<text class="ch-ax" x="366.0" y="216" text-anchor="middle">6</text>
+<text class="ch-ax" x="438.0" y="216" text-anchor="middle">8</text>
+<text class="ch-ax" x="510.0" y="216" text-anchor="middle">10</text>
+<line class="axis" x1="150" x2="510.0" y1="204" y2="204"/></svg><div class="chart-legend"><span class="l1">T1 − T2</span><span class="l3">T2 − T3</span></div><div class="tbl-note">Creative Generation 在两条分界上都是最大的分差，约为三个常规支柱平均分差的 1.8 倍；英文下 T1–T2 达 +9.98。<span class="src">表 3 · 表 6 · §4.9</span></div></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig5.jpg" alt="三层体系上的模型间方差" loading="lazy"></div>
+    <figcaption><b>模型间分数方差。</b>主图为 56 个 L3 细项，右侧小图为 23 个 L2 和 5 个 L1。方差越大越能区分模型；Text Accuracy 是最能区分的 L3，Information Visualization、Cross-lingual Generation 次之；方差前 15 的 L3 中 12 个属于两个新支柱。<span class="src">§4.5</span><span class="from">来源：论文图 5</span></figcaption>
+  </figure>
+
+  <h3 class="prose">细项层面的几条结论</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>系统性天花板<span class="tag nd-tag">§4.4 · §4.8</span></h4><p>各项最强模型得分：Anatomical Fidelity 20.9、Physical Logic 31.9、Objects 41.9、Animals 42.6、Contact Interaction 43.3。18 个模型的均值：Anatomical 10.61、Physical Logic 19.29、Objects 28.71。<span class="src">图 8</span> 论文的解释是这些都要隐式的结构 / 物理 / 生物知识，即「感知 → 认知」的门槛。</p></div>
+    <div class="card mod"><h4>已成熟的能力<span class="tag ok-tag">§4.8</span></h4><p>全行业均值 &gt; 60 的有 Lighting &amp; Atmosphere、Color Harmony、Material Properties、Real-world Scene、Art Design、Camera/Lens Style、Cinematic Style、Game Design；其中 Camera/Lens Style、Art Design、Cinematic Style 均值都高于 66。</p></div>
+    <div class="card mod"><h4>门槛效应<span class="tag">§4.6</span></h4><p>Game Design 上 GPT Image 2 91.8 分，第 2–4 名约 80，第 7 名起跌到 66 以下；Graphic Design 第 1 名到中位模型差 30 分以上；Fashion Styling 最平（首尾差 13 分）；Product Design 首尾差 32 分。</p></div>
+    <div class="card mod"><h4>T3 升 T2 差在哪<span class="tag">§4.9</span></h4><p>T2–T3 差距最大的 L3：Information Visualization +10.4、Logical Resolution +9.1、Game Design +8.4、Product Design +7.8、Style Control +7.8、Virtual Scene +7.7、Graphic Design +7.7。Qwen Image 2.0 Pro 在 Text Accuracy（比 T2 均值高 11.4）、Storyboard Creation（+10.2）上已超过 T2 均值。</p></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="56 个 L3 细项雷达图（局部）" loading="lazy"></div>
+    <figcaption><b>56 个 L3 细项的雷达图。</b>按 GPT Image 2 的 L3 分数排列成心形：最弱的细项放在顶部凹口，最强的收在底部尖端；顶部凹口即上述全行业天花板。本裁图为局部。<span class="from">来源：论文图 4（局部）</span></figcaption>
+  </figure>
+
+  <details class="more wide">
+    <summary>裁判排名 vs 人评排名，逐模型对照<span class="hint">表 2 · 表 4 · 推算</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>模型</th><th>Q-Judger 名次</th><th>Q-Judger 总分</th><th>人评名次</th><th>人评总分（1–10）</th><th>人评名次 − 裁判名次</th></tr></thead>
+          <tbody>
+<tr><td>GPT Image 2</td><td>1</td><td>64.69</td><td>1</td><td>9.10</td><td>0</td></tr>
+<tr><td>Nano Banana 2.0</td><td>2</td><td>59.82</td><td>2</td><td>8.71</td><td>0</td></tr>
+<tr><td>GPT Image 1.5</td><td>3</td><td>59.65</td><td>4</td><td>7.43</td><td>+1</td></tr>
+<tr><td>Nano Banana Pro</td><td>4</td><td>59.45</td><td>3</td><td>8.63</td><td>-1</td></tr>
+<tr><td>Qwen Image 2.0 Pro</td><td>5</td><td>57.84</td><td>5</td><td>6.99</td><td>0</td></tr>
+<tr><td>Seedream 5.0</td><td>6</td><td>57.22</td><td>6</td><td>6.44</td><td>0</td></tr>
+<tr><td>Seedream 4.5</td><td>7</td><td>56.78</td><td>7</td><td>5.50</td><td>0</td></tr>
+<tr><td>Seedream 4.0</td><td>8</td><td>56.21</td><td>10</td><td>4.80</td><td>+2</td></tr>
+<tr><td>FLUX 2 Max</td><td>9</td><td>55.33</td><td>13</td><td>4.49</td><td class="flag">+4</td></tr>
+<tr><td>FLUX 2 Pro</td><td>10</td><td>54.57</td><td>14</td><td>4.33</td><td class="flag">+4</td></tr>
+<tr><td>GPT Image 1</td><td>11</td><td>54.07</td><td>9</td><td>5.25</td><td>-2</td></tr>
+<tr><td>Qwen Image 2512</td><td>12</td><td>52.06</td><td>8</td><td>5.45</td><td class="flag">-4</td></tr>
+<tr><td>Imagen 4.0 Ultra</td><td>13</td><td>51.99</td><td>11</td><td>4.72</td><td>-2</td></tr>
+<tr><td>HunyuanImage 3.0</td><td>14</td><td>50.81</td><td>15</td><td>3.37</td><td>+1</td></tr>
+<tr><td>Imagen 4.0</td><td>15</td><td>50.29</td><td>12</td><td>4.61</td><td class="flag">-3</td></tr>
+<tr><td>Qwen Image</td><td>16</td><td>49.23</td><td>17</td><td>2.70</td><td>+1</td></tr>
+<tr><td>Kling Image 2.1</td><td>17</td><td>48.26</td><td>16</td><td>3.13</td><td>-1</td></tr>
+<tr><td>GLM Image</td><td>18</td><td>48.19</td><td>18</td><td>2.40</td><td>0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">名次与差值为本文按表 2、表 4 中文总分排序所得。<span class="src calc">推算</span> 橙框 = 相差 ≥3 名。前 7 名两边几乎一致，中后段有明显换位，例如 FLUX 2 Max / Pro 人评低 4 名、Qwen Image 2512 人评高 4 名；人评分布（2.40–9.10）也比裁判分（48.19–64.69）拉得开得多，例如 GPT Image 1.5 与 Nano Banana Pro 裁判分只差 0.20，人评差 1.20。</p>
+    </div>
+  </details>
+</section>
+
+<!-- 7 新在哪 -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>两个应用驱动支柱 + 按创作流程拆的三层体系</h4><p>Real-world Fidelity 与 Creative Generation 占 56 个细项中的 28 个，覆盖文字渲染、设计应用、分镜、镜头语言等创作者高频场景。</p><p class="why">可核对：表 7 列全了 56 条英文细则；图 5 / 表 3 显示这两个支柱贡献了最大的模型间方差与梯队分差。</p></div>
+    <div class="card nv"><h4>裁判标签全部来自专业标注员</h4><p>13 万+ 对、80 名美院背景标注员、盲标、每对 ≥3 人，逐细项打分；不拿任何 MLLM 的输出做标签。</p><p class="why">可核对：§3.3；Q-Judger 权重已在 HF 发布（§4.1）。</p></div>
+    <div class="card nv"><h4>一次推理出 56 维分数向量，可层层归因</h4><p>每张图拿到全部细项分，再确定性地汇总到 L2 / L1 / 总分，任何高层分数都能追到具体细项。</p><p class="why">可核对：§3.4 式 8–12 与算法 1。</p></div>
+    <div class="card nv"><h4>Prompt 带显式「细项 → 文本」映射，长短 × 中英受控</h4><p>LLM 起草时同时给出每个目标细项的落地说明，扩写后再重对齐；500 / 500 长短、中英双版，可分别看长度和语言的影响。</p><p class="why">可核对：§3.2 式 1–4。</p></div>
+  </div>
+</section>
+
+<!-- 8 启示 -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测、caption 的启示</h2>
+    <p class="sec-intro">本篇是文生图评测，不涉及编辑任务。每条先写论文怎么做，再写一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">01</span>每个样本只评它被设计来考的细项</h4><p class="paper">论文：prompt 生成时就绑定 k ≥ 3 个 L3 细项，打分时不适用的项记 N/A 并剔出汇总，L2/L1 只对被激活的子项求均值。<span class="src">§3.2 · §3.4</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑评测集每条样本在构建时就标出「考哪几个编辑原子能力」（如局部替换、文字改写、保持身份），裁判只对这些项打分，其余记 N/A；避免「保持不变的区域」这类项在每条上都被平均进去、稀释真正想测的能力。</p></div>
+      <div class="impl"><h4><span class="ix">02</span>三档打分 + 非线性映射</h4><p class="paper">论文：0 Fail / 1 Pass / 2 Excel / N/A，映射为 0 / 60 / 100，刻意拉大「不可用 vs 可用」的差。<span class="src">§3.4 式 7</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑结果的可用性门槛（改错区域、身份漂移、画质崩）比「改得多好」更影响上线决策，可以照搬三档 + 不等距映射；同时保留原始 0/1/2 分布，便于事后换一套映射重算而不重标。</p></div>
+      <div class="impl"><h4><span class="ix">03</span>用方差挑「有区分度」的维度</h4><p class="paper">论文：用模型间方差在 L1/L2/L3 三层排序，证明新支柱更能区分模型；Quality 方差低被判为「已成标配」。<span class="src">§4.5 · 图 5</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑评测集扩版时，先拿现有几个候选模型跑一遍，按细项方差排序；方差接近 0 的细项减少样本或降权，把预算挪到方差大的细项上。</p></div>
+      <div class="impl"><h4><span class="ix">04</span>人评对齐别只看模型级 ρ</h4><p class="paper">论文：只报告 18 个模型的排序 Spearman（0.92 / 0.90），人评用的是每支柱 1–10 整体分。<span class="src">表 1 · §4.1</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>自建编辑裁判时，除模型级排序相关外，再报逐样本、逐细项的一致率（与多数人标签的准确率或 κ），并用同一套 0/1/2 细则做人评，否则模型级相关高也可能掩盖细项上的系统偏差。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">05</span>按细项配额采样，而不是按类别</h4><p class="paper">论文：以 56 个 L3 为原子单位采样，约束每个细项和每个支柱被访问的频率大致相等，并尽量让一条 prompt 跨 ≥3 个支柱。<span class="src">§3.2 式 1</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑训练 / 评测数据按「编辑原子能力 × 场景」双维度建配额表，而非只按任务大类（如「换背景」）凑量；每条样本组合多个原子能力，可在同样条数下提高覆盖密度。</p></div>
+      <div class="impl"><h4><span class="ix">06</span>LLM 起草 + 专家闸门</h4><p class="paper">论文：Qwen3-Max 与 ChatGPT-5.2 起草，艺术从业者丢弃琐碎、有歧义、区分度不足的条目，重写落点弱的条目，再逐细项复核。<span class="src">§3.2</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑指令也可「LLM 量产 + 人工三类处置（丢 / 改 / 过）」；把丢弃理由按这三类记下来，后续可以训练一个便宜的过滤器替代部分人工闸门。</p></div>
+    </div>
+
+    <div class="impl-group">Caption / 指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">07</span>指令附「细项落地说明」</h4><p class="paper">论文：起草时同时产出 d<sub>i</sub>，记录每个目标细项在 prompt 文本里具体怎么体现；扩写后再重对齐。<span class="src">§3.2 式 2、4</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑 caption 除了自然语言指令，再存一份结构化字段：每个编辑操作 → 对应原子能力 → 指令里的哪一句；评测时裁判直接按这份映射逐项检查，训练时也能按能力切片做数据配比。</p></div>
+      <div class="impl"><h4><span class="ix">08</span>长短、中英成对发布</h4><p class="paper">论文：同一语义各有短 / 长、中 / 英版本，长版由 LLM 在保语义约束下扩写；英文下部分模型名次变化（如 Qwen Image 2.0 Pro 的 Graphic Design 从第 4 升到第 2）。<span class="src">§3.2 · 附录 A.3</span></p><p class="do"><b>迁移建议（不是论文内容）：</b>编辑指令同样做「短口语版 + 详细版」「中 + 英」成对样本，评测时分别出分；训练 caption 可按相同成对方式扩写，测模型对指令长度和语言的鲁棒性。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 局限 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>人评对齐验证偏粗。</b>只有模型级排序相关（N = 18），没有逐图、逐细项的裁判—人工一致率；人评是每支柱 1–10 整体分，与裁判的 0/1/2 细项协议不同。按表 2 / 表 4 对照，中后段有 3–4 名的换位。<span class="src">表 1 · 表 4</span><span class="src calc">推算</span></li>
+    <li class="key"><b>没有消融或基线裁判对比。</b>没有和现成 MLLM 裁判（论文批评的那类做法）比对齐度，也没有对 0/60/100 映射、等权汇总、thinking 模式做消融。</li>
+    <li><b>裁判训练细节缺失。</b>学习率、轮数、训练图来源（是否包含 18 个被测模型的输出）、标注员间一致率、各细项标签分布都未披露。</li>
+    <li><b>人评集描述不一致。</b>§4.1 说是「留出评测集」，表 4 题注说是每个支柱 1,000 条 prompt，规模与是否与训练集隔离不清楚。</li>
+    <li><b>正文前后数字不一。</b>摘要说每条 prompt 覆盖「超过 4 个」细项，§3.2 式 1 写的是 k ≥ 3；引言说「四个」L3 天花板，§4.4 / §4.8 / 附录 A.3 是五个（多了 Objects）；§4.8 把 Objects 同时列入「均值 40–60 的发展中能力」和「均值 &lt; 35 的天花板」，图 8 给的均值是 28.71。</li>
+    <li><b>裁判看到多少细项有歧义。</b>§3.4 说每张图在全部 56 个细项上打分、不适用记 N/A；算法 1 与附录模板则是按 prompt 的细项集合 C(p) / 按单个支柱的检查表打分。</li>
+    <li><b>同源关系未讨论。</b>裁判底座是 Qwen3.6-27B，起草模型之一是 Qwen3-Max，被测模型中有 3 个 Qwen Image 系列；论文未讨论这是否影响打分。</li>
+    <li><b>出图设置未披露。</b>各被测模型的分辨率、每条 prompt 采样几张、调用方式（API / 本地）原文未给。</li>
+    <li><b>许可证未写。</b>prompt 集与 Q-Judger 已发布，但正文未说明许可证，商用前需去仓库确认。</li>
+  </ul>
+</section>
+
+<!-- 10 图表索引 -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>评测维度示例图（裁图仅含 Creative Generation 部分）· <a href="figures/fig1.jpg" target="_blank" rel="noopener">fig1.jpg</a></td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 2</td><td>真实应用场景 prompt 构建流程 · <a href="figures/fig2.jpg" target="_blank" rel="noopener">fig2.jpg</a></td><td><a href="#data">§04</a></td></tr>
+        <tr><td>图 3</td><td>18 个模型总分排名（中文）· <a href="figures/fig3.jpg" target="_blank" rel="noopener">fig3.jpg</a>；本页以 SVG 按表 2 重绘</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>图 4</td><td>56 个 L3 细项雷达图（局部）· <a href="figures/fig4.jpg" target="_blank" rel="noopener">fig4.jpg</a></td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>图 5</td><td>L3 / L2 / L1 模型间方差 · <a href="figures/fig5.jpg" target="_blank" rel="noopener">fig5.jpg</a></td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>首页图</td><td><a href="figures/fig0-teaser.jpg" target="_blank" rel="noopener">fig0-teaser.jpg</a> 实为首页摘要文字截图，不是配图，正文未引用</td><td>—</td></tr>
+        <tr><td>表 1</td><td>裁判 vs 人评 Spearman ρ（中 / 英，五支柱 + 总分）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 2 · 表 5</td><td>18 个模型五支柱 + 总分（中文 / 英文）</td><td><a href="#eval">§06 折叠表</a></td></tr>
+        <tr><td>表 3 · 表 6</td><td>梯队平均分与梯队间分差（中文 / 英文）</td><td><a href="#eval">§06 图</a></td></tr>
+        <tr><td>表 4</td><td>人工专家 1–10 打分</td><td><a href="#eval">§06 折叠表</a></td></tr>
+        <tr><td>表 7</td><td>56 个细项的评测标准</td><td><a href="#arch">§03 折叠表</a></td></tr>
+        <tr><td>图 6–15</td><td>L2/L3 排名、分支柱排名、行业均值、热力图、英文版各图——本页只引用其正文数字，未收录图片</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    基于论文 <a href="https://arxiv.org/abs/2605.28091" target="_blank" rel="noopener">Qwen-Image-Bench: From Generation to Creation in Text-to-Image Evaluation（arXiv:2605.28091）</a>，v1 发布于 2026-05-27，本页依据 v2（2026-06-25）文本。文中数字均来自原文，标「推算」的为本文据原表自行计算。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

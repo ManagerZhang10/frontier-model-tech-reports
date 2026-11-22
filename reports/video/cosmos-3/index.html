@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cosmos 3 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="NVIDIA Cosmos 3（Omnimodal World Models for Physical AI）中文深读：MoT 双塔架构、数据构建与结构化 caption、训练配方、评测与对图像编辑数据/评测的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* 页面特有：示意图与多段比例条 */
+  .seq-svg .ar { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .seq-svg .dmc { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); }
+  .seq-svg .dmn { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-dasharray: 5 3; }
+  .seq-svg .sp { fill: var(--bg-accent); stroke: var(--line); }
+  .seq-svg .gap { fill: none; stroke: var(--muted); stroke-dasharray: 3 4; }
+  .seq-svg .brace { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+  .seq-svg .lbl-a { fill: var(--accent-ink); font: 700 12.5px var(--f-body); }
+  .seq-svg .lbl-w { fill: var(--warm); font: 700 12.5px var(--f-body); }
+  .ratio .rbar .c { background: var(--good); }
+  .ratio .rbar .d { background: var(--bar-other2); }
+  .ratio .rbar .e { background: color-mix(in srgb, var(--accent) 55%, var(--card)); color: var(--ink); }
+  .ratio .rbar .f { background: var(--bar-other); color: var(--ink); }
+  .rkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .8rem; color: var(--muted); margin-top: 5px; }
+  .rkey i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  pre.schema { font: 500 .8rem/1.55 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow: auto; color: var(--ink-2); margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 世界模型 / 视频与动作生成</div>
+    <h1>Cosmos 3<span class="sub">Omnimodal World Models for Physical AI</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>NVIDIA</b></span>
+      <span>arXiv <b>2606.02800</b></span>
+      <span>v1 发布 <b>2026-06-01</b></span>
+      <span>本页依据 <b>v4（2026-06-23）</b></span>
+    </div>
+    <p class="lede">一个 Mixture-of-Transformers 双塔模型同时做 VLM 理解、文生图、文/图生视频（可带同步音频）、控制信号转视频，以及正向动力学 / 逆向动力学 / 策略三种动作生成。论文最值得看的是数据：<em>全阶段统一的结构化 JSON caption</em>、带“取最小值”规则的 AI 判官过滤、按因果关系清洗的音视频配对，以及跨四类具身形态的统一动作数据。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>开源：代码 + 权重 + 合成数据 + 基准</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>许可证 OpenMDW-1.1</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>Nano 16B · Super 64B</span>
+      <span class="badge">Edge 4B（后续发布）</span>
+      <span class="badge">世界模型 / 视频与动作生成</span>
+      <span class="badge">MoT：自回归 + 扩散</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2606.02800" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M21 3l-9 9M19 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg>arXiv 论文</a>
+      <a href="https://github.com/nvidia/cosmos" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg>GitHub nvidia/cosmos</a>
+      <a href="https://huggingface.co/collections/nvidia/cosmos3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7l8-4 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4"/></svg>HF 模型合集</a>
+      <a href="https://research.nvidia.com/labs/cosmos-lab/cosmos3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>项目主页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对图像编辑的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#index">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">所有数字出自 arXiv v4 正文 / 附录；来源胶囊标注节号或表号，<span style="color:var(--warm)">橙色</span>为本页推算。</div>
+  </nav>
+
+  <main>
+    <!-- 01 速览 -->
+    <section class="sec" id="glance">
+      <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+      <div class="glance wide">
+        <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num">16B / 64B</span><span class="stat-sub">Nano / Super，分别基于稠密 8B / 32B 双塔；Edge 4B 后续发布</span><span class="src">§2.5</span></div>
+        <div class="card stat"><span class="stat-k">模态</span><span class="stat-num sm">语言 · 图像 · 视频 · 音频 · 动作</span><span class="stat-sub">输入输出可任意组合</span><span class="src">§2</span></div>
+        <div class="card stat"><span class="stat-k">Reasoner 数据</span><span class="stat-num">22.0M + 2.2M</span><span class="stat-sub">预训练 + SFT 样本</span><span class="src">表 3</span></div>
+        <div class="card stat"><span class="stat-k">Generator 预训练</span><span class="stat-num sm">767M 图 + 347.7M 视频片段</span><span class="stat-sub">来自 7.8B 张原图 / 3B 条原视频</span><span class="src">§3.2.1</span></div>
+        <div class="card stat"><span class="stat-k">动作数据</span><span class="stat-num">8.4M 段</span><span class="stat-sub">共 61.3K 小时，四类具身形态</span><span class="src">§3.2.3</span></div>
+        <div class="card stat"><span class="stat-k">Generator 预训练 token</span><span class="stat-num sm">31.05T / 17.86T</span><span class="stat-sub">Nano 用 1024 张 GB200，Super 用 2048 张 GB200</span><span class="src">§4.2.1</span></div>
+        <div class="card stat"><span class="stat-k">已发布权重</span><span class="stat-num sm">5 个</span><span class="stat-sub">Super、Nano、Super-Text2Image、Super-Image2Video、Nano-Policy-DROID</span><span class="src">摘要页</span></div>
+        <div class="card stat"><span class="stat-k">开源合成数据</span><span class="stat-num sm">5 套 SDG</span><span class="stat-sub">PhyxSim / RobotSim / DriveSim / SynHuman / Warehouse</span><span class="src">表 22</span></div>
+        <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm">OpenMDW-1.1</span><span class="stat-sub">Linux Foundation 的许可证</span><span class="src">摘要</span></div>
+        <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 2026-06-01</span><span class="stat-sub">本页依据 v4（2026-06-23）；MolmoSpaces 榜单日期 2026-06-20，晚于 v1</span><span class="src">arXiv</span></div>
+      </div>
+    </section>
+
+    <!-- 02 TL;DR -->
+    <section class="sec" id="tldr">
+      <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+      <div class="tldr wide">
+        <div class="card tl"><span class="idx">01</span><h3>一个双塔模型覆盖 VLM、生成器、世界模型和策略模型</h3><p>每层有两套参数：AR 塔做因果自注意力，DM（扩散）塔以 AR 与 DM 两段的 K/V 一起做全注意力；两塔都从 Qwen3-VL 初始化<span class="src">§2.3</span>。动作也是一类 token，只需切换哪些 token 是干净的、哪些带噪，就能在正向动力学、逆向动力学和策略三种模式之间切换<span class="src">图 4</span>。</p></div>
+        <div class="card tl"><span class="idx">02</span><h3>caption 全程是结构化 JSON</h3><p>所有阶段都用 JSON caption 替代自由文本，captioner 是两个经 LoRA 微调的 Qwen3-VL-8B，图像标注加了“四象限 + 中心”扫描<span class="src">§3.2.1 · 附录 A</span>。caption 质量拆成两项评：precision 逐条对着原媒体核验原子断言，recall 对照人工断言清单。原文只说 recall 显著提高，<span class="nd">没给具体数字</span>。</p></div>
+        <div class="card tl"><span class="idx">03</span><h3>视频生成：开源第一，部分指标超过 Veo-3.1</h3><p>PAIBench-G 上 Super 的 T2V 为 80.0、I2V 为 82.8，Veo-3.1 为 79.1 / 82.6<span class="src">表 12</span>；Human World Bench 上 Super 71.9，Veo-3.1 67.8<span class="src">表 14</span>。T2I 后训练版的 UniGenBench 为 91.36<span class="src">表 11</span>。</p></div>
+        <div class="card tl"><span class="idx">04</span><h3>先做统一动作 mid-training 是有收益的</h3><p>在 RoboLab 的 Specific 指令下，Nano-Policy-DROID 成功率 39.7%，π0.5 为 28.1%<span class="src">表 19</span>。LIBERO-10 上训练 500 步时，MT-init 已达 24.6%，PT-init 仍是 0.0%<span class="src">表 20</span>。</p></div>
+        <div class="card tl caveat"><span class="idx">!</span><h3>看数字前先注意</h3><p>评测时会先用 Claude Opus 把 prompt 改写成 JSON<span class="src">§6.2.1–6.2.3</span>。Artificial Analysis 文生图榜的提交带了 agentic 外环（GPT-5.5 改写，Gemini 3.1 Pro 打分）<span class="src">附录 B.7</span>。音频的 PQ 落后于闭源模型<span class="src">表 15</span>。正文与表格之间有多处数字不一致（见 §09）。</p></div>
+      </div>
+    </section>
+
+    <!-- 03 架构 -->
+    <section class="sec" id="arch">
+      <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：MoT 双塔 + 统一 token 排布</h2>
+        <p class="sec-intro">AR 子序列负责理解，扩散子序列负责生成。两段在每层只通过共享注意力交互，其余参数完全独立。</p></div>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig5.jpg" alt="Cosmos 3 的 MoT 架构与注意力掩码" loading="lazy"></div>
+        <figcaption><b>MoT 架构。</b>左：AR 段包含 ViT 视觉 token、文本、&lt;EOS&gt; 和 &lt;BOG&gt;，扩散段包含 VAE 视觉、音频和动作 token；两段的 LayerNorm 和 MLP 各自独立，只在注意力这一步汇合。右：AR 段用因果掩码，扩散段用全注意力。<span class="from">来源：论文图 5</span></figcaption>
+      </figure>
+
+      <div class="card diagram wide">
+        <svg class="seq-svg" viewBox="0 0 1000 250" role="img" aria-label="token 排布示意">
+          <text x="10" y="22" class="dg-t">一条训练 / 推理序列（以 I2V+音频 为例）</text>
+          <!-- AR -->
+          <rect x="10" y="40" width="120" height="44" rx="8" class="ar"/><text x="70" y="60" text-anchor="middle" class="dg-t">ViT 视觉 token</text><text x="70" y="76" text-anchor="middle" class="dg-s">可选（理解）</text>
+          <rect x="136" y="40" width="130" height="44" rx="8" class="ar"/><text x="201" y="60" text-anchor="middle" class="dg-t">文本 l₁…lₙ</text><text x="201" y="76" text-anchor="middle" class="dg-s">JSON caption</text>
+          <rect x="272" y="40" width="44" height="44" rx="8" class="sp"/><text x="294" y="66" text-anchor="middle" class="dg-s">EOS</text>
+          <rect x="322" y="40" width="44" height="44" rx="8" class="sp"/><text x="344" y="66" text-anchor="middle" class="dg-s">BOG</text>
+          <!-- gap -->
+          <rect x="376" y="40" width="70" height="44" rx="8" class="gap"/><text x="411" y="58" text-anchor="middle" class="dg-s">时间索引</text><text x="411" y="74" text-anchor="middle" class="dg-s">+15000</text>
+          <!-- DM clean -->
+          <rect x="456" y="40" width="130" height="44" rx="8" class="dmc"/><text x="521" y="60" text-anchor="middle" class="dg-t">干净条件帧 v₁:P</text><text x="521" y="76" text-anchor="middle" class="dg-s">VAE（P=1 即 I2V）</text>
+          <!-- DM noisy -->
+          <rect x="592" y="40" width="150" height="44" rx="8" class="dmn"/><text x="667" y="60" text-anchor="middle" class="dg-t">噪声视频 ṽP+1:N</text><text x="667" y="76" text-anchor="middle" class="dg-s">去噪目标</text>
+          <rect x="748" y="40" width="110" height="44" rx="8" class="dmn"/><text x="803" y="60" text-anchor="middle" class="dg-t">噪声音频 s̃</text><text x="803" y="76" text-anchor="middle" class="dg-s">25 token/s</text>
+          <rect x="864" y="40" width="126" height="44" rx="8" class="dmn"/><text x="927" y="60" text-anchor="middle" class="dg-t">噪声动作 ã</text><text x="927" y="76" text-anchor="middle" class="dg-s">按需出现</text>
+          <!-- braces -->
+          <path d="M10 98 v8 h356 v-8" class="brace"/><text x="188" y="126" text-anchor="middle" class="lbl-a">AR 子序列 → Reasoner 塔</text>
+          <text x="188" y="144" text-anchor="middle" class="dg-s">因果自注意力，只看 AR 段</text>
+          <path d="M456 98 v8 h534 v-8" class="brace"/><text x="723" y="126" text-anchor="middle" class="lbl-w">扩散子序列 → Generator 塔</text>
+          <text x="723" y="144" text-anchor="middle" class="dg-s">全注意力，K/V = [AR ; DM]；AR 段永远不读 DM 段</text>
+          <!-- rules -->
+          <text x="10" y="184" class="dg-t">排布三条规则</text>
+          <text x="10" y="204" class="dg-s">① AR 段在前，扩散段在后　② 扩散段内每种模态都是干净条件在前、噪声目标在后　③ 条件段和目标段内部都按 视觉 → 音频 → 动作 排序</text>
+          <text x="10" y="226" class="dg-s">视频 token 用 (t,h,w) 三轴编码；音频和动作只用 t 轴（h=w=0），t 按真实时间缩放，每个视觉段的 t/h/w 从 0 开始计</text>
+        </svg>
+        <div class="cap">示意图，依据 §2.2.1、§2.3.2、§2.4.1 和式 (5)。色块宽度与 token 数量无关；“+15000”是 AR 段与扩散段之间固定的时间位置间隔。</div>
+      </div>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>编码器 <span class="tag">§2.1</span></h4>
+          <ul>
+            <li><b>理解用 ViT</b>：patch 16×16，再用两层 MLP 合并 2×2 个 token；沿用 Qwen3-VL 的 DeepStack 和插入文本时间戳的做法；与主干一起训练。</li>
+            <li><b>生成用 VAE</b>：沿用 Wan2.2-TI2V-5B 的 VAE，时间压缩 4×，空间压缩 32×32（16×16 压缩后再做 2×2 patch 合并）；训练时<em>冻结</em>。</li>
+            <li><b>音频 VAE</b>：48 kHz 立体声，hop 为 1920，得到 25 token/s；冻结。</li>
+            <li><b>动作</b>：每种具身领域 k 有各自的线性输入 / 输出投影 W<sup>(k)</sup>，从头训练；6D 旋转经 SVD 还原为 SO(3)。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>统一动作表示 <span class="tag">§2.1.3 · 图 3</span></h4>
+          <ul>
+            <li>每个动作由三部分组成：自身位姿增量（9D，即 3D 平移 + 6D 旋转）、末端执行器位姿增量（9D）、抓取状态（夹爪 1D，手部为 5 指 × 3D = 15D）。</li>
+            <li>位姿用相邻两帧 SE(3) 位姿的相对变换（伪动作），避开 PID 等控制器细节；抓取状态记录的是当前值，不是差分。</li>
+            <li>各形态维度：自动驾驶 / 相机 9D，单臂 10D，双臂 20D，人形机器人 29D，第一视角人手 57D。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>位置编码：绝对时间 MRoPE <span class="tag">§2.4</span></h4>
+          <ul>
+            <li>每秒时间步数（TPS）：视频为 FPS / 4，音频为 48000/1920≈25，动作取采样频率。</li>
+            <li>每前进一个 token，时间索引增加 δt = TPS<sub>base</sub> / TPS，其中 TPS<sub>base</sub> = 24/4 = 6。按此计算，16 / 24 / 30 FPS 视频的 δt 分别为 1.5 / 1 / 0.8<span class="src">图 6</span>，音频约为 0.24<span class="src calc">推算</span>。</li>
+            <li>AR 段与扩散段之间插入 15000 的时间间隔。不加这个间隔时，前几帧会过饱和并出现棋盘格伪影，Super 上尤其明显。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>三种动作模式（同一条样本） <span class="tag">图 4</span></h4>
+          <dl class="kv">
+            <dt>正向动力学 FD</dt><dd>动作干净，视频带噪：给定动作预测画面</dd>
+            <dt>逆向动力学 ID</dt><dd>视频干净，动作带噪：从画面反推动作</dd>
+            <dt>策略 Policy</dt><dd>视频和动作都带噪，联合去噪</dd>
+          </dl>
+          <p>另有 Video transfer 模式：控制视频（边缘 / 深度等）作为干净条件，RGB 视频作为噪声目标<span class="src">式 (6)</span>。</p>
+        </div>
+      </div>
+
+      <h3>三档规格</h3>
+      <div class="tbl-wrap wide">
+        <table>
+          <thead><tr><th>Variant</th><th>总参数</th><th>LLM 层数</th><th>Hidden</th><th>注意力头</th><th>KV 头</th><th>头维度</th><th>FFN</th><th>初始化</th></tr></thead>
+          <tbody>
+            <tr><td>Cosmos3-Edge</td><td>4B</td><td>28</td><td>2,048</td><td>16</td><td>8</td><td>128</td><td>9,216</td><td style="text-align:left">自研 2B LLM，从头训练 15T token<span class="src">附录 D</span></td></tr>
+            <tr class="hl"><td>Cosmos3-Nano</td><td>16B</td><td>36</td><td>4,096</td><td>32</td><td>8</td><td>128</td><td>12,288</td><td style="text-align:left">Qwen3-VL-8B</td></tr>
+            <tr class="hl"><td>Cosmos3-Super</td><td>64B</td><td>64</td><td>5,120</td><td>64</td><td>8</td><td>128</td><td>25,600</td><td style="text-align:left">Qwen3-VL-32B</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 2、§2.5。总参数 = 两塔之和（论文写法是“16B 模型，基于 8B 稠密 transformer”）。Edge 的 LLM 沿用 Qwen3-1.7B 结构，但去掉了 QK norm，FFN 激活换成 ReLU²。</p>
+
+      <h3>和前代 / 同类相比改了什么</h3>
+      <ul class="prose">
+        <li><b>相对 Cosmos-Predict2.5 / Transfer2.5</b>：以前生成和控制分属不同模型，Transfer2.5 每种控制模态各接一个 ControlNet 分支；现在全部并进一个主干，控制视频直接作为条件 token 输入<span class="src">§6.2.4</span>。</li>
+        <li><b>相对 BAGEL 式 MoT</b>（Deng et al., 2025）：论文承认两者解码层结构相近，区别在训练策略、位置编码和能力范围<span class="src">§2.3</span>。</li>
+        <li><b>相对 Cosmos-Reason2</b>：general 平均分更高，论文归因于预训练数据多出的 20%<span class="src">§6.1</span>。</li>
+        <li><b>训练上</b>：Reasoner 不再单独做“只训 projector”的对齐阶段，所有组件从一开始就联合训练<span class="src">§4.1.1</span>；Generator 预训练期间冻结 Reasoner 塔<span class="src">§4.2.1</span>。</li>
+      </ul>
+    </section>
+
+    <!-- 04 数据 -->
+    <section class="sec" id="data">
+      <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：Reasoner、Generator、音频、动作</h2>
+        <p class="sec-intro">两条数据线：Reasoner 用图文 / 视频文本做理解，Generator 用大规模图像、视频、音频、动作做重建式训练。只有原文给出比例的地方才画比例条。</p></div>
+
+      <h3>4.1 Reasoner 数据</h3>
+      <div class="tbl-wrap wide" style="max-width:640px">
+        <table>
+          <thead><tr><th>模态</th><th>预训练</th><th>SFT</th></tr></thead>
+          <tbody>
+            <tr><td>图文（媒体数）</td><td>18,814,952</td><td>1,051,513</td></tr>
+            <tr><td>视频文本（媒体数）</td><td>1,016,299</td><td>1,079,200</td></tr>
+            <tr><td>纯文本（对话数）</td><td>2,170,762</td><td>40,960</td></tr>
+            <tr class="hl"><td>合计</td><td>22,002,013</td><td>2,171,673</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 3。SFT 中视频文本约占一半，论文写“50%”，按表计算为 49.7%<span class="src calc">推算</span>。预训练数据中 19.7M 从 Nemotron Nano 2 数据集选出，另外 2.3M 为补充的数学、视频、grounding 和指令数据<span class="src">§3.1.1</span>。</p>
+
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig7.jpg" alt="Reasoner 预训练与 SFT 数据按能力类别的构成" loading="lazy"></div>
+        <figcaption><b>Reasoner 数据按能力类别的构成。</b>左为预训练（22.0M），右为 SFT（2.2M）。<span class="from">来源：论文图 7</span>（原图裁切略紧，完整数字见下方比例条）</figcaption>
+      </figure>
+
+      <div class="card mod wide">
+        <h4>预训练构成 <span class="tag">§3.1.1 正文给出</span></h4>
+        <div class="ratio">
+          <div class="rbar">
+            <span class="a" style="width:42.9%" title="OCR 9.44M">OCR 42.9%</span>
+            <span class="b" style="width:16.5%" title="2D grounding 3.62M">grounding 16.5%</span>
+            <span class="c" style="width:11.3%" title="Visual QA 2.48M">VQA 11.3</span>
+            <span class="d" style="width:7.5%" title="图像推理 1.66M">7.5</span>
+            <span class="e" style="width:6.1%" title="Text QA 1.35M">6.1</span>
+            <span class="f" style="width:5.9%" title="图像描述 1.30M">5.9</span>
+            <span class="d" style="width:4.5%" title="Video QA 0.99M"></span>
+            <span class="e" style="width:3.7%" title="文本指令 0.82M"></span>
+            <span class="f" style="width:1.6%" title="视觉指令 + 视频描述 + 视频推理"></span>
+          </div>
+          <div class="rkey"><span>OCR 9.44M</span><span>2D grounding 3.62M</span><span>Visual QA 2.48M</span><span>图像推理 1.66M（7.5%）</span><span>Text QA 1.35M（6.1%）</span><span>图像描述 1.30M（5.9%）</span><span>Video QA 0.99M（4.5%）</span><span>文本指令 0.82M（3.7%）</span><span>视觉指令 0.34M（1.5%）</span><span>视频描述 / 视频推理各 0.01M</span></div>
+        </div>
+        <h4 style="margin-top:14px">SFT 构成 <span class="tag">读自图 7</span></h4>
+        <div class="ratio">
+          <div class="rbar">
+            <span class="a" style="width:22.7%">视频推理 22.7</span>
+            <span class="b" style="width:21.4%">Video QA 21.4</span>
+            <span class="c" style="width:16.0%">grounding 16.0</span>
+            <span class="d" style="width:15.0%">VQA 15.0</span>
+            <span class="e" style="width:12.7%">视频描述 12.7</span>
+            <span class="f" style="width:10.7%">Upsampling 10.7</span>
+            <span class="d" style="width:1.5%" title="图像描述 1.5%"></span>
+          </div>
+          <div class="rkey"><span>Prompt Upsampling 10.7%：Reasoner 学把简短输入扩写成结构化 caption</span><span>图像描述 1.5%</span></div>
+        </div>
+      </div>
+
+      <h4>清洗流程：语义去重 → AI 判官</h4>
+      <div class="pipe wide">
+        <div class="pipe-head"><span></span><span>步骤</span><span>做法</span><span>结果</span></div>
+        <div class="pipe-row"><span class="lbl">① 去重</span>
+          <span class="chip">以整条对话为单位：媒体 embedding 与指令-回复文本 embedding 拼接<br><small>图文 / 纯文本用 Qwen3-VL-Embedding-8B，视频用 PE-Core-G14-448</small></span>
+          <span class="chip m">先 K-means 分簇，簇内余弦相似度 &gt; 0.95 的样本删除</span>
+          <span class="chip o">删除 4.23%<span class="src">§3.1.1</span></span></div>
+        <div class="pipe-row"><span class="lbl">② AI 判官</span>
+          <span class="chip">Gemma-4-31B-it 扮演“训练数据审计员”，按 1–5 分打三项：Faithfulness / Completeness / Correctness，并给出依据</span>
+          <span class="chip m"><b>最小值规则</b>：三项都达到阈值才保留，不取平均</span>
+          <span class="chip o">阈值 2 保留 78%（用于预训练）<br>阈值 5 保留 46%（用于 SFT）</span></div>
+      </div>
+      <p class="prose" style="font-size:.95rem">按类别看：阈值越高，删除越偏向某些类别。referring-expression grounding 被删得最多，图像描述和 VQA 也明显减少；OCR 在阈值 2 时基本不受影响，到阈值 5 才大幅下降。因此预训练选“最低的非平凡阈值”2，SFT 选 5<span class="src">§3.1.1</span>。各类别的具体保留率<span class="nd">原文未给数字</span>。</p>
+
+      <details class="more wide">
+        <summary>SFT 数据清单（按领域）<span class="hint">数字均出自 §3.1.2</span></summary>
+        <div class="body">
+          <div class="tbl-wrap">
+            <table class="idx-table">
+              <thead><tr><th>领域 / 能力</th><th>数据与规模</th></tr></thead>
+              <tbody>
+                <tr><td>空间：2D / 3D grounding</td><td>框和点统一归一化为 JSON，2D 主要来自 LocateAnything；3D 从扫描场景生成相机坐标系 3D 框，直接监督最终框，不经 2D 中间步骤</td></tr>
+                <tr><td>时间事件理解</td><td>人工稠密时序 caption（每个动作平均 1.8 秒、14.2 个词）；另有 55K 条视频（2.6K 小时）、743K 个（起点, 终点, caption）三元组；FoundationMotion 每个片段出 10 道四选一题；相机运动标注</td></tr>
+                <tr><td>物理合理性判断</td><td>Cosmos HUE 人工标注 13.5K 条（来自 1K 个生成视频）；VideoPhy-2 的 3.4K 条视频（200 种动作，1–5 分）</td></tr>
+                <tr><td>结构化场景扩写</td><td>（简短输入 → 结构化 caption）配对；输入长度（简短 / 详细等）与提问风格（请求式 / 陈述式等）交叉组合生成指令变体，规范形式采样更多</td></tr>
+                <tr><td>自动驾驶</td><td>人工 CoT 超过 10K 条视频，自动标注约 1.1M 条；Nexar 行车记录超过 24K 条（6 FPS，最长 300 秒）；MADS 3D 车辆 grounding（约 1 FPS，100 m 以内）</td></tr>
+                <tr><td>机器人</td><td>动作 CoT：Qwen3-VL-72B 生成推理，Molmo-7B 做定位，MolmoAct / DROID 提供路径点；MimicGen 子任务切分 3.6K 条（另留 60 条做零样本评测）；BEHAVIOR-1K 83K 条；手术 VQA 398K 轮对话 / 2.2M 张图</td></tr>
+                <tr><td>智能基础设施</td><td>仓库空间智能：从 873K 条 QA 中抽 80K 条均衡样本；行人：208K 张图、5.6M 个人工框（已模糊处理）；CARLA 3.4K 条；TAR 3.6K 条视频（26 小时）、44K 条标注（原文写作“3,6K”）；1K 条监控片段</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <h3>4.2 Generator 图像 / 视频数据</h3>
+      <figure class="fig card wide">
+        <div class="img-pad"><img src="figures/fig8.jpg" alt="Generator 数据课程：各阶段各模式的样本量" loading="lazy"></div>
+        <figcaption><b>Generator 数据课程。</b>行为训练模式，列为阶段；mid-training 结束得到基座 Nano / Super，再分模态独立做后训练。<span class="from">来源：论文图 8</span></figcaption>
+      </figure>
+
+      <div class="pipe wide">
+        <div class="pipe-head"><span></span><span>收集 / 预处理</span><span>去重 / 分类</span><span>过滤</span></div>
+        <div class="pipe-row"><span class="lbl">图像</span>
+          <span class="chip">7.8B 张原图，连同原始 caption 等元数据一起保存</span>
+          <span class="chip m">Qwen3-VL-Embedding-8B；抽 147M 张做 cuML KMeans（20,000 簇），簇内去重；分到 47 个层级类目</span>
+          <span class="chip o">美学分须超过阈值；拼图、水印、白底、NSFW 直接丢弃；非文字渲染用途的合成图再按写实度分过滤</span></div>
+        <div class="pipe-row"><span class="lbl">视频</span>
+          <span class="chip">3B 条原视频，用 TransNetV2 切镜头，用 ffmpeg cropdetect 去黑边，统一重编码</span>
+          <span class="chip m">Cosmos-Embed1-448p；抽 400M 个片段做 20,000 簇聚类和簇内去重</span>
+          <span class="chip o">DOVER 美学、DOVER 技术质量、VTSS 三项打分（0–9），外加约 100 个二值伪影标签。<b>严重伪影</b>（分屏、旋转、静止画面）剔除，<b>轻微伪影</b>（字幕叠加、运动模糊、压缩噪声）只打标、保留在预训练中</span></div>
+      </div>
+      <p class="tbl-note">来源：§3.2.1。美学 / 写实度阈值的具体数值<span class="nd">原文未披露</span>；原始数据来源只写了“diverse data sources”，<span class="nd">未列明</span>。</p>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>预训练语料分辨率 / 画幅 <span class="tag">§3.2.1</span></h4>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>占比</th><th>图像</th><th>视频</th></tr></thead>
+            <tbody>
+              <tr><td>720p</td><td>26.8%</td><td>36.4%</td></tr>
+              <tr><td>480p</td><td>26.0%</td><td>30.8%</td></tr>
+              <tr><td>≥1080p</td><td>25.2%</td><td>12.2%</td></tr>
+              <tr><td>16:9</td><td>52.0%</td><td>97.3%</td></tr>
+              <tr><td>1:1</td><td>25.2%</td><td>—</td></tr>
+            </tbody>
+          </table></div>
+          <p>767M 张图出自 7.8B 张原图，保留约 9.8%<span class="src calc">推算</span>。</p>
+        </div>
+        <div class="card mod">
+          <h4>Mid-training 视觉数据构成 <span class="tag">§3.2.1 给出比例</span></h4>
+          <div class="ratio"><div class="rlab"><span>图像 mid-training 数据池（15.6M）<span class="src">§4.2.2</span></span></div>
+            <div class="rbar"><span class="a" style="width:60%">真实 60%</span><span class="b" style="width:36%">合成 36%</span><span class="c" style="width:4%" title="文字渲染 4%"></span></div>
+            <div class="rkey"><span><i style="background:var(--good)"></i>文字渲染 4%</span></div></div>
+          <div class="ratio"><div class="rlab"><span>视频 mid-training 数据池（74.7M）</span></div>
+            <div class="rbar"><span class="a" style="width:46%">预训练池中精选 46.0%</span><span class="b" style="width:43.9%">领域数据 43.9%</span><span class="c" style="width:10.1%">难例 10.1</span></div>
+            <div class="rkey"><span>领域数据：机器人 / 自动驾驶 / 人类活动 / 第一视角人物交互</span><span>难例：人体运动、高速复杂运动、精细操作</span></div></div>
+          <p>合成图经过“仔细的拒绝采样”，用于补充少见概念和物体组合；文字渲染图用于补足画面内清晰文字。</p>
+        </div>
+      </div>
+
+      <h4>合成数据（SDG），全部开源</h4>
+      <div class="tbl-wrap wide">
+        <table>
+          <thead><tr><th>数据集</th><th>片段数</th><th>分辨率 / FPS</th><th>深度</th><th>分割</th><th>BBox</th><th>物理状态</th><th>相机</th><th>Caption</th><th style="text-align:left">内容</th></tr></thead>
+          <tbody>
+            <tr><td>SDG-PhyxSim</td><td>76,489</td><td>1920×1080 / 30</td><td>✓</td><td>✓</td><td>—</td><td>✓</td><td>✓</td><td>✓</td><td style="text-align:left">刚体碰撞、铰接、形变、流体、光学</td></tr>
+            <tr><td>SDG-RobotSim</td><td>208,022<sup>‡</sup></td><td>不固定</td><td>部分</td><td>部分</td><td>—</td><td>部分</td><td>✓</td><td>✓</td><td style="text-align:left">6–8 种机器人形态的操作与移动</td></tr>
+            <tr><td>SDG-DriveSim</td><td>264,000</td><td>3840×2160 / 24</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td><td style="text-align:left">常规与长尾交通场景，约 1,467 小时</td></tr>
+            <tr><td>SDG-SynHuman</td><td>236,937</td><td>1920×1080 / 30</td><td>✓</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>—</td><td style="text-align:left">数字人与多人交互，5,841 小时</td></tr>
+            <tr><td>SDG-Warehouse</td><td>122,952</td><td>1920×1080 / 30</td><td>✓</td><td>✓</td><td>✓</td><td>—</td><td>✓</td><td>—</td><td style="text-align:left">叉车与人近距离险情、火灾、碰撞、取货</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 22、附录 C。<sup>‡</sup>附录 C.2 写的是“public v1.0 release contains 386,270 RGB MP4 clips”，与表 22 不一致，原文没有解释。Embedding 分析显示 5 个 SDG 都远离预训练分布：CosSim 0.589–0.712，预训练自身参考值为 0.796<span class="src">表 25</span>。</p>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>Video transfer 数据 <span class="tag">§3.2.1</span></h4>
+          <ul>
+            <li>从预训练池中选 3M 条视频；边缘和模糊控制在训练时现算（Canny、高斯模糊、双边滤波，参数随机）。</li>
+            <li>深度和分割事先算好，分别用 Video Depth Anything 和 SAMv2。</li>
+            <li>驾驶场景地图控制用 MADS：1.1M 条样本，每条 7 路同步相机，30 FPS，覆盖 14 个地区。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>后训练数据 <span class="tag">§3.2.1 · §4.2.3–4.2.4</span></h4>
+          <ul>
+            <li><b>T2I</b>：完全不用通用网络数据，只用合成图、文字渲染图和高质量真实图（图 8 记为 8M）。Stage 1 配比为真实 45% / 合成 40% / 纯文字渲染 15%；Stage 2 用 470k 条“超高质量”图文对。</li>
+            <li><b>I2V</b>：1,000 条人工精选视频 + 约 20k 条合成视频（约占 token 的 6%）+ 过滤后的预训练数据（由 agentic 流程定位模型弱点，再到预训练池检索）；另混入 20% 的 T2I 图像 token。</li>
+            <li><b>视频 SFT 集合</b>：合成视频、人工精选真实视频，以及“按 embedding 相似度检索出的常见失败案例”。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h4>结构化 caption：全阶段统一用 JSON</h4>
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>为什么改用 JSON <span class="tag">§3.2.1</span></h4>
+          <p>论文的观察是：自由文本 caption “precise but incomplete”，描述得准，但复杂场景容易漏细节。预定义字段能逼着标注系统性覆盖物体、属性、关系和场景信息，提高 recall，同时保持 precision。</p>
+          <ul>
+            <li><b>Captioner</b>：图像和视频各有一个 LoRA 微调的 Qwen3-VL-8B。视频按 8 FPS 采帧，temperature 0.7，像素上下限沿用 Qwen3-VL 默认值<span class="src">附录 A.1</span>。</li>
+            <li><b>图像</b>：四个象限加中心区域分别描述，再合并（quadrant_scan）。</li>
+            <li><b>视频</b>：额外做一遍只标时序变化的第二轮标注。</li>
+            <li><b>Caption 评测</b>：precision 由 VLM 把 caption 拆成原子断言，逐条对照原图 / 原视频核验；recall 用人工整理的原子断言清单，由 LLM 判断 caption 覆盖了哪些。测试集专挑难标注的样本。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>Schema 骨架（节选） <span class="tag">附录 A.2–A.3</span></h4>
+<pre class="schema">{
+  "subjects": [{ "description", "appearance_details",
+    "relationship", "location", "relative_size",
+    "orientation", "pose",
+    // 人物：clothing / expression / gender / age / skin_tone…
+    // 计数敏感：number_of_hands / fingers / legs …
+    "action", "state_changes" }],          // 视频
+  "background_setting", "lighting": {…},
+  "aesthetics": {…}, "cinematography": {… , "camera_motion"},
+  "style_medium", "artistic_style", "context",
+  "text_and_signage_elements": [{ "text", "category",
+    "appearance", "spatial", "spatial_temporal" }],
+  "quadrant_scan": { "top_left", …, "absolute_center" },
+  "comprehensive_t2i_caption",               // 图像：自然语言总结
+  "actions": [{ "time", "description" }],    // 视频
+  "segments", "transitions", "temporal_caption",
+  "resolution", "aspect_ratio", "duration", "fps",
+  "audio_description"
+}</pre>
+          <p style="font-size:.86rem;color:var(--muted)">T2V 训练时，时长、FPS、时间戳作为 JSON 字段输入，模型因此能按指定时长生成<span class="src">§4.2.1</span>。</p>
+        </div>
+      </div>
+
+      <h3>4.3 音频数据：只保留与画面有因果关系的声音</h3>
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>规模 <span class="tag">§3.2.2</span></h4>
+          <dl class="kv">
+            <dt>预训练</dt><dd>138.9M 个带可用音轨的片段（全部取自视频预训练池）；其中 62.5M 条短于 30 秒，用 Qwen3-Omni-Captioner 生成音频描述</dd>
+            <dt>Mid-training</dt><dd>18.8M = 12.8M 非语音 + 6M 唇形同步的语音</dd>
+          </dl>
+          <p>原则：语音只在对得上可见人脸时保留；非语音样本去掉画外人声；会盖住目标声音的非乐器 BGM 去掉。</p>
+        </div>
+        <div class="card mod">
+          <h4>判定链 <span class="tag">§3.2.2</span></h4>
+          <ol style="font-size:.9rem">
+            <li>SAM-Audio 把音频分成语音轨和剩余轨。</li>
+            <li>SyncNet：has_face 为真且 lip_sync_confidence ≥ 3.0，判为语音同步。</li>
+            <li>FireRedASR2S 估计 speech_ratio 和 music_ratio；music_ratio ≥ 0.1 记为 high_music。</li>
+            <li>对 high_music 片段，用 Qwen3-VL 判断是否为乐器演奏，是则保留音乐。</li>
+            <li>音轨被改动后再跑一遍检测（例如语音分支要求 speech_ratio ≥ 0.05 且 music_ratio = 0），并检查不是静音：max_abs ≥ 0.007，p50_db ≥ −80，active_ratio ≥ 0.2。</li>
+            <li><b>音轨改了就重新写 caption</b>；语音样本用 Qwen3-ASR 转写，再由 GPT-OSS-120B 与音频描述合并。</li>
+          </ol>
+        </div>
+      </div>
+
+      <h3>4.4 动作数据</h3>
+      <div class="card mod wide">
+        <h4>按小时计的分布 <span class="tag">§3.2.3 · 图 9</span></h4>
+        <div class="ratio"><div class="rlab"><span>共 8.4M 段 / 61.3K 小时</span></div>
+          <div class="rbar"><span class="a" style="width:67.4%">第一视角人手 41.3K h · 67.4%</span><span class="b" style="width:16.3%">自动驾驶 16.3%</span><span class="c" style="width:8.7%">机器人 8.7</span><span class="d" style="width:7.5%">相机 7.5</span></div>
+          <div class="rkey"><span>第一视角：私有双手操作数据 1.7M 段，头戴相机位姿 + 每只手 21 个 3D 关键点</span><span>自动驾驶 10.0K h：内部 Hyperion 采集的日志，按目标分布挖掘</span><span>机器人 5.4K h：开源数据，90.4K 个任务、516.7K 段，成功和失败片段都保留</span><span>相机 4.6K h：从预训练视频用 ViPE + DepthAnything3 估计位姿，共 1.9M 个片段</span></div></div>
+        <p>处理方式：按维度归一化到约 [−1, 1]；多视角拼成一张画布，布局写进元数据；空闲动作不删，记录空闲步数，供采样时平衡<span class="src">§3.2.3</span>。</p>
+      </div>
+      <details class="more wide">
+        <summary>机器人数据按形态拆分<span class="hint">表 4</span></summary>
+        <div class="body"><div class="tbl-wrap"><table>
+          <thead><tr><th>形态</th><th>任务数</th><th>段数</th><th>小时</th></tr></thead>
+          <tbody>
+            <tr><td>AgiBot</td><td>338</td><td>239.4K</td><td>4.37K</td></tr>
+            <tr><td>Franka Panda</td><td>67.5K</td><td>76.3K</td><td>442</td></tr>
+            <tr><td>Google Robot</td><td>599</td><td>87.2K</td><td>351</td></tr>
+            <tr><td>WidowX-250</td><td>21.8K</td><td>50.4K</td><td>100.1</td></tr>
+            <tr><td>UMI</td><td>43</td><td>38.3K</td><td>67</td></tr>
+            <tr><td>UR</td><td>114</td><td>25.0K</td><td>35</td></tr>
+            <tr class="hl"><td>合计</td><td>90.4K</td><td>516.7K</td><td>5.36K</td></tr>
+          </tbody></table></div></div>
+      </details>
+
+      <h3>4.5 已披露规模汇总</h3>
+      <div class="tbl-wrap wide">
+        <table class="idx-table">
+          <thead><tr><th>Generator 模式</th><th>预训练</th><th>Mid-training</th><th>后训练</th><th>备注</th></tr></thead>
+          <tbody>
+            <tr><td>Text-to-Image</td><td>767M</td><td>16M（正文 15.6M）</td><td>8M</td><td>后训练得到 Super-Text2Image</td></tr>
+            <tr><td>T2V / I2V / V2V</td><td>348M（正文 347.7M）</td><td>75M（正文 74.7M）</td><td>20K</td><td>后训练得到 Super-Image2Video</td></tr>
+            <tr><td>视频 + 音频</td><td>139M</td><td>19M</td><td>—</td><td>正文为 138.9M / 18.8M</td></tr>
+            <tr><td>动作（FD / ID / Policy）</td><td>—</td><td>8M</td><td>58K</td><td>后训练得到 Nano-Policy-DROID</td></tr>
+            <tr><td>Video transfer</td><td>—</td><td>4M</td><td>—</td><td>3M 通用控制 + MADS 1.1M</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：图 8 与 §3.2 正文。各数据源（网页 / 授权 / 内部）在预训练中的占比<span class="nd">原文未披露</span>。</p>
+    </section>
+
+    <!-- 05 训练 -->
+    <section class="sec" id="train">
+      <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+        <p class="sec-intro">顺序是：先训 Reasoner，用它的权重初始化 Generator 塔，再按 预训练 → mid-training → 分模态后训练 推进。<b>原文没有 RL 或偏好优化阶段</b>，所有后训练都是 SFT。</p></div>
+
+      <div class="flow wide">
+        <div class="card stage"><span class="sid">R1</span><h4>Reasoner 预训练</h4><dl>
+          <dt>目标</dt><dd>next-token</dd><dt>轮数</dt><dd>2 epoch</dd><dt>序列</dt><dd>≤16k token</dd><dt>LR</dt><dd>5e-5（ViT 5e-6）</dd><dt>β</dt><dd>(0.9, 0.999)</dd><dt>wd</dt><dd>0.05</dd></dl>
+          <div class="tbl-note">单样本上限：图像 2048 token、视频 8192 token；损失按 token 做平方根归一化加权<span class="src">§4.1.1</span></div></div>
+        <div class="card stage"><span class="sid">R2</span><h4>Reasoner SFT</h4><dl>
+          <dt>步数</dt><dd>8200</dd><dt>batch</dt><dd>512</dd><dt>LR</dt><dd>1e-5（ViT 1e-6）</dd><dt>warmup</dt><dd>1000 步</dd><dt>β</dt><dd>(0.9, 0.95)</dd><dt>wd</dt><dd>0.1</dd></dl>
+          <div class="tbl-note">预训练数据与 SFT 数据按 1:4 预算回放；另加 800K 条指令数据<span class="src">§4.1.2</span></div></div>
+        <div class="card stage"><span class="sid">G1</span><h4>Generator 预训练</h4><dl>
+          <dt>可训参数</dt><dd>仅生成塔</dd><dt>LR</dt><dd>1e-4，线性衰减到 0.30×</dd><dt>β</dt><dd>(0.9, 0.99)</dd><dt>文本 dropout</dt><dd>10%</dd><dt>Nano</dt><dd>31.05T token</dd><dt>Super</dt><dd>17.86T token</dd></dl>
+          <div class="tbl-note">T2I / T2V / I2V / V2V 采样比为 20 / 56 / 16 / 8%<span class="src">§4.2.1</span></div></div>
+        <div class="card stage"><span class="sid">G2</span><h4>Generator mid-training</h4><dl>
+          <dt>新增</dt><dd>动作、transfer</dd><dt>shift</dt><dd>3 / 5 / 10</dd><dt>动作 loss</dt><dd>×10</dd><dt>LR</dt><dd>1e-4，LambdaLinear</dd><dt>Nano</dt><dd>2.4T token</dd><dt>Super</dt><dd>1.9T token</dd></dl>
+          <div class="tbl-note">调度器起始系数 0.4，周期 100,000<span class="src">§4.2.2</span></div></div>
+      </div>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>Generator 目标与多分辨率 <span class="tag">§4.2</span></h4>
+          <ul>
+            <li>所有模态都用 rectified flow 预测速度 v* = ε − x₀，条件 token 不计 loss。噪声水平按模态各自采样：图像 / 音频 / 动作用 logit-normal，视频用 mode sampling（论文称效果更好）。</li>
+            <li>分辨率三档：256p / 480p / 720p，预训练 shift 分别为 1 / 3 / 5，最多帧数 400 / 400 / 300。每档只用原生分辨率不低于该档的素材。</li>
+            <li>批次配比 图像 : 256p 视频 : 480p 视频 : 720p 视频 = 1:1:2:1；序列打包到固定 74,000 token，不做 padding。</li>
+            <li>FPS 有两路条件：MRoPE 时间轴缩放，以及在 JSON 中写明 duration / FPS。附录 E.2 显示两者叠加最好。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>Mid-training 数据配比 <span class="tag">表 6</span></h4>
+          <div class="ratio">
+            <div class="rbar"><span class="a" style="width:32%">视频 32%</span><span class="b" style="width:25%">动作 25%</span><span class="c" style="width:20%">通用 transfer 20%</span><span class="d" style="width:10%">图像 10</span><span class="e" style="width:8%">视+音 8</span><span class="f" style="width:5%" title="驾驶 transfer 5%">5</span></div>
+            <div class="rkey"><span>通用 transfer：边缘 / 模糊 / 深度 / 分割</span><span>驾驶 transfer：场景地图 5%</span></div>
+          </div>
+        </div>
+      </div>
+
+      <h4>分模态后训练（各自独立，结构不变）</h4>
+      <div class="post-flow wide">
+        <div class="card stage"><span class="sid">P-T2I</span><h4>Super-Text2Image</h4><ul>
+          <li>Stage 1：20k 步，LR 1e-4，warmup 2k，真实 / 合成 / 文字 = 45 / 40 / 15%</li>
+          <li>Stage 2：2k 步，470k 条超高质量图文对</li>
+          <li>上下文 70k token；只用分辨率高于 720p 的图<span class="src">§4.2.3</span></li></ul></div>
+        <div class="card stage"><span class="sid">P-I2V</span><h4>Super-Image2Video</h4><ul>
+          <li>480p，189 帧（24fps 下约 8 秒）</li>
+          <li>10k 步，LR 1e-5，约 50B token</li>
+          <li>只用 I2V 形式训练视频，另混 20% T2I token<span class="src">§4.2.4</span></li></ul></div>
+        <div class="card stage"><span class="sid">P-Policy</span><h4>Nano-Policy-DROID</h4><ul>
+          <li>从 Nano mid-training 权重继续；动作编码器、解码 MLP 和 embedding 重新初始化，学习率 ×5；LR 2e-4</li>
+          <li>输入：本体状态 + 三视角画布（540×640）；输出未来 32 步绝对关节位置（15Hz），并附带预测视频</li>
+          <li>推理：4 步，shift 5，CFG 3，不解码视频 latent；部署在 2 张 RTX Pro 6000<span class="src">§4.2.5</span></li></ul></div>
+      </div>
+      <details class="more wide">
+        <summary>默认采样配置<span class="hint">表 21</span></summary>
+        <div class="body"><div class="tbl-wrap"><table>
+          <thead><tr><th>模型 / 模态</th><th>steps</th><th>guidance</th><th>shift</th><th style="text-align:left">负向提示</th></tr></thead>
+          <tbody>
+            <tr><td>Nano / Super 音视频</td><td>50</td><td>6</td><td>10</td><td style="text-align:left">附录 B.6</td></tr>
+            <tr><td>Super-Text2Image</td><td>50</td><td>4</td><td>3</td><td style="text-align:left">空串</td></tr>
+            <tr><td>Super-Image2Video</td><td>50</td><td>6</td><td>5</td><td style="text-align:left">从用户 prompt 自动派生（附录 B.3）</td></tr>
+            <tr><td>Nano / Super FD / ID</td><td>50</td><td>1</td><td>5</td><td style="text-align:left">空串</td></tr>
+            <tr><td>Nano-Policy-DROID</td><td>4</td><td>3</td><td>5</td><td style="text-align:left">空串</td></tr>
+            <tr><td>Nano / Super Transfer</td><td>50</td><td>文本 3 / 控制 1.5</td><td>10</td><td style="text-align:left">附录 B.6</td></tr>
+          </tbody></table></div>
+          <p class="tbl-note">负向提示按模型和模式分别在自动化基准上挑选（§6.3.1）。Transfer 用双权重 CFG，每步跑 3 次前向（§6.2.4）。吞吐：Nano 和 Super 的 MFU 分别为 0.23 和 0.30（§5.2.8）。</p></div>
+      </details>
+    </section>
+
+    <!-- 06 评测 -->
+    <section class="sec" id="eval">
+      <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+        <p class="sec-intro">记号：<b>*</b> 表示后训练变体（例如 T2I 一栏的 91.36 来自 Super-Text2Image）；<b>†</b> 表示闭源模型。Cosmos 3 的生成评测都先用 Claude-Opus（T2I 用 4.7，视频和音频用 4.6）把 prompt 改写成训练时的 JSON 格式<span class="src">§6.2.1–6.2.3</span>。</p></div>
+
+      <h3>总览（节选）</h3>
+      <div class="tbl-wrap wide">
+        <table>
+          <thead><tr><th>模型</th><th>General</th><th>Robotics</th><th>Smart infra.</th><th>Driving</th><th class="q">T2I</th><th class="q">T2V</th><th class="q">I2V</th><th>Audio</th><th>FD: Robot</th><th>Policy: Robot</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td>Cosmos3-Super</td><td>73.7</td><td>57.8</td><td class="best">62.6</td><td class="best">79.3</td><td class="best">91.36<sup>*</sup></td><td class="best">80.0</td><td class="best">82.8</td><td>7.31</td><td class="best">26.0<sup>*</sup></td><td>–</td></tr>
+            <tr class="hl"><td>Cosmos3-Nano</td><td>69.6</td><td>55.1</td><td>61.0</td><td>76.0</td><td>84.61</td><td>79.4</td><td>82.7</td><td>7.34</td><td>25.5<sup>*</sup></td><td class="best">39.7<sup>*</sup></td></tr>
+            <tr><td>Gemini 3.1 Pro<sup>†</sup></td><td class="best">77.5</td><td class="best">58.2</td><td>58.6</td><td>47.2</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Qwen3-VL-32B</td><td>72.8</td><td>52.6</td><td>56.1</td><td>40.7</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Qwen3-VL-8B</td><td>68.9</td><td>48.5</td><td>52.7</td><td>46.4</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Gemma-4-31B</td><td>69.8</td><td>51.0</td><td>51.3</td><td>36.6</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Gemini 3 Pro Image<sup>†</sup></td><td></td><td></td><td></td><td></td><td class="flag">90.85</td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Qwen-Image-2512</td><td></td><td></td><td></td><td></td><td>84.25</td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td>Veo-3.1<sup>†</sup></td><td></td><td></td><td></td><td></td><td></td><td>79.1</td><td>82.6</td><td class="best">7.45</td><td></td><td></td></tr>
+            <tr><td>Wan2.2-A14B</td><td></td><td></td><td></td><td></td><td></td><td>78.0</td><td>81.3</td><td></td><td></td><td></td></tr>
+            <tr><td>Ctrl-World</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>23.0</td><td></td></tr>
+            <tr><td>π0.5</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>28.1</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 1。T2I 为 UniGenBench All；T2V / I2V 为 PAIBench-G Overall；Audio 为 SoundBench AVQ；FD 为 DROID PSNR；Policy 为 RoboLab Specific 指令下的总成功率。<span style="color:var(--warm)">橙框</span>：Gemini 3 Pro Image 在表 1 中是 90.85，在表 11 中是 90.69。音频一栏表 1 只列了 Veo-3.1，但 Seedance-1.5-Pro 的 AVQ 7.64 更高（表 15）。</p>
+      <div class="keybox"><span class="k-best">本页标注的该列最优（仅限所列行）</span></div>
+
+      <div class="chart-grid wide">
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 320 214" role="img" aria-label="Reasoner Driving 平均分">
+            <text x="0" y="14" class="ch-t">Reasoner · Driving 平均</text><text x="320" y="14" text-anchor="end" class="ch-src">表 10 · 0–100</text>
+            <g>
+              <text x="108" y="44" text-anchor="end" class="ch-lbl">Cosmos3-Super</text><rect x="112" y="33" width="188" height="14" class="bar-bg"/><rect x="112" y="33" width="149.1" height="14" class="bar-q"/><text x="265" y="44" class="ch-val">79.3</text>
+              <text x="108" y="68" text-anchor="end" class="ch-lbl">Cosmos3-Nano</text><rect x="112" y="57" width="188" height="14" class="bar-bg"/><rect x="112" y="57" width="142.9" height="14" class="bar-qi"/><text x="259" y="68" class="ch-val">76.0</text>
+              <text x="108" y="92" text-anchor="end" class="ch-lbl">Gemini 3.1 Pro†</text><rect x="112" y="81" width="188" height="14" class="bar-bg"/><rect x="112" y="81" width="88.7" height="14" class="bar-o2"/><text x="205" y="92" class="ch-val">47.2</text>
+              <text x="108" y="116" text-anchor="end" class="ch-lbl">Qwen3-VL-8B</text><rect x="112" y="105" width="188" height="14" class="bar-bg"/><rect x="112" y="105" width="87.2" height="14" class="bar-o"/><text x="203" y="116" class="ch-val">46.4</text>
+              <text x="108" y="140" text-anchor="end" class="ch-lbl">Qwen3-VL-32B</text><rect x="112" y="129" width="188" height="14" class="bar-bg"/><rect x="112" y="129" width="76.5" height="14" class="bar-o"/><text x="193" y="140" class="ch-val">40.7</text>
+              <text x="108" y="164" text-anchor="end" class="ch-lbl">Gemma-4-31B</text><rect x="112" y="153" width="188" height="14" class="bar-bg"/><rect x="112" y="153" width="68.8" height="14" class="bar-o"/><text x="185" y="164" class="ch-val">36.6</text>
+            </g>
+            <line x1="112" y1="176" x2="300" y2="176" class="axis"/>
+            <text x="112" y="190" text-anchor="middle" class="ch-ax">0</text><text x="206" y="190" text-anchor="middle" class="ch-ax">50</text><text x="300" y="190" text-anchor="middle" class="ch-ax">100</text>
+            <text x="0" y="208" class="ch-ax">3 项里有 2 项是内部基准</text>
+          </svg>
+        </div>
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 320 214" role="img" aria-label="Human World Bench 得分">
+            <text x="0" y="14" class="ch-t">Human World Bench · I2V</text><text x="320" y="14" text-anchor="end" class="ch-src">表 14 · 0–100</text>
+            <text x="108" y="44" text-anchor="end" class="ch-lbl">Cosmos3-Super</text><rect x="112" y="33" width="188" height="14" class="bar-bg"/><rect x="112" y="33" width="135.2" height="14" class="bar-q"/><text x="251" y="44" class="ch-val">71.9</text>
+            <text x="108" y="68" text-anchor="end" class="ch-lbl">Veo-3.1†</text><rect x="112" y="57" width="188" height="14" class="bar-bg"/><rect x="112" y="57" width="127.5" height="14" class="bar-o2"/><text x="243" y="68" class="ch-val">67.8</text>
+            <text x="108" y="92" text-anchor="end" class="ch-lbl">Cosmos3-Nano</text><rect x="112" y="81" width="188" height="14" class="bar-bg"/><rect x="112" y="81" width="125.8" height="14" class="bar-qi"/><text x="242" y="92" class="ch-val">66.9</text>
+            <text x="108" y="116" text-anchor="end" class="ch-lbl">Wan2.2-A14B</text><rect x="112" y="105" width="188" height="14" class="bar-bg"/><rect x="112" y="105" width="114.1" height="14" class="bar-o"/><text x="230" y="116" class="ch-val">60.7</text>
+            <text x="108" y="140" text-anchor="end" class="ch-lbl">HunyuanVideo-1.5</text><rect x="112" y="129" width="188" height="14" class="bar-bg"/><rect x="112" y="129" width="102.8" height="14" class="bar-o"/><text x="219" y="140" class="ch-val">54.7</text>
+            <text x="108" y="164" text-anchor="end" class="ch-lbl">Predict2.5-14B</text><rect x="112" y="153" width="188" height="14" class="bar-bg"/><rect x="112" y="153" width="72.8" height="14" class="bar-o"/><text x="189" y="164" class="ch-val">38.7</text>
+            <line x1="112" y1="176" x2="300" y2="176" class="axis"/>
+            <text x="112" y="190" text-anchor="middle" class="ch-ax">0</text><text x="206" y="190" text-anchor="middle" class="ch-ax">50</text><text x="300" y="190" text-anchor="middle" class="ch-ax">100</text>
+            <text x="0" y="208" class="ch-ax">人评；指令遵循与物理两项通过率的平均</text>
+          </svg>
+        </div>
+        <div class="chart-cell">
+          <svg class="chart" viewBox="0 0 320 214" role="img" aria-label="RoboLab Specific 指令成功率">
+            <text x="0" y="14" class="ch-t">RoboLab-120 · Specific</text><text x="320" y="14" text-anchor="end" class="ch-src">表 19 · 0–50%</text>
+            <text x="108" y="44" text-anchor="end" class="ch-lbl">Nano-Policy-DROID</text><rect x="112" y="33" width="188" height="14" class="bar-bg"/><rect x="112" y="33" width="149.3" height="14" class="bar-q"/><text x="265" y="44" class="ch-val">39.7</text>
+            <text x="108" y="68" text-anchor="end" class="ch-lbl">Nano (PT-init)</text><rect x="112" y="57" width="188" height="14" class="bar-bg"/><rect x="112" y="57" width="113.6" height="14" class="bar-qi"/><text x="230" y="68" class="ch-val">30.2</text>
+            <text x="108" y="92" text-anchor="end" class="ch-lbl">π0.5</text><rect x="112" y="81" width="188" height="14" class="bar-bg"/><rect x="112" y="81" width="105.7" height="14" class="bar-o"/><text x="222" y="92" class="ch-val">28.1</text>
+            <text x="108" y="116" text-anchor="end" class="ch-lbl">DreamZero</text><rect x="112" y="105" width="188" height="14" class="bar-bg"/><rect x="112" y="105" width="89.9" height="14" class="bar-o"/><text x="206" y="116" class="ch-val">23.9</text>
+            <text x="108" y="140" text-anchor="end" class="ch-lbl">π0-FAST</text><rect x="112" y="129" width="188" height="14" class="bar-bg"/><rect x="112" y="129" width="56.0" height="14" class="bar-o"/><text x="172" y="140" class="ch-val">14.9</text>
+            <text x="108" y="164" text-anchor="end" class="ch-lbl">π0</text><rect x="112" y="153" width="188" height="14" class="bar-bg"/><rect x="112" y="153" width="13.2" height="14" class="bar-o"/><text x="129" y="164" class="ch-val">3.5</text>
+            <line x1="112" y1="176" x2="300" y2="176" class="axis"/>
+            <text x="112" y="190" text-anchor="middle" class="ch-ax">0</text><text x="206" y="190" text-anchor="middle" class="ch-ax">25</text><text x="300" y="190" text-anchor="middle" class="ch-ax">50%</text>
+            <text x="0" y="208" class="ch-ax">每个任务 10 次 rollout；所有策略都在 DROID 上微调</text>
+          </svg>
+        </div>
+      </div>
+      <div class="chart-legend"><span class="l1">Cosmos3-Super / 主模型</span><span class="l2">Cosmos3-Nano / 对照</span><span class="l4">闭源</span><span class="l3">开源基线</span></div>
+
+      <h3>图像生成</h3>
+      <div class="tbl-wrap wide">
+        <table>
+          <thead><tr><th>模型</th><th>类型</th><th class="q">UniGen All</th><th>Orig</th><th>Phys</th><th>CVTG-500L GNED</th><th>PNED</th><th>CVTG-102ch GNED</th><th>PNED</th><th>Aes v2</th><th>HPSv3</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td>Cosmos3-Super-Text2Image</td><td>开源</td><td class="best">91.36</td><td class="best">93.34</td><td>89.54</td><td class="best">80.88</td><td>89.08</td><td>32.02</td><td>41.22</td><td>5.91</td><td>11.60</td></tr>
+            <tr><td>Cosmos3-Super</td><td>开源</td><td>87.33</td><td>85.21</td><td>89.64</td><td>66.77</td><td>70.97</td><td>8.48</td><td>16.31</td><td>5.76</td><td>9.49</td></tr>
+            <tr><td>Cosmos3-Nano</td><td>开源</td><td>84.61</td><td>87.32</td><td>82.12</td><td>24.23</td><td>26.53</td><td>4.63</td><td>9.70</td><td>5.76</td><td>8.99</td></tr>
+            <tr><td>Gemini 3 Pro Image</td><td>闭源</td><td>90.69</td><td>92.81</td><td class="best">89.74</td><td>59.24<sup>†</sup></td><td>71.79<sup>†</sup></td><td>46.00</td><td class="best">76.40</td><td>5.70</td><td>11.78</td></tr>
+            <tr><td>FLUX.2-dev</td><td>开源</td><td>87.60</td><td>89.77</td><td>85.61</td><td>74.71</td><td>84.98</td><td>44.33</td><td>68.74</td><td>5.75</td><td>11.38</td></tr>
+            <tr><td>Qwen-Image-2512</td><td>开源</td><td>84.25</td><td>87.32</td><td>81.44</td><td>79.68</td><td class="best">90.86</td><td>46.33</td><td>71.26</td><td class="best">5.92</td><td>11.03</td></tr>
+            <tr><td>Hunyuan 3.0</td><td>开源</td><td>84.02</td><td>87.68</td><td>80.67</td><td>71.40</td><td>87.68</td><td>49.05</td><td>71.31</td><td>5.90</td><td class="best">11.93</td></tr>
+            <tr><td>Z-Image-Turbo</td><td>开源</td><td>78.14</td><td>81.53</td><td>75.03</td><td>75.20</td><td>86.95</td><td class="best">49.18</td><td>73.32</td><td>5.70</td><td>11.36</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 11。UniGenBench 共 1,170 条 prompt：原版 600 条，加上论文新增的 570 条 Physical-AI prompt；由 Gemini 3.1 Pro 对每个测试点判通过 / 不通过；所有模型都在 1024×1024 下生成。<b>†</b>：Gemini 3 Pro Image 经常输出大小写不对的文字（如 “Adventure” 写成 “ADVENTURE”），排除这类错误后 CVTG-500L 为 GNED 75.97、PNED 91.45。<b>中文文字渲染（CVTG-102ch）是 Cosmos 的明显短板</b>：32.02 / 41.22，Qwen-Image 为 46.33 / 71.26。Artificial Analysis 文生图榜：开源第 1，总榜第 4（2026-05-28，带 agentic 外环，见附录 B.7）。</p>
+
+      <h3>视频生成</h3>
+      <div class="tbl-wrap wide">
+        <table>
+          <thead><tr><th>模型</th><th class="q">PAIBench-G T2V</th><th class="q">PAIBench-G I2V</th><th>RBench I2V</th><th>HUE T2V</th><th>HUE I2V</th><th>HWB I2V</th></tr></thead>
+          <tbody>
+            <tr><td>Ground Truth（真实视频）</td><td>—</td><td>—</td><td>—</td><td>93.6</td><td>94.4</td><td>—</td></tr>
+            <tr class="hl"><td>Cosmos3-Super</td><td class="best">80.0</td><td class="best">82.8</td><td>58.1%</td><td>89.3</td><td>89.6</td><td class="best">71.9</td></tr>
+            <tr class="hl"><td>Cosmos3-Nano</td><td>79.4</td><td>82.7</td><td>58.4%</td><td>87.6</td><td>88.6</td><td>66.9</td></tr>
+            <tr><td>Wan2.2-A14B</td><td>78.0</td><td>81.3</td><td>50.7%</td><td>88.2</td><td>88.4</td><td>60.7</td></tr>
+            <tr><td>HunyuanVideo-1.5</td><td>76.5</td><td>81.7</td><td>46.0%</td><td>86.5</td><td>85.6</td><td>54.7</td></tr>
+            <tr><td>Cosmos-Predict2.5-14B</td><td>76.4</td><td>81.1</td><td>—</td><td>82.1</td><td>83.0</td><td>38.7</td></tr>
+            <tr><td>Veo-3.1<sup>†</sup></td><td>79.1</td><td>82.6</td><td>56.3%</td><td class="best">91.3</td><td class="best">89.7</td><td>67.8</td></tr>
+            <tr><td>Seedance-1.5-Pro<sup>†</sup></td><td>76.9</td><td>80.8</td><td>58.4%</td><td>90.0</td><td>87.6</td><td>—</td></tr>
+            <tr><td>Wan 2.6<sup>†</sup></td><td>78.6</td><td>81.9</td><td class="best">60.7%</td><td>—</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">来源：表 12、表 14。PAIBench-G 共 1,044 对 prompt，每条跑 5 个 seed，720p、189 帧；裁判用 Qwen2.5-VL-72B。论文说公开榜用的 Qwen3-VL-235B 裁判结果<em>不可复现</em>（脚注 2）。RBench 共 650 例，单 seed，121 帧。HUE 取 100 条 prompt × 5 个 seed，题目由 GPT 5.2 流水线生成，每题两人独立标、有分歧时由第三人仲裁，95% 置信区间约 ±0.6（附录 F）。Artificial Analysis 图生视频榜（无音频）：开源第 1，总榜第 22（2026-05-28）。</p>
+
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>Physics-IQ <span class="tag">表 13</span></h4>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>模型</th><th>I2V</th><th>+WMReward BoN</th><th>V2V</th><th>+WMReward BoN</th></tr></thead>
+            <tbody>
+              <tr class="hl"><td>Cosmos3-Super</td><td class="best">43.8</td><td class="best">48.9</td><td class="best">59.7</td><td class="best">63.4</td></tr>
+              <tr><td>Cosmos3-Nano</td><td>40.2</td><td>43.8</td><td>50.2</td><td>57.7</td></tr>
+              <tr><td>Sora2<sup>†</sup></td><td>42.3</td><td>46.4</td><td>—</td><td>—</td></tr>
+              <tr><td>Wan2.2-A14B</td><td>38.3</td><td>44.4</td><td>—</td><td>—</td></tr>
+              <tr><td>Magi-1</td><td>—</td><td>—</td><td>56.0</td><td>62.6</td></tr>
+            </tbody></table></div>
+          <p>评测时用 prompt upsampler（参考 PhyT2V 的迭代式改写）从起始帧或条件视频生成文本。</p>
+        </div>
+        <div class="card mod">
+          <h4>音视频：SoundBench <span class="tag">表 15</span></h4>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>模型</th><th>AVQ</th><th>SAV</th><th>AVAlign</th><th>PQ</th></tr></thead>
+            <tbody>
+              <tr class="hl"><td>Cosmos3-Super</td><td>7.31</td><td>8.34</td><td>8.14</td><td>6.28</td></tr>
+              <tr class="hl"><td>Cosmos3-Nano</td><td>7.34</td><td class="best">8.35</td><td class="best">8.16</td><td>6.32</td></tr>
+              <tr><td>Seedance-1.5-Pro<sup>†</sup></td><td class="best">7.64</td><td>8.21</td><td>8.06</td><td class="best">7.06</td></tr>
+              <tr><td>Veo-3.1<sup>†</sup></td><td>7.45</td><td>8.21</td><td>8.01</td><td>6.68</td></tr>
+              <tr><td>LTX-2.3（开源）</td><td>7.10</td><td>7.80</td><td>7.58</td><td>6.39</td></tr>
+            </tbody></table></div>
+          <p>AVQ = 0.5·SAV + 0.5·AQ（原文公式写作 AQ，按表中数值核算即为 PQ），其中 SAV = 0.6·SA + 0.3·AVAlign + 0.1·VisualSupport。语义和对齐上 Cosmos 领先，音质 PQ 落后。144 条非语音 prompt，取自 FoleyBench；checklist 由 Claude Opus 4.7、Gemini 3.1 Pro、GPT 5.5 投票确定。</p>
+        </div>
+      </div>
+
+      <h3>动作</h3>
+      <div class="grid2 wide">
+        <div class="card mod">
+          <h4>MT-init 对比 PT-init <span class="tag">表 18</span></h4>
+          <ul>
+            <li><b>相机正向动力学</b>：Super（MT-init）RRE 0.142°、RTE 0.026 m、ATE 0.99 m；Lingbot-World 为 0.299° / 0.057 m / 2.88 m。评测用内部 100 条 5 秒片段。</li>
+            <li><b>自动驾驶逆向动力学</b>：Nano（MT-init）RRE 0.211、ATE 0.98 m；VGGT 的 ATE 为 23.46 m。用的是内部驾驶数据。</li>
+            <li><b>第一视角正向动力学</b>：PSNR 16.19（Super MT-init），LOME 为 9.36。</li>
+            <li><b>DROID 正向动力学</b>：PSNR 26.04 / 25.52（Super / Nano MT-init），Ctrl-World 为 22.99。</li>
+          </ul>
+        </div>
+        <div class="card mod">
+          <h4>换到新形态的适应速度（LIBERO-10） <span class="tag">表 20</span></h4>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Nano</th><th>500 步</th><th>1000</th><th>1500</th><th>2000</th></tr></thead>
+            <tbody>
+              <tr class="hl"><td>MT-init</td><td>24.6%</td><td>91.4%</td><td>95.8%</td><td>97.4%</td></tr>
+              <tr><td>PT-init</td><td>0.0%</td><td>73.8%</td><td>93.4%</td><td>95.2%</td></tr>
+            </tbody></table></div>
+          <p>每个 checkpoint 跑 500 次 rollout。另有两个榜单：RoboArena 第 1（2026-05-30），MolmoSpaces All Combined 第 1，oracle 成功率 39.0%（2026-06-20）。</p>
+        </div>
+      </div>
+
+      <details class="more wide">
+        <summary>Video transfer 与消融（附录 C / E）<span class="hint">表 16 · 17 · 26 · 28 · 29 · 30 · 31</span></summary>
+        <div class="body">
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>PAIBench-C 单控制</th><th>DOVER↑</th><th>Seg mIoU↑</th><th>Blur SSIM↑</th><th>Edge F1↑</th><th>Depth si-RMSE↓</th></tr></thead>
+            <tbody>
+              <tr><td>Cosmos3-Super</td><td>10.14</td><td>0.71</td><td>0.91</td><td class="best">0.50</td><td class="best">0.58</td></tr>
+              <tr><td>Cosmos3-Nano</td><td class="best">10.39</td><td class="best">0.72</td><td>0.91</td><td>0.49</td><td>0.62</td></tr>
+              <tr><td>Cosmos-Transfer2.5</td><td>9.49</td><td>0.68</td><td>0.90</td><td>0.45</td><td>0.68</td></tr>
+            </tbody></table></div>
+          <p class="tbl-note">AVBench-C 人评视频质量（1–3 分）：Super 2.86、Nano 2.82、Transfer2.5 2.59；车道线三者相差不超过 ±0.05（表 17）。</p>
+          <ul>
+            <li><b>Reasoner 是否帮到 Generator</b>（表 28，小规模设置）：理解塔用 Cosmos3 Reasoner 初始化、对比用 Qwen3-VL-8B 初始化，T2V 的 Domain 分 73.7 → 75.7，其中 Robot 从 66.5 → 71.3；两者 Quality 都是 73.0。</li>
+            <li><b>FPS 控制</b>（表 29）：Composite 分数 Base 8.51、只加文本控制 9.28、只加 MRoPE 缩放 9.63、两者都加 9.81。</li>
+            <li><b>预训练是否加音频</b>（表 30）：加音频后 T2V Overall 78.6 → 79.1，I2V 81.7 → 82.2。</li>
+            <li><b>动作模式联合训练</b>（表 31，PushT + Edge）：联合训练使 ID MSE 从 1.11e-3 降到 3.09e-4，策略覆盖率 74.1% → 77.3%，但 FD PSNR 从 27.13 降到 26.22。</li>
+            <li><b>SDG 单独消融</b>（表 26）：每加一种 SDG，Overall 变化都在 ±0.12 以内；Human 一项在所有变体里都下降（−0.38 到 −0.69）。SDG-All 在 9 项里 8 项为正。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- 07 新在哪 -->
+    <section class="sec" id="novel">
+      <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+      <div class="novel wide">
+        <div class="card nv"><h4>动作作为一等模态，一条样本切换三种动作模式</h4><p>四类具身形态共用“自身位姿 / 末端位姿 / 抓取”三部分表示，只在输入输出投影层按领域区分；改变哪些 token 带噪，同一条样本就能用于 FD、ID 或 Policy 训练<span class="src">§2.1.3 · 图 4</span>。</p><p class="why">可核对：MT-init 在所有动作设置上都优于 PT-init（表 18–20）；附录 E.4 显示联合训练有利于 ID 和策略，但 FD 略降。</p></div>
+        <div class="card nv"><h4>按真实时间编排的 MRoPE，加 AR 与扩散段之间的位置间隔</h4><p>视频、音频、动作的 token 都换算到同一条物理时间轴（δt = 6/TPS）；AR 段与扩散段之间隔开 15000，用来消除首帧过饱和和棋盘格伪影<span class="src">§2.4</span>。</p><p class="why">可核对：FPS 消融见表 29。15000 间隔的效果<span class="nd">没有定量消融</span>。</p></div>
+        <div class="card nv"><h4>结构化 JSON caption 贯穿训练和推理，Reasoner 兼任 upsampler</h4><p>所有生成训练数据都标成 JSON；推理时由 Reasoner（或 Claude Opus 4.6）把用户输入扩写成同一 schema 的“场景程序”，依次写场景、时序、音频<span class="src">§6.3.2 · 附录 B.1</span>。</p><p class="why">与 DALL·E 3 的 caption 扩写思路相同；新的是一个 schema 同时覆盖图像、视频和音频，并且 upsampler 就是同一个模型的理解塔。</p></div>
+        <div class="card nv"><h4>统一动作 mid-training，并用对照实验和协同矩阵说明它可复用</h4><p>在相同配方、数据和算力下对比 PT-init 与 MT-init；按领域做两两 50/50 混合训练，得到协同矩阵。例如 WidowX 与 Google Robot 混训，FD PSNR +1.39<span class="src">图 28</span>；用第一视角数据预热后再适配 AgiBot，FD PSNR 每个检查点都更高<span class="src">图 29</span>。</p></div>
+        <div class="card nv"><h4>Cosmos HUE：拆成原子二值题的人评协议，已开源</h4><p>每条视频由 VLM 流水线出至多 20 道是 / 否 / 不确定题，“是”始终代表好结果，“不确定”按“否”计；双人标注加 QC 仲裁；用真实视频得分作上限参考<span class="src">§6.2.2 · 附录 F</span>。</p><p class="why">不算新的：MoT 解码层结构（与 BAGEL 相近）；embedding 聚类去重、DOVER 打分等常规清洗。</p></div>
+      </div>
+    </section>
+
+    <!-- 08 启示 -->
+    <section class="sec" id="impl">
+      <div class="impl-wrap wide">
+        <div class="sec-num">08 · FOR IMAGE-EDITING DATA / EVAL / CAPTION</div>
+        <h2 style="margin-top:8px">对图像编辑数据、评测和 caption 的启示</h2>
+        <p class="sec-intro">Cosmos 3 不是编辑模型，但它的 caption、过滤和人评做法可以直接借鉴。每条先写论文做了什么，再写<b>迁移建议</b>。迁移建议是本页的推断，不是论文内容。</p>
+
+        <div class="impl-group">Caption</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">C1</span>训练和推理用同一个 schema</h4>
+            <p class="paper">论文：所有阶段都用 JSON caption，推理时用 upsampler 把用户输入扩写成同一 schema，以对齐训练分布<span class="src">§3.2.1 · §6.3.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令也定一个 schema，例如 {原图概述, 编辑操作列表, 必须保持的区域和属性, 目标外观}。训练标注和线上改写都输出这个结构，避免“训练时细、线上粗”的分布差。</p></div>
+          <div class="impl"><h4><span class="ix">C2</span>分区扫描，防止漏标</h4>
+            <p class="paper">论文：图像按四象限加中心分别描述再合并，专门照顾多主体、复杂布局<span class="src">附录 A.1–A.2</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>对编辑前后两张图做同样的分区描述，再逐区比较，生成“改了哪里 / 哪里没改”。小区域的局部编辑最容易在整图 caption 里漏掉。</p></div>
+          <div class="impl"><h4><span class="ix">C3</span>precision 和 recall 分开评</h4>
+            <p class="paper">论文：precision 由 VLM 把 caption 拆成原子断言、对照媒体核验；recall 对照人工原子断言清单；测试集专挑难标注样本<span class="src">§3.2.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 的 precision 对照目标图核验，recall 对照人工写的“编辑点 + 保持点”清单，两个数分开报。只报一个综合分会把幻觉和漏标混在一起。</p></div>
+          <div class="impl"><h4><span class="ix">C4</span>像素一改，caption 就重标</h4>
+            <p class="paper">论文：音轨只要经过分离或去音乐，就对最终波形重新写 caption，保证文字不描述已被去掉的内容<span class="src">§3.2.2</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据做过裁剪、超分、去水印、重新合成后，caption 要绑定最终训练用的像素重新生成或校验，不要沿用上游 caption。</p></div>
+          <div class="impl"><h4><span class="ix">C5</span>指令扩写器要见过多种写法</h4>
+            <p class="paper">论文：Reasoner 的 upsampling SFT 数据把输入长度（简短 / 详细）与风格（请求式 / 陈述式）交叉合成，规范形式采样更多<span class="src">§3.1.2</span>；该类数据占 SFT 的 10.7%<span class="src">图 7</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>训练编辑指令改写器时，同一个目标结构配多种“用户口吻”的输入（一个词、口语、命令式、描述式），评测里也覆盖这些口吻。</p></div>
+        </div>
+
+        <div class="impl-group">数据过滤与配比</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">D1</span>判官按维度打分，取最小值</h4>
+            <p class="paper">论文：Gemma-4-31B-it 对 Faithfulness / Completeness / Correctness 三项打 1–5 分，任一项低于阈值就删；预训练用阈值 2（保留 78%），SFT 用阈值 5（保留 46%）<span class="src">§3.1.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑三元组的判官维度可设为“指令执行到位 / 非编辑区保持 / 画质无伪影”，取最小值；预训练用宽松阈值，SFT 用最严阈值，并要求判官附上理由，方便抽查。</p></div>
+          <div class="impl"><h4><span class="ix">D2</span>按类别检查保留率</h4>
+            <p class="paper">论文：阈值越高，删除越偏向某些类别（grounding 删得最多），所以预训练选了最低的非平凡阈值<span class="src">§3.1.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>每次调判官阈值，都按编辑类型（增、删、替换、风格、文字、人像等）列出保留率。某一类被过度删除时，宁可放宽这一类的阈值，也不要让它在训练集里消失。</p></div>
+          <div class="impl"><h4><span class="ix">D3</span>去重用“媒体 + 任务”联合 embedding</h4>
+            <p class="paper">论文：以整条对话为单位，把媒体 embedding 和指令-回复 embedding 拼起来再去重，以区分“同一张图、不同任务”和真正的重复<span class="src">§3.1.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按 (原图, 指令) 联合 embedding 去重；只按原图去重会误删同一张图上的不同编辑。</p></div>
+          <div class="impl"><h4><span class="ix">D4</span>伪影分轻重，用法随阶段变</h4>
+            <p class="paper">论文：约 100 个二值伪影标签，严重的直接剔除，轻微的打标后保留在预训练里；后训练彻底排除网络数据<span class="src">§3.2.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑目标图上的轻微瑕疵（轻微压缩、细小边缘痕迹）可以留在预训练里，但要作为标签保存；SFT 阶段按标签筛掉。</p></div>
+          <div class="impl"><h4><span class="ix">D5</span>从评测失败案例反查训练数据</h4>
+            <p class="paper">论文：I2V 后训练用 agentic 流程找出模型弱点，再到预训练池检索对应样本；视频 SFT 里有一部分是“按 embedding 相似度检索出的常见失败案例”<span class="src">§4.2.4 · §3.2.1</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>把编辑评测中失败的案例做成 embedding 查询，到候选池召回近邻，人工确认后补进 SFT，形成“评测 → 补数据”的闭环。</p></div>
+          <div class="impl"><h4><span class="ix">D6</span>合成数据按来源单独消融</h4>
+            <p class="paper">论文：5 个 SDG 来源分别微调：每个来源都只拉高部分领域，Human 一项在所有来源下都下降；全部混合后 9 项里 8 项为正<span class="src">表 26</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>合成编辑数据（渲染、程序化、模型生成）逐个来源消融，按编辑类型看增减；特别检查人像类是否被合成数据拉低。</p></div>
+        </div>
+
+        <div class="impl-group">评测协议</div>
+        <div class="impl-grid">
+          <div class="impl"><h4><span class="ix">E1</span>人评拆成原子二值题，加真值参考行</h4>
+            <p class="paper">论文：HUE 的题目都写成“是 = 好结果”；“不确定”计入分母、不计入分子；双人标注加 QC；真实视频得分 93.6 / 94.4，用作上限参考和题库校准<span class="src">附录 F</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑人评为每个样本生成“编辑点是否完成 / 指定区域是否保持”这类原子题；用人工精修的参考结果作 GT 行，GT 得分不到 100 的题目要修改或删除。</p></div>
+          <div class="impl"><h4><span class="ix">E2</span>报告 prompt 改写和裁判版本</h4>
+            <p class="paper">论文：生成评测都先用 Claude Opus 把 prompt 改写为 JSON；PAIBench-G 公开榜的裁判结果不可复现，于是换了裁判；评测系统为每个分数记录 checkpoint、代码版本和参数<span class="src">§6.2 · 脚注 2 · §5.4</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑基准分开报“原始指令”和“改写后指令”两种结果，所有对比模型用同一个改写器；裁判模型的名字、版本、prompt 写进结果表。</p></div>
+          <div class="impl"><h4><span class="ix">E3</span>不同裁判各看自己需要的信息</h4>
+            <p class="paper">论文：SoundBench 先由三个大模型投票确定 checklist，再让 VLM 在<em>看不到 prompt</em>的情况下描述画面，最后才做语义打分，每个阶段只给需要的信息<span class="src">§6.2.3</span>。</p>
+            <p class="do"><b>迁移建议，不是论文内容：</b>编辑判分也拆阶段：先从指令提取 checklist，再让 VLM 不看指令描述原图和结果图的差异，最后对照 checklist 判分，降低裁判被指令措辞引导的风险。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 局限 -->
+    <section class="sec" id="limits">
+      <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+      <ul class="limits wide">
+        <li class="key"><b>排名是整套系统的成绩，不只是模型本身。</b>Artificial Analysis 文生图榜的提交用了 agentic 外环：GPT-5.5 改写 prompt，Gemini 3.1 Pro 打分，最多改写 2 轮，取最好的一张<span class="src">附录 B.7</span>。所有生成评测都先用 Claude Opus 改写 prompt；SoundBench 明确只对 Cosmos 改写<span class="src">§6.2.3</span>，其他基准里对比模型是否也改写<span class="nd">原文未说明</span>。</li>
+        <li class="key"><b>训练集和测试集可能同源。</b>Reasoner SFT 用了 TAR、VideoPhy-2 和 HUE 标注<span class="src">§3.1.2</span>，评测又用了 TARBench、VideoPhy2 和 HUE<span class="src">表 10 · 表 14</span>，是否做了隔离<span class="nd">原文未说明</span>。Driving 平均分里 3 项有 2 项是内部基准（各 300 条和 50 条视频）<span class="src">§6.1</span>。</li>
+        <li><b>没有 RL 或偏好优化。</b>T2I Stage 2 写的是“alignment with human preferences”，但方法是 SFT<span class="src">§4.2.3</span>。</li>
+        <li><b>关键设计缺消融或缺数字。</b>JSON caption 对比自由文本只有定性描述，caption 基准<span class="nd">没有数字</span>；15000 位置间隔、AI 判官阈值对下游的影响<span class="nd">都没有定量结果</span>。已有消融都是小规模设置（256p / 480p，25K 序列）。</li>
+        <li><b>配比与来源未披露。</b>预训练原始数据来源、各来源占比、美学 / 写实度阈值都没给；AI 判官按类别的保留率只给趋势，没给数字。</li>
+        <li><b>SDG 消融的增益在噪声范围内。</b>Overall 变化在 ±0.12 以内，原文没给 seed 数和方差<span class="src">表 26</span>。</li>
+        <li><b>正文与表格不一致（核对出 8 处）：</b>① Gemini 3 Pro Image 在表 1 为 90.85，表 11 为 90.69；② RoboLab 的 DreamZero 正文写 25.2%，表 19 为 23.9；③ HUE I2V 的 Nano 正文写 88.5，表 14 为 88.6；④ HUE 每条视频的题数，§6.2.2 和附录 F 的可靠性部分写“至多 20 题”，附录 F 的标注协议写“至多 16 题”；⑤ 图 10 题注说三种视频条件模式“均匀”采样，图中和 §4.2.1 是 70 / 20 / 10；⑥ 附录 C.7 称 SDG-All 的 Quality 72.56 最高，表中 SDG-RobotSim 为 72.72；⑦ 表 12 题注说 Nano 在 RBench 上领先，表中闭源的 Wan 2.6 为 60.7%（Nano 58.4%）；⑧ SDG-RobotSim 在表 22 为 208,022 条，附录 C.2 为 386,270 条。另外 §2.5 说“所有变体都从预训练 VLM 初始化”，而表 2 和附录 D 说 Edge 的 LLM 从头训练。</li>
+        <li><b>短板。</b>中文文字渲染 CVTG-102ch 落后于 Qwen-Image 和 Z-Image 等开源模型<span class="src">表 11</span>；音频 PQ 落后于闭源模型<span class="src">表 15</span>；general 理解仍落后于 Gemini 3.1 Pro<span class="src">表 10</span>。</li>
+        <li><b>榜单是某一天的快照。</b>AA 两个榜（2026-05-28）、RoboArena（2026-05-30）、MolmoSpaces（2026-06-20，晚于 v1）都标了日期；Edge 权重尚未发布。</li>
+      </ul>
+    </section>
+
+    <!-- 10 图表索引 -->
+    <section class="sec" id="index">
+      <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+      <div class="tbl-wrap wide">
+        <table class="idx-table">
+          <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+          <tbody>
+            <tr><td>图 1（p.5）</td><td>Cosmos 3 作为 Physical AI 通用主干，统一六类模型（<a href="figures/fig1.jpg" target="_blank" rel="noopener">查看原图</a>）</td><td>—</td></tr>
+            <tr><td>图 5（p.11）</td><td>MoT 架构与注意力掩码</td><td>§03 架构</td></tr>
+            <tr><td>图 7（p.15）</td><td>Reasoner 数据按能力类别的构成</td><td>§04 数据</td></tr>
+            <tr><td>图 8（p.20）</td><td>Generator 各阶段数据课程</td><td>§04 数据</td></tr>
+            <tr><td>示意图</td><td>token 排布（本页绘制，依据 §2.2 / §2.4）</td><td>§03 架构</td></tr>
+            <tr><td>表 1 / 2 / 3 / 4</td><td>总览；规格；Reasoner 数据；机器人数据</td><td>§06 / §03 / §04</td></tr>
+            <tr><td>表 6 / 21</td><td>mid-training 配比；默认采样配置</td><td>§05 训练</td></tr>
+            <tr><td>表 10–15</td><td>Reasoner；T2I；PAIBench-G 与 RBench；Physics-IQ；HUE 与 HWB；SoundBench</td><td>§06 评测</td></tr>
+            <tr><td>表 16–20</td><td>Transfer；AVBench-C；FD / ID；RoboLab；LIBERO-10</td><td>§06 评测</td></tr>
+            <tr><td>表 22 / 25 / 26</td><td>SDG 概览；与预训练分布的距离；SDG 消融</td><td>§04 / §06</td></tr>
+            <tr><td>表 28–31</td><td>理解塔初始化；FPS 控制；预训练加音频；动作模式联合训练</td><td>§06 消融</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 NVIDIA《Cosmos 3: Omnimodal World Models for Physical AI》（<a href="https://arxiv.org/abs/2606.02800" target="_blank" rel="noopener">arXiv:2606.02800</a>；v1 发布于 2026-06-01，本页依据 v4，2026-06-23）。文中数字均来自原文正文、表格与附录，标有“推算”的是本页自行计算的结果；“迁移建议”是本页的推断，不代表论文观点。论文插图版权归原作者所有，仅用于学习交流。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>
