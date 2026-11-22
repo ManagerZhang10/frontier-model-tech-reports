@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ministral 3 中文深读 · Cascade Distillation 剪枝蒸馏出 3B / 8B / 14B | 前沿模型技术报告</title>
+<meta name="description" content="Mistral arXiv 2601.08584 中文深读：从 Mistral Small 3.1 出发「剪枝 → logit 蒸馏 → 再剪枝」得到 Ministral 3 14B / 8B / 3B（base / instruct / reasoning），1–3T token 预训练；教师选择消融、ODPO、GRPO 配方、评测，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: arch diagram, teacher table, small helpers */
+.archsvg .box { fill: var(--card); stroke: var(--line); stroke-width: 1.3; }
+.archsvg .box-acc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.4; }
+.archsvg .box-frz { fill: var(--bg-accent); stroke: var(--line); stroke-width: 1.3; stroke-dasharray: 5 4; }
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+.archsvg .ah { fill: var(--muted); }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 640px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.frz { font: 600 .72rem/1.6 var(--f-mono); padding: 0 .5em; border-radius: 6px; background: var(--bg-accent); color: var(--muted); border: 1px solid var(--line); }
+.trn { font: 600 .72rem/1.6 var(--f-mono); padding: 0 .5em; border-radius: 6px; background: var(--warm-soft); color: var(--warm); }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.rd { font: 600 .68rem/1.5 var(--f-mono); padding: 0 .45em; border-radius: 6px; background: var(--bg-accent); color: var(--muted); border: 1px dashed var(--line); margin-left: 3px; white-space: nowrap; }
+.algo { font: 500 .8rem/1.65 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+@media (max-width: 960px) { .flow.f3 { grid-template-columns: 1fr; } .flow.f3 .stage::after { display: none; } }
+.flow.f3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>Ministral 3<span class="sub">Cascade Distillation：从 24B 父模型剪枝蒸馏出 14B / 8B / 3B</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Mistral AI</b></span>
+      <span>发布 <b>2026-01-13</b>（arXiv v1）</span>
+      <span>arXiv <b>2601.08584</b></span>
+      <span>父模型 <b>Mistral Small 3.1（24B）</b></span>
+    </div>
+    <p class="lede">Ministral 3 不从零预训练，而是从 Mistral Small 3.1 出发做 <b>「剪枝 → logit 蒸馏续训 → 再剪枝」</b>，逐级得到 14B → 8B → 3B，每个模型只用 <b>1–3T token</b><span class="src">§1</span>（对比 Qwen3 36T、Llama3 15T<span class="src">§1</span>）。每个尺寸都有 base / instruct / reasoning 三版，都能理解图像<span class="src">摘要</span>。最值得看的是三条<b>教师选择消融</b>：预训练阶段更强的教师反而更差、后训练过的教师更好、做过偏好优化的教师更好<span class="src">§5.1</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>开放权重 · 9 个模型</span>
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Apache 2.0（摘要 · §1）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>3B · 8B · 14B 稠密</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>base / instruct / reasoning</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg>LLM · 带图像理解</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2601.08584" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2601.08584</a>
+      <a href="https://arxiv.org/pdf/2601.08584" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://mistral.ai/news/mistral-3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>官方博客</a>
+      <a href="https://huggingface.co/collections/mistralai/ministral-3" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>HF 权重</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#index">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算，<span class="rd">读图</span> 为从柱状图目测的近似值。</div>
+</nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">一个父模型，三次剪枝，九个开放权重模型。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">模型数</span><span class="stat-num">3 × 3</span><span class="stat-sub">14B / 8B / 3B × base / instruct / reasoning</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm">Apache 2.0</span><span class="stat-sub">全部 9 个模型开放权重</span><span class="src">摘要 · §1</span></div>
+    <div class="card stat"><span class="stat-k">父模型 / 预训练教师</span><span class="stat-num sm">Mistral Small 3.1</span><span class="stat-sub">24B；各尺寸、各阶段预训练都用它当教师</span><span class="src">§1 · §3.1</span></div>
+    <div class="card stat"><span class="stat-k">预训练 token</span><span class="stat-num">1–3T</span><span class="stat-sub">每个模型；分尺寸数字原文未给</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">256K</span><span class="stat-sub">正文写推理版 128K，表 1 全写 256K</span><span class="src">§1 · 表 1</span></div>
+    <div class="card stat"><span class="stat-k">视觉编码器</span><span class="stat-num">410M</span><span class="stat-sub">ViT 拷自 Mistral Small 3.1，冻结；每个模型新训投影层</span><span class="src">§2</span></div>
+    <div class="card stat"><span class="stat-k">词表</span><span class="stat-num">131K</span><span class="stat-sub">GQA 32 Q / 8 KV 头；3B 共享输入输出 embedding</span><span class="src">表 1</span></div>
+    <div class="card stat"><span class="stat-k">14B Base vs 父模型</span><span class="stat-num sm">参数少 40% 以上</span><span class="stat-sub">MMLU 79.4 vs 81.0；MATH 67.6 vs 55.8</span><span class="src">§1 · 表 3</span></div>
+    <div class="card stat"><span class="stat-k">14B Reasoning · AIME25</span><span class="stat-num">85.0</span><span class="stat-sub">Qwen 3 14B 为 73.7（pass@16）</span><span class="src">表 5</span></div>
+    <div class="card stat"><span class="stat-k">14B Instruct · Arena Hard</span><span class="stat-num">55.1</span><span class="stat-sub">Qwen3 14B（非思考）42.7 · Gemma3-12B 43.6</span><span class="src">表 4</span></div>
+    <div class="card stat"><span class="stat-k">RL 最大生成长度</span><span class="stat-num">32K → 80K</span><span class="stat-sub">截断比例「不小」才加长</span><span class="src">§3.3.2</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 · 2026-01-13</span><span class="stat-sub">本页依据的 PDF 即 v1（首页水印 2601.08584v1）</span><span class="src">首页</span></div>
+  </div>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>剪枝 + 蒸馏 = 带剪枝的持续预训练</h3><p>14B 从 Mistral Small 3.1 剪枝初始化，再以父模型 logits 蒸馏续训；8B 从 <b>14B Short Ctx</b> 剪出，3B 从 8B Short Ctx 剪出<span class="src">图 1 · 算法 1</span>。整条流程一次走完数据，<b>不重复数据</b><span class="src">§3.1 · 图 2</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>剪枝打分很简单</h3><p>层重要性 = 输出 / 输入激活范数之比（不做 Minitron 那种逐层删掉看 PPL）；隐藏维用全网统一的 PCA 旋转；FFN 按 |SiLU(W1x)·W3x| 均值保留<span class="src">§3.1 · 算法 2</span>。蒸馏只用 <b>forward KL</b>，比调 KL + NTP 的混合系数更好<span class="src">§3.1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>教师怎么选：三条消融</h3><p>① 预训练阶段 Mistral Medium 3 当教师反而不如 Small 3.1（容量差），后训练阶段则更强的 Medium 更好；② 后训练过的教师比 base 教师好，MATH / 代码收益最大；③ 偏好优化过的教师比只做 SFT 的好<span class="src">§5.1 · 图 3 · 图 4</span>。三条都是<b>复现前人结论</b><span class="src">§1</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>后训练：SFT 蒸馏 + ODPO，推理版加 GRPO</h3><p>Instruct：fp8 SFT（Medium 3 logit 蒸馏）→ ODPO（采样 T = 0.7，成对奖励模型给软标签）<span class="src">§3.2</span>。Reasoning：CoT SFT → STEM RL → 用 rubric 的 General RL → ODPO（思考段先剥掉再打分）<span class="src">§3.3</span>。</p></div>
+    <div class="card tl"><span class="idx">05</span><h3>14B 档强，3B 档弱一些</h3><p>14B Reasoning 在表 5 的 6 项上全部高于 Qwen 3 14B，比如 AIME25 <b>85.0 vs 73.7</b><span class="src">表 5</span>。3B Instruct 的 Arena Hard 只有 30.5，低于 Gemma3-4B（31.8）和 Qwen3-VL-4B（43.8）<span class="src">表 4</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>读之前先知道</h3><p>预训练数据的来源、配比、各阶段 token 数全部没有披露；消融只有柱状图，没有数值表；正文有几处和表格、版本号对不上（见 <a href="#limits">局限</a>）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：常规 decoder-only，重点在「怎么来」</h2>
+    <p class="sec-intro">结构本身没有新东西。论文的总览图画的是训练配方，所以先看它。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="Ministral 3 训练配方总览：左侧预训练逐级剪枝蒸馏，右侧 instruct 与 reasoning 两条后训练路线" loading="lazy"></div>
+    <figcaption><b>Ministral 3 训练配方总览。</b>左：Mistral Small 3.1 剪成 14B Init，以父模型为教师蒸馏续训得到 14B Short Ctx，再做长上下文蒸馏得到 14B Base；14B Short Ctx 同时被剪成 8B Init，同样流程得到 8B、3B。右上：Base → SFT → ODPO 得到 Instruct；右下：Base → SFT（含 CoT）→ GRPO → ODPO 得到 Reasoning。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>层数</th><th>隐藏维</th><th>Q / KV 头</th><th>FFN 维</th><th>共享 embedding</th><th>上下文</th></tr></thead>
+      <tbody>
+        <tr><td>Ministral 3 14B</td><td>40</td><td>5120</td><td>32 / 8</td><td>16384</td><td>✗</td><td>256K</td></tr>
+        <tr><td>Ministral 3 8B</td><td>34</td><td>4096</td><td>32 / 8</td><td>14336</td><td>✗</td><td>256K</td></tr>
+        <tr><td>Ministral 3 3B</td><td>26</td><td>3072</td><td>32 / 8</td><td>9216</td><td>✓</td><td>256K</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源<span class="src">表 1</span>。词表都是 131K；父模型 Mistral Small 3.1 的层数和维度原文没给，所以本页<b>算不出每一步剪掉了多少层</b>。3B 共享 embedding 是为了不让 embedding 参数占比过高<span class="src">§2</span>。</p>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 860 200" role="img" aria-label="Ministral 3 多模态结构示意">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker></defs>
+      <rect class="box" x="10" y="40" width="110" height="50" rx="10"/><text class="t" x="65" y="70" text-anchor="middle">图像</text>
+      <rect class="box-frz" x="160" y="26" width="170" height="78" rx="10"/><text class="t" x="245" y="54" text-anchor="middle">ViT 410M</text><text class="s" x="245" y="72" text-anchor="middle">拷自 Mistral Small 3.1 Base</text><text class="m" x="245" y="91" text-anchor="middle">冻结 · Pixtral 结构</text>
+      <rect class="box-acc" x="370" y="26" width="150" height="78" rx="10"/><text class="t" x="445" y="54" text-anchor="middle">投影层</text><text class="s" x="445" y="72" text-anchor="middle">丢弃原投影，每个模型新训</text><text class="m" x="445" y="91" text-anchor="middle">可训练</text>
+      <rect class="box-acc" x="560" y="16" width="290" height="168" rx="12"/><text class="t" x="705" y="44" text-anchor="middle">Decoder-only LLM（14B / 8B / 3B）</text>
+      <text class="s" x="705" y="68" text-anchor="middle">GQA 32 Q / 8 KV · RoPE · SwiGLU · RMSNorm</text>
+      <text class="s" x="705" y="88" text-anchor="middle">长上下文：YaRN + 按位置的 softmax 温度缩放</text>
+      <text class="s" x="705" y="108" text-anchor="middle">26 / 34 / 40 层 · 词表 131K</text>
+      <text class="m" x="705" y="132" text-anchor="middle">权重来自剪枝 + 蒸馏续训</text>
+      <text class="m" x="705" y="152" text-anchor="middle">（不是随机初始化）</text>
+      <rect class="box" x="370" y="128" width="150" height="46" rx="10"/><text class="t" x="445" y="156" text-anchor="middle">文本 token</text>
+      <path class="ln" d="M120 65H156" marker-end="url(#ah)"/>
+      <path class="ln" d="M330 65H366" marker-end="url(#ah)"/>
+      <path class="ln" d="M520 65H556" marker-end="url(#ah)"/>
+      <path class="ln" d="M520 151H556" marker-end="url(#ah)"/>
+    </svg>
+    <p class="cap"><b>示意</b>：依据 §2 文字绘制。图像 token 和文本 token 怎么排布、是否有特殊分隔符，原文没有写，图中只画「都进 LLM」。</p>
+  </div>
+
+  <div class="prose">
+    <h3>相对父模型 / 同类改了什么</h3>
+    <ul>
+      <li><b>结构是父模型的「缩小版」</b>：GQA、RoPE、SwiGLU、RMSNorm、YaRN 都是常规选择<span class="src">§2</span>；不同之处在于权重来自对父模型的剪枝，隐藏维剪枝用 PCA 旋转，所以子模型的隐藏空间是父模型的一个主成分子空间<span class="src">§3.1</span>。</li>
+      <li><b>视觉侧不剪</b>：三个尺寸共用同一个冻结的 410M ViT，只重训投影层<span class="src">§2</span>。这也意味着 3B 模型的视觉编码器参数占比相对更高（3B 这个数字是否包含 ViT，原文没说）。</li>
+      <li><b>长上下文</b>：除 YaRN 外还用了按位置的 attention softmax 温度缩放（引 Scalable-Softmax 与 Llama 4）<span class="src">§2</span>。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：披露得最少的一环</h2>
+    <p class="sec-intro">论文讲配方很细，讲数据很粗。下表把能找到的每一条都列出来，找不到的明确写「原文未披露」。<b>没有任何配比数字</b>，所以本节不画比例条。</p>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>数据</th><th>已披露内容</th><th>规模 / 比例</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">预训练（Cascade Distillation）</td></tr>
+        <tr><td>预训练语料</td><td>纯文本 + 图文交错数据的混合；以教师 logits 做蒸馏目标</td><td>每个模型 1–3T token；来源、语种、领域、文本 / 图文比例 <span class="nd">原文未披露</span></td><td><span class="src">§1 · §3.1</span></td></tr>
+        <tr><td>数据复用</td><td>整个级联「一次走完」数据混合，剪枝发生在途中，避免数据重复</td><td>两次剪枝在训练进度约 0.3 / 0.6 处<span class="rd">读图</span></td><td><span class="src">§3.1 · 图 2</span></td></tr>
+        <tr><td>短上下文数据</td><td>short_data，窗口 16,384</td><td>token 数 <span class="nd">原文未披露</span></td><td><span class="src">§3.1 · 算法 1</span></td></tr>
+        <tr><td>长上下文数据</td><td>long_data，窗口从 16,384 扩到 262,144</td><td>组成与 token 数 <span class="nd">原文未披露</span></td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>剪枝校准数据</td><td>「验证集」/「大校准 batch」上的激活，用来算层分数、PCA、FFN 重要性</td><td>样本量与来源 <span class="nd">原文未披露</span></td><td><span class="src">§3.1 · 算法 2</span></td></tr>
+        <tr class="grp"><td colspan="4">Instruct 后训练</td></tr>
+        <tr><td>SFT 数据</td><td>精选的高质量多模态 + 纯文本指令跟随数据；用 Mistral Medium 3 的 logits 做蒸馏</td><td>规模、任务构成 <span class="nd">原文未披露</span></td><td><span class="src">§3.2 · §3.2.1</span></td></tr>
+        <tr><td>ODPO 在线偏好对</td><td>每个 prompt 用当前策略以 T = 0.7 采两条回答，由文本奖励模型 PWRM 排序；出现无限循环的回答直接判负；生成时允许执行工具</td><td>prompt 数 <span class="nd">原文未披露</span></td><td><span class="src">§3.2.2</span></td></tr>
+        <tr><td>PWRM 训练数据</td><td>结构化成对数据：对话历史 + 两个候选 → 哪个更好</td><td>规模、标注来源 <span class="nd">原文未披露</span></td><td><span class="src">§3.2.2</span></td></tr>
+        <tr class="grp"><td colspan="4">Reasoning 后训练</td></tr>
+        <tr><td>推理 SFT</td><td>短 CoT（取自通用 SFT 混合）+ 长 CoT 推理轨迹（前面加推理专用 system prompt）；领域：数学、代码、通用对话、指令跟随、多语、工具使用、视觉推理</td><td>短 / 长比例、轨迹来源 <span class="nd">原文未披露</span></td><td><span class="src">§3.3.1</span></td></tr>
+        <tr><td>推理 SFT 过滤</td><td>轻量过滤：格式差、过度重复、不该出现的语言切换</td><td>过滤率 <span class="nd">原文未披露</span></td><td><span class="src">§3.3.1</span></td></tr>
+        <tr><td>STEM RL</td><td>数学、代码、视觉推理问答对，来自开源与自有来源；按 Magistral 的多步流水线清洗，去掉无效、不完整、过易 / 过难的题</td><td>题量、难度阈值 <span class="nd">原文未披露</span>（细节指向 Magistral 论文）</td><td><span class="src">§3.3.2</span></td></tr>
+        <tr><td>General RL</td><td>对通用聊天、指令跟随、开放式推理 prompt 生成<b>原子化评分 rubric</b>；LLM 判官逐条判，奖励 = 满足条目的比例</td><td>prompt 数、rubric 条数 <span class="nd">原文未披露</span></td><td><span class="src">§3.3.2</span></td></tr>
+        <tr><td>Instruct 加长 CoT 实验</td><td>往 instruct 的 SFT 里掺不同比例的长 CoT + 精选 system prompt</td><td>具体比例 <span class="nd">原文未披露</span>；结论只有定性描述</td><td><span class="src">§5.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>Caption / 图像数据 <span class="tag nd-tag">原文几乎没写</span></h4>
+      <p>预训练里有「图文交错」数据，SFT 里有「多模态指令」数据，推理轨迹和 STEM RL 里有「视觉推理」<span class="src">§3.1 · §3.2 · §3.3</span>。但图像来源、caption 是怎么写的、图文比例，全部<b>没有披露</b>。这篇不能当 caption 方法参考，能借鉴的是过滤和 rubric 的思路（见 <a href="#impl">§08</a>）。</p>
+    </div>
+    <div class="card mod">
+      <h4>数据侧真正有信息量的三点 <span class="tag ok-tag">可核对</span></h4>
+      <ul>
+        <li>级联不重复数据：大模型训练用过的数据，小模型不会再看一遍<span class="src">§3.1</span>。</li>
+        <li>RL 题目按难度两头剪：太易、太难都去掉<span class="src">§3.3.2</span>。</li>
+        <li>通用 RL 不用标量奖励模型，用「每个 prompt 一组原子 rubric + 满足比例」<span class="src">§3.3.2</span>。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 训练配方 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING RECIPE</div>
+    <h2>训练配方</h2>
+    <p class="sec-intro">学习率、batch、步数、各阶段 token 数原文都没给。下面只列原文写明的设置。</p>
+  </div>
+
+  <h3 class="prose">5.1 预训练：Cascade Distillation</h3>
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">STEP 1</span><h4>剪枝初始化</h4>
+      <dl><dt>输入</dt><dd>MS3.1 或上一级 Short Ctx</dd><dt>层</dt><dd>范数比 top-k</dd><dt>隐藏维</dt><dd>PCA 旋转</dd><dt>FFN</dt><dd>激活重要性</dd></dl>
+      <p>做法与 Minitron / Wanda 同类，层打分换成输出 / 输入激活范数之比<span class="src">§3.1</span>。</p></div>
+    <div class="card stage"><span class="sid">STEP 2</span><h4>短上下文蒸馏</h4>
+      <dl><dt>窗口</dt><dd>16,384</dd><dt>教师</dt><dd>Mistral Small 3.1</dd><dt>损失</dt><dd>仅 forward KL</dd></dl>
+      <p>产物 Short Ctx 既是下一级剪枝的输入，也是本级长上下文阶段的起点<span class="src">§3.1</span>。</p></div>
+    <div class="card stage"><span class="sid">STEP 3</span><h4>长上下文蒸馏</h4>
+      <dl><dt>窗口</dt><dd>16,384 → 262,144</dd><dt>方法</dt><dd>YaRN + 温度缩放</dd><dt>教师</dt><dd>Mistral Small 3.1</dd></dl>
+      <p>产物即发布的 Ministral 3 Base<span class="src">§3.1 · 算法 1</span>。</p></div>
+    <div class="card stage"><span class="sid">REPEAT</span><h4>14B → 8B → 3B</h4>
+      <dl><dt>8B 起点</dt><dd>剪 14B Short Ctx</dd><dt>3B 起点</dt><dd>剪 8B Short Ctx</dd><dt>视觉</dt><dd><span class="frz">ViT 冻结</span> <span class="trn">投影可训</span></dd></dl>
+      <p>教师始终是父模型，不是上一级子模型<span class="src">§3.1</span>。</p></div>
+  </div>
+
+  <div class="grid2 wide">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="Cascade Distillation 训练曲线：14B、8B、3B Short Ctx 的 CE loss 依次接续，两次剪枝处 loss 突升后快速回落" loading="lazy"></div>
+      <figcaption><b>Cascade Distillation 示意。</b>横轴是整条级联的训练进度，纵轴是 CE loss（EMA，对数轴）。两条虚线是剪枝点：剪完 loss 跳高，随后快速回落；点线为教师 loss。三段在同一条数据流上接续，所以不重复数据。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+    <div class="card mod">
+      <h4>算法 2 的三个打分</h4>
+<div class="algo"># 层：保留 top-k
+score = mean(‖out_x‖ / ‖in_x‖)
+
+# 隐藏维：全网一个旋转
+R = PCA(concat(attn_norm.in_x,
+               ffn_norm.in_x  for all layers))
+
+# FFN：保留 top-k 列
+imp = mean(|silu(W1 x) * W3 x|)
+keep W1,W3 列 & W2 对应行</div>
+      <p>来源<span class="src">算法 2 · §3.1</span>。和 Minitron 的区别：层重要性不再用「删掉该层后的下游困惑度」，换成更便宜的范数比，作者称「更简单但同样强」——<b>没有给对比数字</b>。</p>
+      <p>蒸馏目标：只用 forward KL，作者称它优于调 KL 与 next-token loss 的加权系数<span class="src">§3.1</span>，同样没给数字。</p>
+    </div>
+  </div>
+
+  <h3 class="prose">5.2 后训练：两条路线</h3>
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">INSTRUCT · SFT</span><h4>fp8 SFT + logit 蒸馏</h4>
+      <ul><li>教师 Mistral Medium 3<span class="src">§3.2.1</span>（§5.1 写作 Medium 3.1）</li><li>ViT 冻结，adapter 可训</li><li>数据：多模态 + 纯文本指令</li></ul></div>
+    <div class="card stage"><span class="sid">INSTRUCT · ODPO</span><h4>在线 DPO</h4>
+      <ul><li>每例采 2 条，T = 0.7<span class="src">§3.2.2</span></li><li>PWRM 给概率，替代硬胜负标签，做双边加权 loss</li><li>PWRM 温度校准 + β-rescaling 稳训练</li><li>无限循环回答自动判负；生成中可调工具</li></ul></div>
+    <div class="card stage"><span class="sid">REASONING</span><h4>SFT(CoT) → GRPO → ODPO</h4>
+      <ul><li>从长上下文 Base 出发，<b>不从</b> Instruct 出发<span class="src">§3.3</span></li><li>3B：普通 SFT 啰嗦、重复、无限生成，改用 Magistral Small 1.2 做 logit 蒸馏<span class="src">§3.3.1</span></li><li>GRPO 两段：STEM RL → General RL（rubric + LLM 判官），配方沿用 Magistral；最大生成 32K → 80K<span class="src">§3.3.2</span></li><li>ODPO 前剥掉思考段再送奖励模型<span class="src">§3.3.3</span></li></ul></div>
+  </div>
+
+  <h3 class="prose">5.3 各阶段的教师</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>阶段</th><th>教师</th><th>备注</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>预训练（短 / 长上下文，三个尺寸）</td><td>Mistral Small 3.1</td><td>文中只说 parent model；最终用的是 Base 还是 Instruct 版，正文没有明说（图 4 显示 Instruct 版当教师更好）</td><td><span class="src">§3.1 · §5.1</span></td></tr>
+        <tr><td>Instruct SFT</td><td>Mistral Medium 3</td><td>§5.1 正文写「Mistral Medium 3.1」，脚注链接也指向 medium-3-1</td><td><span class="src">§3.2.1 · §5.1</span></td></tr>
+        <tr><td>Reasoning SFT · 3B</td><td>Magistral Small 1.2</td><td>为降低啰嗦、稳定后续 RL</td><td><span class="src">§3.3.1</span></td></tr>
+        <tr><td>Reasoning SFT · 14B / 8B</td><td><span class="nd">原文未说明</span></td><td>只写了在短 / 长 CoT 混合上微调</td><td><span class="src">§3.3.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose" id="teacher">5.4 教师选择消融（本篇最值钱的部分）</h3>
+  <div class="grid2 wide">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig3.jpg" alt="14B 预训练教师消融：Mistral Small 3.1 与 Mistral Medium 3 当教师在六个基准上的得分柱状图" loading="lazy"></div>
+      <figcaption><b>① 更强的教师不等于更强的学生。</b>14B 预训练分别用 Mistral Small 3.1（MS3.1）和 Mistral Medium 3（MM3）当教师，6 个基准（MMLU-Redux、HellaSwag、TriviaQA、MATH、AGIEval、Winogrande）上 MS3.1 都不低于 MM3，AGIEval 差距最明显<span class="rd">读图</span>。作者强调这还是在<b>没有对齐 FLOPs</b> 的设置下<span class="src">§5.1</span>。纵轴从 0.3 起。<span class="from">来源：论文图 3</span></figcaption>
+    </figure>
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="3B 预训练教师消融：MS3.1 Base 与 MS3.1 Instruct 2506 当教师的对比柱状图" loading="lazy"></div>
+      <figcaption><b>② 后训练过的教师更好。</b>3B 预训练用 MS3.1 Base vs MS3.1 Instruct 2506 当教师：MATH (maj@4) 约 0.40 → 0.55<span class="rd">读图</span>，MBPP 小幅提升，MMMU 小但稳定的提升，MMLU / TriviaQA 基本不变<span class="src">§5.1</span>。纵轴从 0 起。<span class="from">来源：论文图 4</span></figcaption>
+    </figure>
+  </div>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>③ 偏好优化过的教师更好 <span class="tag nd-tag">无图无数字</span></h4><p>SFT 阶段分别用两个内部版本的 Mistral Medium 3（只做过 SFT / 做过偏好优化）当教师：后者「总是明显更好」，而且学生自己做完偏好优化后差距仍在<span class="src">§5.1</span>。</p></div>
+    <div class="card mod"><h4>合起来的教师策略</h4><p>预训练：用<b>容量接近</b>的父模型 Small 3.1（倾向后训练版）；后训练 SFT：换成<b>更强、做过偏好优化</b>的 Medium 3 / 3.1；3B 推理版单独换 Magistral Small 1.2<span class="src">§3 · §5.1</span>。论文说①②③都是在<b>独立复现</b> Busbridge et al.、Goyal et al. 等人的结论<span class="src">§1</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测</h2>
+    <p class="sec-intro">所有外部模型都用 Mistral 自己的评测流水线重跑<span class="src">§4</span>。推理表报 pass@16（LiveCodeBench 为 pass@5）<span class="src">§4.2</span>，对手的数字也是重跑的，不能和各家官方报告的数字直接对照。</p>
+  </div>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 210" role="img" aria-label="14B Reasoning 与 Qwen 3 14B 对比">
+        <text class="ch-t" x="0" y="14">Reasoning 14B vs Qwen 3 14B</text><text class="ch-src" x="360" y="14" text-anchor="end">表 5</text>
+        <line class="axis" x1="110" y1="26" x2="110" y2="190"/>
+        <text class="ch-lbl" x="104" y="50" text-anchor="end">AIME 2025</text>
+        <rect class="bar-o" x="110" y="34" width="147.4" height="11" rx="2"/><text class="ch-val" x="262" y="44">73.7</text>
+        <rect class="bar-q" x="110" y="47" width="170" height="11" rx="2"/><text class="ch-val" x="285" y="57">85.0</text>
+        <text class="ch-lbl" x="104" y="90" text-anchor="end">HMMT 2025</text>
+        <rect class="bar-o" x="110" y="74" width="111.6" height="11" rx="2"/><text class="ch-val" x="226" y="84">55.8</text>
+        <rect class="bar-q" x="110" y="87" width="135" height="11" rx="2"/><text class="ch-val" x="250" y="97">67.5</text>
+        <text class="ch-lbl" x="104" y="130" text-anchor="end">GPQA Diamond</text>
+        <rect class="bar-o" x="110" y="114" width="132.6" height="11" rx="2"/><text class="ch-val" x="247" y="124">66.3</text>
+        <rect class="bar-q" x="110" y="127" width="142.4" height="11" rx="2"/><text class="ch-val" x="257" y="137">71.2</text>
+        <text class="ch-lbl" x="104" y="170" text-anchor="end">LiveCodeBench v6</text>
+        <rect class="bar-o" x="110" y="154" width="118.6" height="11" rx="2"/><text class="ch-val" x="233" y="164">59.3</text>
+        <rect class="bar-q" x="110" y="167" width="129.2" height="11" rx="2"/><text class="ch-val" x="244" y="177">64.6</text>
+        <text class="ch-ax" x="110" y="204">0</text><text class="ch-ax" x="310" y="204" text-anchor="end">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 210" role="img" aria-label="Base 模型与教师在 MATH 和 MathVista 上的对比">
+        <text class="ch-t" x="0" y="14">Base vs 24B 教师：MATH / MathVista</text><text class="ch-src" x="360" y="14" text-anchor="end">表 3</text>
+        <line class="axis" x1="110" y1="26" x2="110" y2="192"/>
+        <text class="ch-lbl" x="0" y="38" style="font-weight:700">MATH (CoT 2-shot)</text>
+        <text class="ch-lbl" x="104" y="55" text-anchor="end">Small 3.1 24B</text><rect class="bar-o" x="110" y="45" width="111.6" height="12" rx="2"/><text class="ch-val" x="226" y="55">55.8</text>
+        <text class="ch-lbl" x="104" y="71" text-anchor="end">Ministral 14B</text><rect class="bar-q" x="110" y="61" width="135.2" height="12" rx="2"/><text class="ch-val" x="250" y="71">67.6</text>
+        <text class="ch-lbl" x="104" y="87" text-anchor="end">Ministral 8B</text><rect class="bar-qi" x="110" y="77" width="125.2" height="12" rx="2"/><text class="ch-val" x="240" y="87">62.6</text>
+        <text class="ch-lbl" x="104" y="103" text-anchor="end">Ministral 3B</text><rect class="bar-qi" x="110" y="93" width="120.2" height="12" rx="2"/><text class="ch-val" x="235" y="103">60.1</text>
+        <text class="ch-lbl" x="0" y="124" style="font-weight:700">MathVista</text>
+        <text class="ch-lbl" x="104" y="141" text-anchor="end">Small 3.1 24B</text><rect class="bar-o" x="110" y="131" width="102.6" height="12" rx="2"/><text class="ch-val" x="217" y="141">51.3</text>
+        <text class="ch-lbl" x="104" y="157" text-anchor="end">Ministral 14B</text><rect class="bar-q" x="110" y="147" width="87.2" height="12" rx="2"/><text class="ch-val" x="202" y="157">43.6</text>
+        <text class="ch-lbl" x="104" y="173" text-anchor="end">Ministral 8B</text><rect class="bar-qi" x="110" y="163" width="71.4" height="12" rx="2"/><text class="ch-val" x="186" y="173">35.7</text>
+        <text class="ch-lbl" x="104" y="189" text-anchor="end">Ministral 3B</text><rect class="bar-qi" x="110" y="179" width="46.6" height="12" rx="2"/><text class="ch-val" x="161" y="189">23.3</text>
+        <text class="ch-ax" x="110" y="206">0</text><text class="ch-ax" x="310" y="206" text-anchor="end">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 210" role="img" aria-label="Instruct 模型 Arena Hard 对比">
+        <text class="ch-t" x="0" y="14">Instruct · Arena Hard</text><text class="ch-src" x="360" y="14" text-anchor="end">表 4</text>
+        <line class="axis" x1="130" y1="26" x2="130" y2="190"/>
+        <text class="ch-lbl" x="124" y="42" text-anchor="end">Qwen3 14B (NT)</text><rect class="bar-o" x="130" y="32" width="85.4" height="13" rx="2"/><text class="ch-val" x="220" y="42">42.7</text>
+        <text class="ch-lbl" x="124" y="61" text-anchor="end">Gemma3-12B</text><rect class="bar-o" x="130" y="51" width="87.2" height="13" rx="2"/><text class="ch-val" x="222" y="61">43.6</text>
+        <text class="ch-lbl" x="124" y="80" text-anchor="end">Ministral 3 14B</text><rect class="bar-q" x="130" y="70" width="110.2" height="13" rx="2"/><text class="ch-val" x="245" y="80">55.1</text>
+        <text class="ch-lbl" x="124" y="103" text-anchor="end">Qwen3-VL-8B</text><rect class="bar-o2" x="130" y="93" width="105.6" height="13" rx="2"/><text class="ch-val" x="240" y="103">52.8</text>
+        <text class="ch-lbl" x="124" y="122" text-anchor="end">Ministral 3 8B</text><rect class="bar-qi" x="130" y="112" width="101.8" height="13" rx="2"/><text class="ch-val" x="237" y="122">50.9</text>
+        <text class="ch-lbl" x="124" y="145" text-anchor="end">Qwen3-VL-4B</text><rect class="bar-o2" x="130" y="135" width="87.6" height="13" rx="2"/><text class="ch-val" x="223" y="145">43.8</text>
+        <text class="ch-lbl" x="124" y="164" text-anchor="end">Gemma3-4B</text><rect class="bar-o" x="130" y="154" width="63.6" height="13" rx="2"/><text class="ch-val" x="199" y="164">31.8</text>
+        <text class="ch-lbl" x="124" y="183" text-anchor="end">Ministral 3 3B</text><rect class="bar-qi" x="130" y="173" width="61" height="13" rx="2"/><text class="ch-val" x="196" y="183">30.5</text>
+        <text class="ch-ax" x="130" y="204">0</text><text class="ch-ax" x="330" y="204" text-anchor="end">100</text>
+      </svg>
+    </div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">Ministral 3 14B</span><span class="l2">Ministral 3 8B / 3B</span><span class="l3">对比模型 / 教师</span><span class="l4">同档最强对比模型</span></div>
+  <p class="tbl-note wide">三图横轴都从 0 到 100。中图要点：学生在 MATH 上反超 24B 教师，MathVista 随尺寸下降最快（3B 只剩 23.3）<span class="src">表 3</span>。</p>
+
+  <h3 class="prose">6.1 Base：对比 Qwen 3 / Gemma 3（表 2）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>MMLU-Redux<br>5-shot</th><th>TriviaQA<br>5-shot</th><th>MATH<br>CoT 2-shot</th><th>AGIEval<br>5-shot</th><th>Multilingual MMLU<br>5-shot</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen 3 14B</td><td class="best">83.7</td><td>70.3</td><td>62.0</td><td class="best">66.1</td><td class="best">75.4</td></tr>
+        <tr class="hl"><td>Ministral 3 14B</td><td>82.0</td><td>74.9</td><td class="best">67.6</td><td>64.8</td><td>74.2</td></tr>
+        <tr><td>Gemma 3 12B</td><td>76.6</td><td class="best">78.8</td><td>48.7</td><td>58.7</td><td>69.0</td></tr>
+        <tr class="grp"><td colspan="6">8B 档</td></tr>
+        <tr><td>Qwen 3 8B</td><td class="best">79.4</td><td>63.9</td><td>57.6</td><td class="best">59.6</td><td>70.0</td></tr>
+        <tr class="hl"><td>Ministral 3 8B</td><td>79.3</td><td class="best">68.1</td><td class="best">62.6</td><td>59.1</td><td class="best">70.6</td></tr>
+        <tr class="grp"><td colspan="6">3–4B 档</td></tr>
+        <tr><td>Gemma 3 4B</td><td>62.6</td><td class="best">64.0</td><td>29.4</td><td>43.0</td><td>51.6</td></tr>
+        <tr><td>Qwen 3 4B</td><td class="best">75.9</td><td>53.0</td><td>40.5</td><td class="best">57.0</td><td class="best">67.7</td></tr>
+        <tr class="hl"><td>Ministral 3 3B</td><td>73.5</td><td>59.2</td><td class="best">60.1</td><td>51.1</td><td>65.2</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">best 标记为各档内最高（本页标注）。注意：Ministral 3 3B 对比的是 4B 的 Qwen / Gemma。§4.1 正文说 14B「在所有基准上都显著优于 Gemma 12B」，但 TriviaQA 是 74.9 &lt; 78.8（见<a href="#limits">局限</a>）。</p>
+
+  <details class="more wide">
+    <summary>表 3 · Base 全量对比 24B 教师<span class="hint">原文表 3</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>评测</th><th>Mistral Small 24B</th><th>Ministral 3 14B</th><th>Ministral 3 8B</th><th>Ministral 3 3B</th></tr></thead>
+          <tbody>
+            <tr class="grp"><td colspan="5">General</td></tr>
+            <tr><td>MMLU (5-shot)</td><td>81.0</td><td>79.4</td><td>76.1</td><td>70.7</td></tr>
+            <tr><td>MMLU-Redux (5-shot)</td><td>82.7</td><td>82.0</td><td>79.3</td><td>73.5</td></tr>
+            <tr><td>ARC-Challenge</td><td>91.6</td><td>89.9</td><td>88.0</td><td>85.5</td></tr>
+            <tr><td>RACE High</td><td>52.1</td><td>52.3</td><td>49.7</td><td>49.3</td></tr>
+            <tr><td>TriviaQA (5-shot)</td><td>79.3</td><td>74.9</td><td>68.1</td><td>59.2</td></tr>
+            <tr><td>NaturalQS (5-shot)</td><td>34.4</td><td>29.9</td><td>25.8</td><td>21.9</td></tr>
+            <tr class="grp"><td colspan="5">Math &amp; Code</td></tr>
+            <tr><td>MATH (CoT 2-Shot)</td><td>55.8</td><td>67.6</td><td>62.6</td><td>60.1</td></tr>
+            <tr><td>GPQA Diamond (0-shot)</td><td>36.9</td><td>39.9</td><td>39.9</td><td>33.8</td></tr>
+            <tr><td>MBPP (3-shot Pass@1)</td><td>71.6</td><td>71.6</td><td>70.0</td><td>63.0</td></tr>
+            <tr class="grp"><td colspan="5">Multilingual MMLU</td></tr>
+            <tr><td>European avg.† (5-shot)</td><td>78.8</td><td>76.9</td><td>73.4</td><td>68.4</td></tr>
+            <tr><td>Chinese (5-shot)</td><td>75.7</td><td>75.1</td><td>71.3</td><td>64.1</td></tr>
+            <tr><td>Japanese (5-shot)</td><td>76.7</td><td>75.9</td><td>72.2</td><td>65.7</td></tr>
+            <tr><td>Korean (5-shot)</td><td>59.3</td><td>59.0</td><td>55.3</td><td>48.9</td></tr>
+            <tr class="grp"><td colspan="5">Multimodal</td></tr>
+            <tr><td>MMMU (2-shot)</td><td>59.1</td><td>59.9</td><td>55.1</td><td>52.4</td></tr>
+            <tr><td>MathVista</td><td>51.3</td><td>43.6</td><td>35.7</td><td>23.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">† 德、西、法、意、葡五种语言的平均<span class="src">表 3 注</span>。14B 在 RACE High、MATH、GPQA、MMMU 上不低于教师，MBPP 持平；知识类（TriviaQA、NaturalQS）掉得最多。</p>
+    </div>
+  </details>
+
+  <h3 class="prose">6.2 Instruct（表 4）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>Arena Hard</th><th>WildBench</th><th>MATH (maj@1)</th><th>MM MTBench</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen3 14B (Non-Thinking)</td><td>42.7</td><td>65.1</td><td>87.00</td><td>N/A</td></tr>
+        <tr class="hl"><td>Ministral 3 14B</td><td class="best">55.1</td><td class="best">68.5</td><td class="best">90.40</td><td class="best">84.90</td></tr>
+        <tr><td>Gemma3-12B-Instruct</td><td>43.6</td><td>63.2</td><td>85.40</td><td>67.00</td></tr>
+        <tr class="grp"><td colspan="5">8B 档</td></tr>
+        <tr><td>Qwen3-VL-8B-Instruct</td><td class="best">52.8</td><td>66.3</td><td class="best">94.60</td><td>80.00</td></tr>
+        <tr class="hl"><td>Ministral 3 8B</td><td>50.9</td><td class="best">66.8</td><td>87.60</td><td class="best">80.80</td></tr>
+        <tr class="grp"><td colspan="5">2–4B 档</td></tr>
+        <tr><td>Gemma3-4B-Instruct</td><td>31.8</td><td>49.1</td><td>75.90</td><td>52.30</td></tr>
+        <tr><td>Qwen3-VL-4B-Instruct</td><td class="best">43.8</td><td class="best">56.8</td><td class="best">90.00</td><td class="best">80.08</td></tr>
+        <tr class="hl"><td>Ministral 3 3B</td><td>30.5</td><td class="best">56.8</td><td>83.00</td><td>78.30</td></tr>
+        <tr><td>Qwen3-VL-2B-Instruct</td><td>16.3</td><td>42.2</td><td>78.60</td><td>63.60</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">Qwen 3 一栏在 14B 用纯文本的 Qwen3 14B（非思考模式，MM MTBench 记 N/A），8B / 4B / 2B 用 Qwen3-VL 指令版<span class="src">§4.2</span>，对比对象不完全同族。</p>
+
+  <h3 class="prose">6.3 Reasoning（表 5，pass@16；LiveCodeBench 为 pass@5）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th>Qwen 3 14B</th><th>Ministral 3 14B</th><th>Qwen3-VL 8B</th><th>Ministral 3 8B</th><th>Qwen3-VL 4B</th><th>Ministral 3 3B</th></tr></thead>
+      <tbody>
+        <tr><td>AIME 2024</td><td>83.7</td><td class="best">89.8</td><td>86.0</td><td>86.0</td><td>72.9</td><td class="best">77.5</td></tr>
+        <tr><td>AIME 2025</td><td>73.7</td><td class="best">85.0</td><td class="best">79.8</td><td>78.7</td><td>69.7</td><td class="best">72.1</td></tr>
+        <tr><td>HMMT 2025</td><td>55.8</td><td class="best">67.5</td><td class="best">57.5</td><td>55.8</td><td>50.8</td><td class="best">51.7</td></tr>
+        <tr><td>GPQA Diamond</td><td>66.3</td><td class="best">71.2</td><td class="best">67.1</td><td>66.8</td><td class="best">60.1</td><td>53.4</td></tr>
+        <tr><td>PhyBench</td><td>22.0</td><td class="best">26.0</td><td class="best">22.0</td><td>20.0</td><td>9.0</td><td class="best">15.0</td></tr>
+        <tr><td>LiveCodeBench v6</td><td>59.3</td><td class="best">64.6</td><td>58.0</td><td class="best">61.6</td><td>51.3</td><td class="best">54.8</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">best 为每组两列中较高者（本页标注；8B 的 AIME 2024 持平 86.0）。14B 6 项全胜；<b>8B 对 Qwen3-VL 8B 只赢 LiveCodeBench</b>，其余持平或略低；3B 对 4B 的 Qwen3-VL 赢 5 项，GPQA 落后 6.7 分<span class="src calc">推算</span>。§4 开头说会和 Gemma 3 对比，但表 5 只有 Qwen。</p>
+
+  <h3 class="prose">6.4 两个讨论实验</h3>
+  <div class="grid2 wide">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig5.jpg" alt="GPQA Diamond 准确率与输出 token 数散点：Ministral 3 Instruct 位于左上高效区，Qwen3-VL Instruct 输出 token 多得多" loading="lazy"></div>
+      <figcaption><b>啰嗦程度 vs 准确率（GPQA Diamond）。</b>Ministral 3 14B / 8B Instruct 输出 token 远少于 Qwen3-VL 8B / 4B Instruct（后者在 15K–21K 区间<span class="rd">读图</span>），准确率接近或更高。作者归因于 Ministral 的 instruct 后训练没有在 General RL 前做「Reasoning RL」<span class="src">§5.2</span>。往 instruct SFT 里加长 CoT 能涨 STEM 分，但会带来过度反思和回溯，所以没采用（无数字）。<span class="from">来源：论文图 5</span></figcaption>
+    </figure>
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig6.jpg" alt="ODPO 对 Reasoning 模型聊天基准的影响：14B 与 8B 在 ArenaHard、EQBench、WildBench 上大幅提升，3B 提升很小" loading="lazy"></div>
+      <figcaption><b>ODPO 加在 GRPO 之后。</b>14B、8B 在 ArenaHard / EQBench / WildBench 上都有大幅提升，例如 14B 的 EQBench 约 12 → 43<span class="rd">读图</span>；3B 在公开基准上没有显著提升，但内部人评更好，所以仍以 ODPO checkpoint 发布<span class="src">§5.3</span>。脚注：3B base 对微调超参更敏感<span class="src">§5.3 注 4</span>。<span class="from">来源：论文图 6</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">GQA、RoPE、YaRN、GRPO、DPO 都是常规件；剪枝思路来自 Minitron / Wanda；三条教师结论作者自己说是复现。真正属于这篇的是下面几点。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>级联：从上一级子模型剪，而不是每次从父模型剪</h4><p>8B 从 14B Short Ctx 剪出，3B 从 8B Short Ctx 剪出，教师始终是父模型；三个尺寸共用一条不重复的数据流，整体可以看成「带剪枝的父模型持续预训练」<span class="src">§3.1 · 图 1 · 图 2</span>。</p><p class="why">可核对：算法 1 与图 2 都给出了流程。缺的是对照组：没有「每个尺寸都直接从父模型剪」或「从零训练」的对比。</p></div>
+    <div class="card nv"><h4>更便宜的剪枝打分</h4><p>层重要性用输出 / 输入激活范数之比，替代 Minitron 的逐层删除 + 下游困惑度；隐藏维用一个全网统一的 PCA 旋转<span class="src">§3.1 · 算法 2</span>。</p><p class="why">作者只说「更简单且同样强」，没有和 Minitron 打分的消融数字。</p></div>
+    <div class="card nv"><h4>ODPO 的软标签与稳定化</h4><p>用 PWRM 输出的偏好概率替代硬胜负标签，做双边加权 DPO loss；PWRM 温度校准、β-rescaling；无限循环回答自动判负；生成时执行工具；推理版打分前剥掉思考段<span class="src">§3.2.2 · §3.3.3</span>。</p><p class="why">图 6 给出了 ODPO 相对 GRPO checkpoint 的收益；软标签本身没有单独消融。</p></div>
+    <div class="card nv"><h4>按阶段换教师，并给出消融</h4><p>预训练用容量接近的 Small 3.1，SFT 换更强、做过偏好优化的 Medium 3，3B 推理版换 Magistral Small 1.2<span class="src">§3 · §5.1</span>。</p><p class="why">结论本身是复现（Busbridge et al. 2025、Goyal et al. 2025），新信息是在 14B / 3B 多模态小模型上的具体证据（图 3、图 4）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这是 LLM 报告，没讲图像 caption 怎么做。但「蒸馏时选哪个教师」「怎么用 rubric 打分」「怎么自动判负退化输出」几条，可以直接用在编辑模型的 captioner、指令改写器和奖励模型上。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+
+    <div class="impl-group">蒸馏与 caption 模型</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>预训练式蒸馏，教师不是越大越好</h4><p class="paper">论文：14B 预训练时 Small 3.1 当教师优于更强的 Medium 3；后训练 SFT 则更强的教师更好<span class="src">§5.1 · 图 3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>把大 VLM captioner 蒸馏成小 captioner 时，大规模 logit 蒸馏阶段先试容量接近的中号教师；小规模高质量 SFT 阶段再换最强教师。两个阶段的教师分开做 A/B，不要默认全程用最大的。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>用后训练过、做过偏好优化的教师</h4><p class="paper">论文：后训练过的教师优于 base 教师，MATH 收益最大；偏好优化过的教师优于只做 SFT 的教师，差距在学生自己做完偏好优化后仍在<span class="src">§5.1 · 图 4</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption 蒸馏的教师优先选已经按 caption 规范做过 DPO / RL 的版本，而不是只做过 SFT 的；验收时同时看结构化类指标（属性、计数、空间关系）和知识类指标，论文显示两类收益差别很大。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>按退化模式过滤，而不只是按质量分</h4><p class="paper">论文：推理 SFT 数据去掉格式差、过度重复、不该出现的语言切换的样本<span class="src">§3.3.1</span>；3B 普通 SFT 后变得啰嗦、重复、无限生成，改用 logit 蒸馏才稳住<span class="src">§3.3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption / 指令数据加三条硬规则：n-gram 重复率上限、中英混杂检测、JSON / 模板格式校验。小号 captioner 出现重复和超长输出时，先试换成软标签蒸馏，再考虑加数据。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>每条 prompt 一组原子 rubric，奖励 = 满足比例</h4><p class="paper">论文：General RL 为每个 prompt 生成原子评分 rubric（如忠于 prompt、回答质量），LLM 判官逐条判，奖励是满足条目的比例<span class="src">§3.3.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>把编辑指令拆成原子检查项：目标区域改了没有、改成指定属性没有、非编辑区域是否保持、身份 / 文字是否保持。VLM 判官逐项判，分数取通过比例，同时保留逐项结果用于 badcase 归因。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>退化输出自动判负</h4><p class="paper">论文：ODPO 采样中出现无限循环的回答一律判为 loser，避免被强化<span class="src">§3.2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL / 在线 DPO 里给退化输出设硬规则判负：和输入几乎一样（没改）、整图重画（保留区域相似度过低）、出现明显伪影或水印。这些样本不交给奖励模型打分，直接当负例。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>软偏好标签，处理「差不多」</h4><p class="paper">论文：用成对奖励模型的偏好概率替代硬胜负标签，两条回答按被偏好概率加权，并校准奖励模型温度<span class="src">§3.2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>GSB 标注里「同好 / 同差」的样本不要丢，也不要随便判胜负；把人评或判官的偏好概率直接作为软标签进入 DPO，并在一小批人工双标数据上校准概率。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>判官只看最终结果；长度要一起报</h4><p class="paper">论文：推理版 ODPO 打分前剥掉思考段<span class="src">§3.3.3</span>；图 5 把输出 token 数和准确率画在一起，说明加长 CoT 能涨分但让模型变啰嗦<span class="src">§5.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>带思考的 VLM 判官和改写器，奖励只看最终 caption 或编辑结果。caption 版本对比时同时报平均长度，只靠变长涨分的版本不采纳。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>RL prompt 池按难度两头剪；对手模型统一重跑</h4><p class="paper">论文：STEM RL 去掉过易 / 过难的题<span class="src">§3.3.2</span>；所有外部模型用同一流水线重跑<span class="src">§4</span>；3B 公开基准没涨但内部人评更好，最终按人评选 checkpoint<span class="src">§5.3</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 的 prompt 先用当前模型采 N 次，去掉全过和全挂的；评测时竞品在同分辨率、同判官下重跑，并写明 pass@k / 平均口径；公开指标和人评冲突时，用人评决定是否发版。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>数据几乎没有披露：</b>预训练语料来源、文本 / 图文比例、短 / 长上下文阶段 token 数、SFT / RL 数据规模全部缺失；只有「每个模型 1–3T token」这一个总量范围，且没分尺寸<span class="src">§1 · §3</span>。</li>
+    <li class="key"><b>正文与表格不一致：</b>§4.1 说 14B Base「在所有基准上都显著优于 Gemma 12B」，但表 2 的 TriviaQA 是 74.9 vs 78.8<span class="src">§4.1 · 表 2</span>。</li>
+    <li><b>教师版本号前后不一：</b>§3.2.1 写 SFT 教师是 Mistral Medium 3，§5.1 写后训练受益于 Medium 3.1（脚注链接也是 medium-3-1），结论写「Small 3.1 and Medium 3」<span class="src">§3.2.1 · §5.1 · §6</span>。预训练最终用 Small 3.1 的 Base 版还是 Instruct 版，正文没有明说。</li>
+    <li><b>上下文长度说法不一：</b>§1 说推理版 128K，表 1 写全系 256K、未区分变体<span class="src">§1 · 表 1</span>。</li>
+    <li><b>关键做法缺消融：</b>级联 vs 每个尺寸直接从父模型剪 / 从零训练、范数比 vs Minitron 打分、纯 forward KL vs 混合 loss、ODPO 软标签 vs 硬标签都只有文字结论；「比从零训练省多少 FLOPs」也没有数字<span class="src">§3.1 · §3.2.2</span>。</li>
+    <li><b>消融只有图：</b>图 3、图 4 没有数值表，第三条结论（偏好优化过的教师更好）连图都没有<span class="src">§5.1</span>。</li>
+    <li><b>评测口径：</b>推理表用 pass@16（LCB pass@5），所有对手由 Mistral 自己的流水线重跑，和官方报告不可直接对照<span class="src">§4 · §4.2</span>；14B 用纯文本 Qwen3 对比，小尺寸改用 Qwen3-VL；3B 对比的是 4B 模型<span class="src">表 4 · 表 5</span>；§4 说要对比 Gemma 3，但表 5 没有 Gemma。</li>
+    <li><b>小模型的多模态掉得快：</b>MathVista 从教师的 51.3 掉到 3B 的 23.3<span class="src">表 3</span>，论文没有讨论原因。</li>
+    <li><b>3B 发布版依赖内部人评：</b>推理版 3B 的 ODPO 在公开基准上没有显著提升，按内部人评选中，人评协议和结果都没给<span class="src">§5.3</span>。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>首页图</td><td><code>figures/fig0-teaser.jpg</code> 实为首页摘要 / 引言区截图，没有图示，本页未使用</td><td>—</td></tr>
+        <tr><td>图 1</td><td>训练配方总览（<code>figures/fig1.jpg</code>，p.2）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 2</td><td>Cascade Distillation 训练曲线（<code>figures/fig2.jpg</code>，p.3）</td><td><a href="#train">§05</a></td></tr>
+        <tr><td>图 3</td><td>14B 预训练教师消融：Small 3.1 vs Medium 3（<code>figures/fig3.jpg</code>，p.8）</td><td><a href="#teacher">§05.4</a></td></tr>
+        <tr><td>图 4</td><td>3B 预训练教师消融：Base vs Instruct 2506（<code>figures/fig4.jpg</code>，p.9）</td><td><a href="#teacher">§05.4</a></td></tr>
+        <tr><td>图 5</td><td>GPQA Diamond 输出长度 vs 准确率（<code>figures/fig5.jpg</code>，p.9）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>图 6</td><td>ODPO 对推理版聊天基准的影响（<code>figures/fig6.jpg</code>，p.10）</td><td><a href="#eval">§06.4</a></td></tr>
+        <tr><td>表 1</td><td>架构超参</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>表 2</td><td>Base vs Qwen 3 / Gemma 3</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>表 3</td><td>Base vs 24B 教师（全量）</td><td><a href="#eval">§06.1 折叠</a></td></tr>
+        <tr><td>表 4</td><td>Instruct 对比</td><td><a href="#eval">§06.2</a></td></tr>
+        <tr><td>表 5</td><td>Reasoning 对比</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>算法 1 / 2</td><td>Cascade Distillation 主循环；剪枝打分</td><td><a href="#train">§05.1</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 Mistral AI《Ministral 3》（<a href="https://arxiv.org/abs/2601.08584" target="_blank" rel="noopener">arXiv:2601.08584</a> v1，2026-01-13）撰写。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页自行计算，标 <span class="rd">读图</span> 的为从原文柱状图 / 散点图目测的近似值；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

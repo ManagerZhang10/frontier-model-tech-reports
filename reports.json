@@ -288,6 +288,54 @@
       "one_liner": "文生图评测基准（不是生成模型）：5 支柱 / 23 子能力 / 56 细项，1,000 条中英双语 prompt，13 万+ 条专业标注训练裁判模型 Q-Judger。基准与裁判已公开。",
       "path": "reports/image/qwen-image-bench/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "nemotron-3",
+      "title": "Nemotron 3",
+      "subtitle": "NVIDIA Nemotron 3: Efficient and Open Intelligence",
+      "vendor": "NVIDIA",
+      "vendor_key": "nvidia",
+      "category": "llm",
+      "date": "2025-12-24",
+      "paper": "https://arxiv.org/abs/2512.20856",
+      "arxiv": "2512.20856",
+      "open_weights": true,
+      "params": "Nano 30B-A3B（Super / Ultra 参数未披露）",
+      "one_liner": "Nemotron 3 家族白皮书：Nano / Super / Ultra 用 hybrid Mamba-Transformer MoE，上下文最长 1M。Nano 30B-A3B 随文开放权重；Super / Ultra 叠 LatentMoE 与 NVFP4，权重后续发布。",
+      "path": "reports/llm/nemotron-3/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "ministral-3",
+      "title": "Ministral 3",
+      "subtitle": "Ministral 3",
+      "vendor": "Mistral",
+      "vendor_key": "mistral",
+      "category": "llm",
+      "date": "2026-01-13",
+      "paper": "https://arxiv.org/abs/2601.08584",
+      "arxiv": "2601.08584",
+      "open_weights": true,
+      "params": "3B / 8B / 14B",
+      "one_liner": "从 Mistral Small 3.1 做 Cascade Distillation（剪枝 → logit 蒸馏 → 再剪枝）得到 14B / 8B / 3B，各有 base / instruct / reasoning，Apache 2.0。每个模型训练 1–3T token。",
+      "path": "reports/llm/ministral-3/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "gemma-4",
+      "title": "Gemma 4",
+      "subtitle": "Gemma 4 Technical Report",
+      "vendor": "Google DeepMind",
+      "vendor_key": "google",
+      "category": "llm",
+      "date": "2026-07-02",
+      "paper": "https://arxiv.org/abs/2607.02770",
+      "arxiv": "2607.02770",
+      "open_weights": true,
+      "params": "2.3B–31B（含 26B-A4B / 3.8B 激活）",
+      "one_liner": "开源原生多模态家族，2.3B–31B（含 26B-A4B / 3.8B 激活），带 thinking、MTP drafter 与 QAT。12B 为无编码器架构。31B 在 Arena Text Elo 1451（截至 2026-06-19 快照）。",
+      "path": "reports/llm/gemma-4/",
+      "added": "2026-11-22"
     }
   ]
 }

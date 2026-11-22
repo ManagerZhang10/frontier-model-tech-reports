@@ -22,4 +22,7 @@
   - [Qwen-Image-Bench](./reports/image/qwen-image-bench/)（图像评测基准，不是生成模型）
   - [Cosmos 3](./reports/video/cosmos-3/)（世界模型 / 视频与动作）
   - [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/)（VLM · 方法观察报告）
+  - [Nemotron 3](./reports/llm/nemotron-3/)（LLM）
+  - [Ministral 3](./reports/llm/ministral-3/)（LLM）
+  - [Gemma 4](./reports/llm/gemma-4/)（LLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

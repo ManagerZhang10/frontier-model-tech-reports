@@ -14,11 +14,11 @@
 | LLM | 2026-02 | Zhipu | GLM-5 | [arXiv:2602.15763](https://arxiv.org/abs/2602.15763) | 旧稿待重做 |
 | LLM | 2026-05 | MiniMax | MiniMax-M2 Series | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) | 旧稿待重做 |
 | LLM | 2026-06 | MiniMax | MiniMax Sparse Attention (M3) | [arXiv:2606.13392](https://arxiv.org/abs/2606.13392) | 旧稿待重做 |
-| LLM | 2026-07 | Google DeepMind | Gemma 4 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) | 旧稿待重做 |
-| LLM | 2025-12 | NVIDIA | Nemotron 3 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) | 旧稿待重做 |
+| LLM | 2026-07 | Google DeepMind | Gemma 4 | [arXiv:2607.02770](https://arxiv.org/abs/2607.02770) | 已发布 |
+| LLM | 2025-12 | NVIDIA | Nemotron 3 | [arXiv:2512.20856](https://arxiv.org/abs/2512.20856) | 已发布 |
 | LLM | 2026-10 | NVIDIA | Nemotron 3.5 Super & Lightning | [arXiv:2610.38095](https://arxiv.org/abs/2610.38095) | 旧稿待重做 |
 | LLM | 2026-01 | Xiaomi | MiMo-V2-Flash | [arXiv:2601.02780](https://arxiv.org/abs/2601.02780) | 旧稿待重做 |
-| LLM | 2026-01 | Mistral | Ministral 3 | [arXiv:2601.08584](https://arxiv.org/abs/2601.08584) | 旧稿待重做 |
+| LLM | 2026-01 | Mistral | Ministral 3 | [arXiv:2601.08584](https://arxiv.org/abs/2601.08584) | 已发布 |
 | LLM | 2026-02 | Baidu | ERNIE 5.0 | [arXiv:2602.04705](https://arxiv.org/abs/2602.04705) | 旧稿待重做 |
 | LLM | 2026-06 | ByteDance Seed | Seed2.0 Model Card | [arXiv:2607.00248](https://arxiv.org/abs/2607.00248) | 待写 |
 | LLM | 2025-12 | AI2 | Olmo 3 | [arXiv:2512.13961](https://arxiv.org/abs/2512.13961) | 待写 |

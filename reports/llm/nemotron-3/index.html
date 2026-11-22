@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NVIDIA Nemotron 3 · 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="NVIDIA Nemotron 3（Nano / Super / Ultra）白皮书中文深读：混合 Mamba-Transformer MoE、LatentMoE、MTP、NVFP4 预训练、1M 上下文与多环境 RL。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+/* --- page-specific: layer strip (Fig 1 复刻计数) --- */
+.layers { display: flex; flex-wrap: wrap; gap: 3px; margin: 10px 0 8px; }
+.layers i { display: block; width: 15px; height: 34px; border-radius: 4px; }
+.layers i.m { background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 40%, var(--line)); }
+.layers i.e { background: var(--warm-soft); border: 1px solid color-mix(in srgb, var(--warm) 40%, var(--line)); }
+.layers i.a { background: var(--accent); border: 1px solid var(--accent); }
+.layers .gap { width: 10px; }
+.lg { display: flex; gap: 16px; flex-wrap: wrap; font-size: .84rem; color: var(--muted); }
+.lg span::before { content: ""; display: inline-block; width: 10px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
+.lg .m::before { background: var(--good-soft); border: 1px solid var(--good); }
+.lg .e::before { background: var(--warm-soft); border: 1px solid var(--warm); }
+.lg .a::before { background: var(--accent); }
+/* --- LatentMoE schematic --- */
+.lm-lat { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 50%, var(--line)); stroke-width: 1.2; }
+.lm-exp { fill: var(--card); stroke: var(--line); stroke-width: 1.1; }
+.lm-exp-on { fill: color-mix(in srgb, var(--accent) 28%, var(--card)); stroke: var(--accent); stroke-width: 1.2; }
+.lm-arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+.lm-dash { stroke: var(--muted); stroke-width: 1.1; fill: none; stroke-dasharray: 4 3; }
+.lm-zone { fill: color-mix(in srgb, var(--good-soft) 45%, transparent); stroke: color-mix(in srgb, var(--good) 35%, var(--line)); stroke-dasharray: 5 4; }
+.lm-zt { fill: var(--good); font: 600 11px var(--f-mono); }
+.ah-fill { fill: var(--muted); }
+.flow.f4 .stage { border-top: 3px solid var(--accent); }
+.flow.f4 .stage:nth-child(4) { border-top-color: var(--good); }
+.flow.f4 .stage p { font-size: .86rem; margin: 6px 0 0; color: var(--ink-2); line-height: 1.55; }
+.hero-fact { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: .95rem; margin: 10px 0 18px; }
+.hero-fact b { color: var(--ink); font-weight: 600; }
+td.l { text-align: left; white-space: normal; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型</div>
+    <h1>NVIDIA Nemotron 3<span class="sub">Efficient and Open Intelligence —— Nano / Super / Ultra 家族白皮书</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>NVIDIA</b></span>
+      <span>发布 <b>2025-12-24</b>（arXiv v1）</span>
+      <span>arXiv <b>2512.20856</b></span>
+      <span>正文 <b>9 页</b>白皮书，细节多指向 Nano 技术报告</span>
+    </div>
+    <p class="lede">一句话：Nemotron 3 用「以 Mamba-2 + MoE 为主、只留少量注意力层」的混合架构换推理吞吐和 1M 上下文；更大的 Super / Ultra 再叠 <b>LatentMoE</b>（把专家搬到低维潜空间、省下的带宽换更多专家）、<b>MTP</b> 和 <b>NVFP4</b> 预训练，全家族用<b>多环境同时 RL</b> 做后训练。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 11V7a5 5 0 0 1 9.9-1"/><rect x="3" y="11" width="18" height="11" rx="2"/></svg>开放权重：Nano 随文发布，Super/Ultra 后续</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>后训练软件 Apache 2.0 · 权重许可证原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>Nano 30B-A3B · Super/Ultra 参数未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>语言模型 · Hybrid Mamba-Transformer MoE</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3v18"/></svg>上下文最长 1M</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2512.20856" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>arXiv 摘要页</a>
+      <a href="https://arxiv.org/pdf/2512.20856v1" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>PDF（v1）</a>
+      <a href="https://github.com/NVIDIA-NeMo/RL" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>NeMo-RL</a>
+      <a href="https://github.com/NVIDIA-NeMo/Gym" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>NeMo-Gym</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对图像编辑的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均出自 arXiv:2512.20856v1；<span class="src calc">推算</span> 为本页自算。</div>
+  </nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">家族</span><span class="stat-num sm">Nano · Super · Ultra</span><span class="stat-sub">Super 面向协作 Agent / 高并发负载；Ultra 主打最高精度</span><span class="src">摘要</span></div>
+    <div class="card stat"><span class="stat-k">已发布规模</span><span class="stat-num">30B-A3B</span><span class="stat-sub">Nemotron-3-Nano；Super/Ultra 参数量原文未给</span><span class="src">图 1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">1M</span><span class="stat-sub">注意力层不用 RoPE</span><span class="src">§2.5</span></div>
+    <div class="card stat"><span class="stat-k">吞吐（8k 入 / 16k 出）</span><span class="stat-num">3.3×</span><span class="stat-sub">Nano vs Qwen3-30B-A3B</span><span class="src">§2.1 · 图 2</span></div>
+    <div class="card stat"><span class="stat-k">NVFP4 预训练</span><span class="stat-num">≤25T</span><span class="stat-sub">token，混合 Mamba-MoE 上稳定训练</span><span class="src">§2.4</span></div>
+    <div class="card stat"><span class="stat-k">LatentMoE 消融</span><span class="stat-num sm">512 专家 · top-22</span><span class="stat-sub">ℓ=1024，对照 128 专家 top-6、d=4096</span><span class="src">§2.2</span></div>
+    <div class="card stat"><span class="stat-k">MTP 草稿接受率</span><span class="stat-num">≈97%</span><span class="stat-sub">前 2 个预测 token，8B 激活 MoE 消融</span><span class="src">§2.3</span></div>
+    <div class="card stat"><span class="stat-k">承诺开放数据</span><span class="stat-num">10T+</span><span class="stat-sub">token，仅限持有再分发权的部分</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">发布日期</span><span class="stat-num sm">2025-12-24</span><span class="stat-sub">arXiv v1；PDF 页眉印 2025-12-25</span><span class="src">arXiv v1</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点五条</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>混合架构换吞吐</h3><p>Nano 52 层里只有 6 层注意力<span class="src calc">推算 · 图 1</span>，其余是 Mamba-2 与 MoE 交替。8k/16k 负载下吞吐是 Qwen3-30B-A3B 的 3.3×<span class="src">图 2</span>，RULER@1M 86.3 vs 77.5<span class="src">图 2</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>LatentMoE：省带宽，换专家数</h3><p>专家放到 ℓ 维潜空间，权重读取与 all-to-all 都缩小 d/ℓ（通常约 4×）<span class="src">图 3</span>。同为约 8B 激活 / 73B 总参、1T token 下，5 项聚合指标全部更好，MMLU-Pro 48.30→52.87<span class="src">表 1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>NVFP4 真 GEMM 预训练</h3><p>权重 / 激活 / 梯度都量化到 NVFP4，fprop、dgrad、wgrad 都走原生 FP4 GEMM<span class="src">§2.4</span>。Nano 上相对 BF16 loss 差 &lt;1%，8B 激活模型上 &lt;0.6%<span class="src">§2.4 · 图 4</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>多环境同时 RL</h3><p>数学、竞赛代码、指令遵循、SWE、搜索、对话、工具调用、长上下文等环境一次 RL 同时训，作者称比分阶段更稳、更少 reward hacking<span class="src">§2.6</span>；GRPO + masked importance sampling，异步 RL + MTP 加速 rollout。</p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>这是白皮书，不是完整报告</h3><p>没有数据配比、来源、超参；Super / Ultra 没有任何评测数字。图 2 的细节作者让读者去看 Nano 技术报告<span class="src">图 2 题注</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：少注意力的混合 MoE + LatentMoE + MTP</h2>
+  <p class="sec-intro">三层改动：全家族的混合 Mamba-Transformer MoE；Super/Ultra 独有的 LatentMoE 和 MTP。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="Nemotron-3-Nano-30B-A3B 层排布：Mamba-2、MoE 与少量 Attention 交替" loading="lazy"></div>
+    <figcaption><b>图 1 · Nemotron-3-Nano-30B-A3B 层排布。</b>主体是 Mamba-2 与 MoE 交替，只在少数位置插入自注意力。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide">
+    <div class="layers" aria-label="Nano 52 层排布">
+      <!-- block A x5: M E M E M A E -->
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="a"></i><i class="e"></i>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="a"></i><i class="e"></i>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="a"></i><i class="e"></i>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="a"></i><i class="e"></i>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="a"></i><i class="e"></i>
+      <span class="gap"></span>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i>
+      <span class="gap"></span>
+      <i class="m"></i><i class="a"></i><i class="e"></i>
+      <span class="gap"></span>
+      <i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i><i class="m"></i><i class="e"></i>
+    </div>
+    <div class="lg"><span class="m">Mamba-2 × 23</span><span class="e">MoE × 23</span><span class="a">Attention × 6</span></div>
+    <p class="cap">按图 1 的分组与重复次数（×5 / ×3 / ×1 / ×4）展开计数，共 52 层<span class="src calc">推算</span>。原文没有直接写层数；每层的维度、专家数、注意力头数原文也没有给（只说注意力层用 GQA、2 个 KV head<span class="src">§2.4</span>）。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>混合 Mamba-Transformer MoE <span class="tag">全家族</span></h4>
+      <ul>
+        <li>MoE 不与昂贵的自注意力交替，而是主要和 Mamba-2 交替：生成时 Mamba-2 只存常量状态，不用随长度增长的 KV cache<span class="src">§2.1</span>。</li>
+        <li>保留少量注意力层负责「高保真的全对全信息路由」<span class="src">§2.1</span>；每层 GQA、仅 2 个 KV head<span class="src">§2.4</span>。</li>
+        <li>注意力层不用 RoPE，靠 Mamba 提供隐式位置信息，避开扩上下文时 RoPE 越界问题<span class="src">§2.5</span>。</li>
+      </ul></div>
+    <div class="card mod"><h4>MTP（Multi-Token Prediction）<span class="tag">Super / Ultra</span></h4>
+      <ul>
+        <li>训练上提供更密的监督：8B 激活 Transformer MoE 基座、1T token 消融，7 项基准平均提升「约 2.4%」<span class="src">§2.3 · 表 2</span>（按相对提升平均可复现 2.4%，绝对值平均 +1.58 分<span class="src calc">推算</span>）。</li>
+        <li>推理上天然做投机解码草稿：轻量 MTP 模块在前 2 个预测 token 上约 97% 接受率<span class="src">§2.3</span>。</li>
+        <li>RL 阶段也用 MTP 加速 rollout 生成<span class="src">§2.6</span>。</li>
+      </ul></div>
+  </div>
+
+  <h3>LatentMoE：按硬件瓶颈重新分配专家预算</h3>
+  <div class="prose">
+    <p>作者的推理分两种场景：<b>低延迟</b>部署一次只处理几十到几百 token，MoE 受显存带宽限制，成本由读取 d×m 的专家权重决定；<b>高吞吐</b>部署一次处理上千 token，瓶颈变成 all-to-all 通信，通信量与 top-K 和 d 成正比、与专家中间维 m 无关；而 FFN 的表达力大致正比于 K×m<span class="src">§2.2</span>。结论是：缩小专家的输入维 d，把省下的预算拿去加专家数 N 和激活数 K。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="标准 MoE 与 LatentMoE 结构对比" loading="lazy"></div>
+    <figcaption><b>图 3 · 标准 MoE（左）vs LatentMoE（右）。</b>LatentMoE 在 dispatch 前做 latent down-proj、combine 后做 latent up-proj；专家计算和 all-to-all 都在 ℓ 维进行，权重读取与通信量缩小 d/ℓ（通常约 4×），专家总数和 top-K 同比放大。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 900 250" role="img" aria-label="LatentMoE 数据流示意">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="ah-fill"/></marker></defs>
+      <rect class="lm-zone" x="200" y="20" width="470" height="170" rx="12"/>
+      <text class="lm-zt" x="212" y="38">潜空间 ℓ（专家计算 + all-to-all）</text>
+      <rect class="dg-box" x="20" y="95" width="120" height="44" rx="8"/><text class="dg-t" x="80" y="114" text-anchor="middle">token 隐状态</text><text class="dg-s" x="80" y="130" text-anchor="middle">维度 d</text>
+      <rect class="lm-lat" x="215" y="95" width="100" height="44" rx="8"/><text class="dg-t" x="265" y="114" text-anchor="middle">down-proj</text><text class="dg-s" x="265" y="130" text-anchor="middle">d → ℓ</text>
+      <rect class="dg-box" x="335" y="95" width="80" height="44" rx="8"/><text class="dg-t" x="375" y="114" text-anchor="middle">dispatch</text><text class="dg-s" x="375" y="130" text-anchor="middle">all-to-all</text>
+      <g>
+        <rect class="lm-exp-on" x="430" y="56" width="22" height="22" rx="4"/><rect class="lm-exp" x="456" y="56" width="22" height="22" rx="4"/><rect class="lm-exp-on" x="482" y="56" width="22" height="22" rx="4"/><rect class="lm-exp" x="508" y="56" width="22" height="22" rx="4"/>
+        <rect class="lm-exp" x="430" y="82" width="22" height="22" rx="4"/><rect class="lm-exp-on" x="456" y="82" width="22" height="22" rx="4"/><rect class="lm-exp" x="482" y="82" width="22" height="22" rx="4"/><rect class="lm-exp-on" x="508" y="82" width="22" height="22" rx="4"/>
+        <rect class="lm-exp" x="430" y="108" width="22" height="22" rx="4"/><rect class="lm-exp" x="456" y="108" width="22" height="22" rx="4"/><rect class="lm-exp-on" x="482" y="108" width="22" height="22" rx="4"/><rect class="lm-exp" x="508" y="108" width="22" height="22" rx="4"/>
+        <rect class="lm-exp-on" x="430" y="134" width="22" height="22" rx="4"/><rect class="lm-exp" x="456" y="134" width="22" height="22" rx="4"/><rect class="lm-exp" x="482" y="134" width="22" height="22" rx="4"/><rect class="lm-exp" x="508" y="134" width="22" height="22" rx="4"/>
+      </g>
+      <text class="dg-s" x="480" y="176" text-anchor="middle">N′ = N·d/ℓ 个专家，激活 K′ = K·d/ℓ</text>
+      <rect class="dg-box" x="545" y="95" width="80" height="44" rx="8"/><text class="dg-t" x="585" y="114" text-anchor="middle">combine</text><text class="dg-s" x="585" y="130" text-anchor="middle">all-to-all</text>
+      <rect class="lm-lat" x="690" y="95" width="100" height="44" rx="8"/><text class="dg-t" x="740" y="114" text-anchor="middle">up-proj</text><text class="dg-s" x="740" y="130" text-anchor="middle">ℓ → d</text>
+      <circle class="dg-plus" cx="838" cy="117" r="14"/><text class="dg-plus-t" x="838" y="122" text-anchor="middle">+</text>
+      <rect class="dg-box" x="215" y="205" width="150" height="36" rx="8"/><text class="dg-t" x="290" y="228" text-anchor="middle">Router（维度 d）</text>
+      <rect class="dg-box" x="560" y="205" width="230" height="36" rx="8"/><text class="dg-t" x="675" y="228" text-anchor="middle">共享专家 SE（维度 d）</text>
+      <path class="lm-arrow" d="M140 117H213"/><path class="lm-arrow" d="M315 117H333"/><path class="lm-arrow" d="M415 117H428"/><path class="lm-arrow" d="M530 117H543"/><path class="lm-arrow" d="M625 117H688"/><path class="lm-arrow" d="M790 117H822"/>
+      <path class="lm-arrow" d="M170 117V223H213"/><path class="lm-dash" d="M365 210 Q 420 190 440 160"/>
+      <path class="lm-arrow" d="M170 223V246H545V223H558"/><path class="lm-arrow" d="M790 223H838V133"/>
+    </svg>
+    <p class="cap">示意（依据 §2.2 文字与图 3b 重画）：router、共享专家和非专家层留在原维度 d<span class="src">§2.2</span>；专家的具体排布、虚线所示的路由权重作用位置以原图 3 为准。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card chart-cell">
+      <svg class="chart" viewBox="0 0 560 270" role="img" aria-label="表 1 Standard MoE 与 LatentMoE 准确率对比">
+        <text class="ch-t" x="0" y="14">表 1 · Standard MoE vs LatentMoE（%，轴从 0 起）</text>
+        <g class="ch-lbl">
+          <text x="0" y="52">MMLU-Pro</text><text x="0" y="96">MMLU</text><text x="0" y="140">Code</text><text x="0" y="184">Math</text><text x="0" y="228">Commonsense</text>
+        </g>
+        <line class="axis" x1="120" y1="30" x2="120" y2="246"/>
+        <rect class="bar-o" x="120" y="38" width="193.2" height="13"/><rect class="bar-q" x="120" y="53" width="211.5" height="13"/>
+        <text class="ch-val" x="318" y="49">48.30</text><text class="ch-val" x="336" y="64">52.87</text>
+        <rect class="bar-o" x="120" y="82" width="280.4" height="13"/><rect class="bar-q" x="120" y="97" width="288.4" height="13"/>
+        <text class="ch-val" x="405" y="93">70.10</text><text class="ch-val" x="413" y="108">72.11</text>
+        <rect class="bar-o" x="120" y="126" width="207.8" height="13"/><rect class="bar-q" x="120" y="141" width="220.6" height="13"/>
+        <text class="ch-val" x="333" y="137">51.95</text><text class="ch-val" x="346" y="152">55.14</text>
+        <rect class="bar-o" x="120" y="170" width="313.3" height="13"/><rect class="bar-q" x="120" y="185" width="320.8" height="13"/>
+        <text class="ch-val" x="438" y="181">78.32</text><text class="ch-val" x="446" y="196">80.19</text>
+        <rect class="bar-o" x="120" y="214" width="326.9" height="13"/><rect class="bar-q" x="120" y="229" width="328.4" height="13"/>
+        <text class="ch-val" x="452" y="225">81.73</text><text class="ch-val" x="454" y="240">82.10</text>
+        <text class="ch-ax" x="120" y="262">0</text><text class="ch-ax" x="504" y="262" text-anchor="end">100 →</text>
+      </svg>
+      <div class="chart-legend"><span class="l3">Standard MoE（8.09B 激活 / 72.6B 总参）</span><span class="l1">LatentMoE（8.02B / 72.8B）</span></div>
+    </div>
+    <div class="card mod" style="margin:0">
+      <h4>消融设置 <span class="tag">表 1 · §2.2</span></h4>
+      <dl class="kv">
+        <dt>训练量</dt><dd>两者均 1T token、相同超参</dd>
+        <dt>Standard MoE</dt><dd>d = 4096，128 专家，激活 6</dd>
+        <dt>LatentMoE</dt><dd>ℓ = 1024，512 专家，激活 22</dd>
+        <dt>d/ℓ</dt><dd>4<span class="src calc">推算</span>；专家数 128→512 恰为 ×4</dd>
+        <dt>Code</dt><dd>HumanEval / HumanEval+ / MBPP / MBPP+ 均值</dd>
+        <dt>Math</dt><dd>GSM8K CoT / MATH-500 均值</dd>
+        <dt>Commonsense</dt><dd>RACE / ARC-C / HellaSwag / Winogrande 均值</dd>
+      </dl>
+      <p style="font-size:.9rem;color:var(--muted)">按公式 K′ = K·d/ℓ 应为 24，实际用 22<span class="src calc">推算</span>，原文没有解释。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：白皮书几乎只给了「承诺」和长上下文合成方向</h2>
+  <p class="sec-intro">本节对照全文逐条列出原文披露的数据信息。来源、配比、清洗、去重、标注方式均<span class="nd">原文未披露</span>，因此不画任何占比条形图。</p></div>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项目</th><th class="l" style="text-align:left">原文写法</th><th>规模 / 数字</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">开放与总量</td></tr>
+        <tr><td>开放数据集</td><td class="l">将开放「持有再分发权的全部数据」；结论处写作「大部分训练数据」</td><td>10T+ token</td><td><span class="src">摘要 · §1 · §3</span></td></tr>
+        <tr><td>NVFP4 预训练</td><td class="l">在混合 Mamba-MoE 上稳定训练到该量级（未说明是哪个型号）</td><td>≤25T token</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>预训练语料来源 / 配比</td><td class="l">—</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>清洗 / 去重 / 质量过滤</td><td class="l">—</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr class="grp"><td colspan="4">长上下文（以 Nano 为例）</td></tr>
+        <tr><td>CPT 序列长度</td><td class="l">单独的 continued pre-training 阶段；无需从 8k 逐级加到 512k</td><td>512k</td><td><span class="src">§2.5</span></td></tr>
+        <tr><td>SFT 序列长度</td><td class="l">—</td><td>256k</td><td><span class="src">§2.5</span></td></tr>
+        <tr><td>RL 长上下文环境</td><td class="l">输入长度上限</td><td>32k</td><td><span class="src">§2.5</span></td></tr>
+        <tr><td>长上下文合成数据</td><td class="l">三个阶段都加入：长程检索、多跳推理、多文档信息聚合等</td><td><span class="nd">量未披露</span></td><td><span class="src">§2.5</span></td></tr>
+        <tr class="grp"><td colspan="4">后训练</td></tr>
+        <tr><td>RL 环境</td><td class="l">数学与科学推理、竞赛代码、指令遵循、软件工程、搜索、对话、通用 Agent 工具调用、长上下文「等」</td><td><span class="nd">环境数 / 样本量未披露</span></td><td><span class="src">§2.6</span></td></tr>
+        <tr><td>SFT 数据</td><td class="l">仅提到 256k 长度</td><td><span class="nd">原文未披露</span></td><td><span class="src">§2.5</span></td></tr>
+        <tr class="grp"><td colspan="4">消融与评估用数据</td></tr>
+        <tr><td>架构消融训练量</td><td class="l">LatentMoE、MTP、NVFP4 下游对比</td><td>1T token</td><td><span class="src">表 1 · 表 2 · 图 5</span></td></tr>
+        <tr><td>NVFP4 敏感层消融</td><td class="l">从 Nano NVFP4 checkpoint 起继续</td><td>500B token 处起</td><td><span class="src">图 4 题注</span></td></tr>
+        <tr><td>长程 NLL 评估</td><td class="l">仓库级代码序列</td><td>&gt;1M token / 条</td><td><span class="src">§2.5 · 图 6</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">作者名单里有单独的「Pretraining Data」组，但正文没有写数据工程细节；Nano 的数据细节需看其独立技术报告（本页不引用该报告的数字）。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>原文给了什么 <span class="tag ok-tag">可核对</span></h4>
+      <ul>
+        <li>长上下文能力靠<b>专门设计的合成数据</b>，按能力类型（检索 / 多跳 / 多文档聚合）组织，并且在 CPT、SFT、RL 三个阶段<b>都放</b><span class="src">§2.5</span>。</li>
+        <li>长上下文 CPT 直接用 512k，不做 8k→512k 的逐级加长<span class="src">§2.5</span>。</li>
+        <li>开放边界写清：只开放有再分发权的数据<span class="src">摘要</span>。</li>
+      </ul></div>
+    <div class="card mod"><h4>原文没给什么 <span class="tag nd-tag">未披露</span></h4>
+      <ul>
+        <li>预训练总 token 数（Nano / Super / Ultra 各自）、语种与领域配比。</li>
+        <li>任何过滤器、去重阈值、质量打分模型、合成数据占比。</li>
+        <li>SFT / RL 的数据规模、环境数量、奖励设计。</li>
+      </ul></div>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：NVFP4 预训练 → 长上下文 CPT → SFT → 多环境 RL</h2>
+  <p class="sec-intro">阶段顺序和长度来自 §2.5（以 Nano 为例）；学习率、batch、步数等超参原文均未给。</p></div>
+
+  <div class="flow f4 wide">
+    <div class="card stage"><span class="sid">S1</span><h4>预训练</h4>
+      <dl><dt>精度</dt><dd>NVFP4（Super/Ultra）</dd><dt>规模</dt><dd>≤25T token</dd></dl>
+      <p>部分敏感层保留高精度，见下<span class="src">§2.4</span></p></div>
+    <div class="card stage"><span class="sid">S2</span><h4>长上下文 CPT</h4>
+      <dl><dt>序列</dt><dd>512k</dd><dt>数据</dt><dd>含长程合成数据</dd></dl>
+      <p>不需要分级加长<span class="src">§2.5</span></p></div>
+    <div class="card stage"><span class="sid">S3</span><h4>SFT</h4>
+      <dl><dt>序列</dt><dd>256k</dd><dt>数据</dt><dd>含长程合成数据</dd></dl>
+      <p>规模未披露<span class="src">§2.5</span></p></div>
+    <div class="card stage"><span class="sid">S4</span><h4>多环境 RL</h4>
+      <dl><dt>算法</dt><dd>GRPO + masked IS</dd><dt>长上下文</dt><dd>输入 ≤32k</dd></dl>
+      <p>所有环境同时训；异步 RL<span class="src">§2.5–2.6</span></p></div>
+  </div>
+
+  <h3>NVFP4 配方：哪些层不进 FP4</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>组件</th><th>精度</th><th class="l" style="text-align:left">原因（原文）</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>多数 GEMM（权重 / 激活 / 梯度）</td><td>NVFP4</td><td class="l">fprop / dgrad / wgrad 全用原生 NVFP4 GEMM（cuBLAS 后端 + Transformer Engine）；此前工作只是用 quantize-dequantize 在 BF16 GEMM 上模拟</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>网络最后 15%</td><td>高精度</td><td class="l">维持稳定</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>QKV 与注意力投影</td><td>BF16</td><td class="l">注意力层少且每层仅 2 个 KV head，要保住保真度</td><td><span class="src">§2.4</span></td></tr>
+        <tr class="hl"><td>Mamba 输出投影</td><td>MXFP8</td><td class="l">量化到 NVFP4 时 flush-to-zero 高达 40%（Nano）</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>LatentMoE 的潜空间投影</td><td>BF16</td><td class="l">对 step time 影响很小</td><td><span class="src">§2.4</span></td></tr>
+        <tr><td>MTP 层</td><td>BF16</td><td class="l">位于网络末端，且要保住 MTP 能力</td><td><span class="src">§2.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <details class="more wide"><summary>NVFP4 格式与数值技巧<span class="hint">§2.4</span></summary><div class="body">
+    <ul>
+      <li>格式：16 元素 micro-block 缩放；block 缩放因子用 E4M3；再加一级 FP32 全局缩放；元素为 E2M1。</li>
+      <li>权重量化用 2D block scaling；wgrad 的输入做 Random Hadamard Transform；梯度用随机舍入。</li>
+      <li>硬件动机：GB300 上 FP4 峰值吞吐是 FP8 的 3×<span class="src">§2.4</span>。</li>
+      <li>效果：Nano 相对 BF16 loss 差 &lt;1%，8B 激活 MoE 上 &lt;0.6%，规模越大差距越小；8B 激活模型 1T token 内 8 项下游指标的 NVFP4 曲线与 BF16 接近（评测在 BF16 下做）<span class="src">图 4 · 图 5</span>。把 Mamba 输出投影和 QKV/注意力投影也量化成 NVFP4 的消融，train / val loss 都更差<span class="src">图 4</span>。</li>
+    </ul></div></details>
+
+  <h3>后训练：一个 RL run 里同时优化所有能力</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>做法</h4>
+      <ul>
+        <li>不再像前代那样按任务分阶段 RL，而是所有环境同时训；作者称更稳、更不容易 reward hacking，且避免分阶段导致的部分能力退化<span class="src">§2.6</span>。</li>
+        <li>异步 RL：训练与推理解耦；用 MTP 加速 rollout<span class="src">§2.6</span>。</li>
+        <li>GRPO + masked importance sampling，修正训练策略与 rollout 策略的差异<span class="src">§2.6</span>。</li>
+        <li>软件栈 Apache 2.0 开源：NeMo-RL（训练）+ NeMo-Gym（环境集合）<span class="src">§2.6</span>。</li>
+      </ul></div>
+    <div class="card mod"><h4>推理预算控制 <span class="tag">§2.7</span></h4>
+      <p>用户指定思考 token 上限；到达上限时在序列后追加 <code>&lt;/think&gt;</code>，模型基于不完整的思考继续生成回答。图 8 给出 Nano 在 AIME25、GPQA、LiveCodeBench、MMLU Pro 上「平均生成 token 数—准确率」曲线；GPQA、LiveCodeBench 和 MMLU Pro 的曲线在最大预算处略有回落<span class="src">图 8</span>。</p></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig7.jpg" alt="Nano 多环境 RL 训练中 8 个基准随 step 变化" loading="lazy"></div>
+    <figcaption><b>图 7 · 多环境 RL。</b>同一个 RL run 中，AALCR、AIME25、GPQA、IFBench Prompt、LiveCodeBench、MMLU Pro、SciCode、τ²-Bench average 随 step 同时上升（Nano RL 训练）。曲线抖动明显，单点读数没有意义。<span class="from">来源：论文图 7</span></figcaption>
+  </figure>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig8.jpg" alt="推理预算控制下的准确率-效率曲线" loading="lazy"></div>
+    <figcaption><b>图 8 · 推理时预算控制的准确率—效率权衡</b>（Nemotron 3 Nano）。横轴为每条 query 平均生成 token 数。<span class="from">来源：论文图 8</span></figcaption>
+  </figure>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：全部数字只关于 Nano 和消融模型</h2>
+  <p class="sec-intro">白皮书只给出 Nano 的对比（图 2）、长上下文（表 3 / 图 6）和三组消融。Super / Ultra 没有任何分数。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Nemotron-3-Nano-30B-A3B 与 Qwen3、GPT-OSS 的准确率与吞吐对比" loading="lazy"></div>
+    <figcaption><b>图 2 · Nano vs 同量级模型。</b>左为准确率，右为 8k 输入 / 16k 输出下的相对吞吐（输出 token/s/GPU）。评测细节作者指向 Nano 技术报告。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准（能力）</th><th class="q">Nemotron-3-Nano-30B-A3B</th><th>Qwen3-30B-A3B-Thinking-2507</th><th>GPT-OSS-20B-A4B</th></tr></thead>
+      <tbody>
+        <tr><td>Arena-Hard-v2-Avg（对话）</td><td class="q best">67.7</td><td>57.8</td><td>48.5</td></tr>
+        <tr><td>AIME25（数学）</td><td class="q">89.1 <sup>+tools 99.2</sup></td><td>85.0</td><td class="best">91.7 <sup>+tools 98.7</sup></td></tr>
+        <tr><td>IFBench（指令遵循）</td><td class="q best">71.5</td><td>51.0</td><td>65.0</td></tr>
+        <tr><td>τ²-Bench（工具调用）</td><td class="q best">49.0</td><td>47.7</td><td>47.5</td></tr>
+        <tr><td>SWE-Bench（代码）</td><td class="q best">38.8</td><td>22.0</td><td>34.0</td></tr>
+        <tr><td>LCB v6（代码）</td><td class="q best">68.2</td><td>66.0</td><td>61.0</td></tr>
+        <tr><td>RULER @ 1M（长上下文）</td><td class="q best">86.3</td><td>77.5</td><td>N/A</td></tr>
+        <tr class="hl"><td>相对吞吐 ISL/OSL 8k/16k</td><td class="q best">3.3</td><td>1.0</td><td>1.5</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox"><span class="k-q">本文模型</span><span class="k-best">该行无工具最高</span></div>
+  <p class="tbl-note"><b>记号：</b><sup>+tools</sup> = 图 2 中 AIME25 柱顶浅色部分，表示允许工具时的分数，Qwen3 没有该项；最高值按无工具分数比较。N/A = 图中 GPT-OSS 没有 RULER@1M 数据。吞吐以 Qwen3-30B-A3B 为 1.0 归一；正文写作「比 Qwen3-30B-A3B 高 3.3×，序列更长时更快」<span class="src">§2.1</span>。硬件、推理框架、采样设置原文未给。</p>
+
+  <h3>长上下文：Nano Base vs Nemotron 2 Nano Base</h3>
+  <div class="grid2 wide">
+    <div class="card chart-cell">
+      <svg class="chart" viewBox="0 0 640 270" role="img" aria-label="表 3 RULER 分数随上下文长度变化">
+        <text class="ch-t" x="0" y="14">表 3 · RULER（轴从 0 起）</text>
+        <line class="axis" x1="50" y1="210" x2="620" y2="210"/>
+        <g stroke="var(--line)" stroke-width="1"><line x1="50" y1="165" x2="620" y2="165"/><line x1="50" y1="120" x2="620" y2="120"/><line x1="50" y1="75" x2="620" y2="75"/><line x1="50" y1="30" x2="620" y2="30"/></g>
+        <g class="ch-ax"><text x="44" y="213" text-anchor="end">0</text><text x="44" y="168" text-anchor="end">25</text><text x="44" y="123" text-anchor="end">50</text><text x="44" y="78" text-anchor="end">75</text><text x="44" y="33" text-anchor="end">100</text></g>
+        <rect class="bar-o" x="82" y="56.8" width="36" height="153.2"/><rect class="bar-q" x="124" y="75.9" width="36" height="134.1"/>
+        <rect class="bar-o" x="225" y="66.3" width="36" height="143.7"/><rect class="bar-q" x="267" y="81.0" width="36" height="129.0"/>
+        <rect class="bar-o" x="367" y="74.8" width="36" height="135.2"/><rect class="bar-q" x="409" y="91.2" width="36" height="118.8"/>
+        <rect class="bar-o" x="510" y="167.8" width="36" height="42.2"/><rect class="bar-q" x="552" y="112.5" width="36" height="97.5"/>
+        <g class="ch-val" text-anchor="middle">
+          <text x="100" y="52">85.13</text><text x="142" y="71">74.48</text>
+          <text x="243" y="61">79.85</text><text x="285" y="76">71.67</text>
+          <text x="385" y="70">75.12</text><text x="427" y="86">66.02</text>
+          <text x="528" y="163">23.43</text><text x="570" y="107">54.19</text>
+        </g>
+        <g class="ch-lbl" text-anchor="middle"><text x="121" y="230">128k</text><text x="264" y="230">256k</text><text x="406" y="230">512k</text><text x="549" y="230">1M</text></g>
+      </svg>
+      <div class="chart-legend"><span class="l3">Nemotron-Nano-12B-v2-Base（dense hybrid）</span><span class="l1">Nemotron-3-Nano-30B-A3B-Base（MoE hybrid）</span></div>
+    </div>
+    <div class="card mod" style="margin:0"><h4>怎么读表 3</h4>
+      <ul>
+        <li>两者都训练到 512k 序列长度<span class="src">表 3 题注</span>。</li>
+        <li>1M 处：54.19 vs 23.43，前代在 512k→1M 断崖下跌，Nemotron 3 是平缓下降<span class="src">表 3</span>。</li>
+        <li>但 128k–512k 三档，Nemotron 3 Nano Base 都<b>低于</b>前代（如 128k 74.48 vs 85.13，差 10.65 分<span class="src calc">推算</span>）。原文的说法是「对长度外推更鲁棒」，不是「全面更好」。</li>
+        <li>图 6：在 &gt;1M token 的仓库级代码上，累计平均 NLL 随位置持续下降，幂律拟合 R² = 0.883<span class="src">图 6</span>。</li>
+      </ul></div>
+  </div>
+
+  <details class="more wide"><summary>表 2 · MTP 消融全表（8B 激活 Transformer MoE 基座，1T token）<span class="hint">§2.3</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>任务</th><th>Baseline</th><th class="q">+ MTP</th><th>Δ<span class="src calc">推算</span></th></tr></thead>
+        <tbody>
+          <tr><td>MMLU（5-shot, acc）</td><td>70.06</td><td class="q">71.26</td><td>+1.20</td></tr>
+          <tr><td>MMLU-Pro（5-shot, CoT EM）</td><td>45.05</td><td class="q">47.84</td><td>+2.79</td></tr>
+          <tr><td>MBPP-Sanitized（3-shot）</td><td>65.58</td><td class="q">66.89</td><td>+1.31</td></tr>
+          <tr><td>ARC-Challenge（25-shot, acc_norm）</td><td>86.43</td><td class="q">88.05</td><td>+1.62</td></tr>
+          <tr><td>WinoGrande（0-shot, acc）</td><td>74.59</td><td class="q">75.45</td><td>+0.86</td></tr>
+          <tr><td>RACE（0-shot, acc）</td><td>84.02</td><td class="q">85.36</td><td>+1.34</td></tr>
+          <tr><td>GSM8K（8-shot, acc）</td><td>82.49</td><td class="q">84.46</td><td>+1.97</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">绝对提升均值 +1.58 分；相对提升均值约 2.4%，与正文「roughly 2.4% on average」一致<span class="src calc">推算</span>。</p>
+  </div></details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>LatentMoE：按「每字节精度」而不是每 FLOP 设计专家</h4><p>把低延迟（带宽受限）和高吞吐（all-to-all 受限）两种瓶颈拆开分析，得出「缩 d、放大 N 和 K」的设计；router 与共享专家留在原维度。同参数量消融 5 项全胜<span class="src">§2.2 · 表 1</span>。</p><p class="why">可核对：表 1 给了两种配置的完整维度与专家数。</p></div>
+    <div class="card nv"><h4>原生 NVFP4 GEMM 训到 25T token 级别</h4><p>从前作的 quantize-dequantize 模拟升级为真 FP4 GEMM，并给出具体的「哪些层不量化」清单与证据（Mamba 输出投影 40% flush-to-zero）<span class="src">§2.4</span>。</p><p class="why">可核对：图 4 的敏感层消融。</p></div>
+    <div class="card nv"><h4>MoE 混合架构的长度外推更平缓</h4><p>不用 RoPE、512k CPT 不分级加长，1M 处 RULER 54.19 vs 前代 dense hybrid 23.43<span class="src">§2.5 · 表 3</span>。</p><p class="why">注意：短于 1M 时反而低于前代。</p></div>
+    <div class="card nv"><h4>多环境同时 RL 取代分阶段 RL</h4><p>NVIDIA 自家前代用分阶段 RL；这次所有环境一起训，并把环境集合 NeMo-Gym 开源<span class="src">§2.6</span>。</p><p class="why">「更稳、更少 reward hacking」只有定性描述，没有对比数字。</p></div>
+  </div>
+  <p class="tbl-note wide">不算新：MTP（作者明确引用 DeepSeek-V3 与 Gloeckle et al.）、推理预算控制（沿用 Nemotron 2 Nano 的做法）<span class="src">§2.3 · §2.7</span>。</p>
+</section>
+
+<!-- 08 IMPL -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">这篇是纯语言模型，没有图像数据。下面每条先写论文怎么做，再写一条可迁移的做法；绿色框里的做法都是<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>按能力类型设计合成数据，并贯穿所有阶段</h4>
+        <p class="paper">论文：长上下文合成数据按「长程检索 / 多跳推理 / 多文档聚合」组织，CPT、SFT、RL 三阶段都放<span class="src">§2.5</span>。</p>
+        <p class="do"><b>迁移建议：</b>编辑合成数据按能力维度建桶（局部替换、属性修改、多对象关系、多轮累积编辑等），每个桶在预训练、SFT、RL 奖励里都有对应样本，避免某个能力只在一个阶段出现、到下一阶段被冲掉。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>先写清楚数据的授权边界</h4>
+        <p class="paper">论文：只开放「持有再分发权」的数据，规模 10T+ token<span class="src">摘要 · §1</span>。</p>
+        <p class="do"><b>迁移建议：</b>编辑数据集在入库时就给每条 source / target 打授权字段（可训练 / 可再分发 / 仅内部评测），以后要开源子集或对外交付时能直接按字段切，而不是事后追溯。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>不必逐级加长，直接上目标长度</h4>
+        <p class="paper">论文：512k CPT 没有观察到需要 8k→512k 分级加长<span class="src">§2.5</span>。</p>
+        <p class="do"><b>迁移建议：</b>caption 从短到长（短指令 → 稠密描述 → 多轮编辑历史）的课程式训练值得做一次「直接混合目标长度」的对照，别默认课程一定有收益。</p></div>
+    </div>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>按长度分桶报分，看是平缓下降还是断崖</h4>
+        <p class="paper">论文：RULER 分 128k / 256k / 512k / 1M 四档报，能看出前代在 1M 处断崖（23.43），Nemotron 3 平缓（54.19）<span class="src">表 3</span>。</p>
+        <p class="do"><b>迁移建议：</b>多轮编辑评测按轮数分桶（1 / 3 / 5 / 10 轮），指令遵循按指令长度、操作数分桶；只报一个均值会掩盖「短任务退步、长任务进步」这种表 3 式的交叉。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>报一条预算曲线，而不是一个点</h4>
+        <p class="paper">论文：图 8 给出不同思考预算下的准确率曲线，且部分基准在最大预算处回落<span class="src">图 8 · §2.7</span>。</p>
+        <p class="do"><b>迁移建议：</b>编辑模型按采样步数 / CFG / 推理时长画「质量—成本」曲线；caption 模型按输出长度上限画「信息覆盖率—幻觉率」曲线，找拐点再定线上配置。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>带工具的分数单独标记</h4>
+        <p class="paper">论文：AIME25 的「+tools」分数用浅色柱单独标出（Nano 99.2 / GPT-OSS 98.7），与无工具分数分开<span class="src">图 2</span>。</p>
+        <p class="do"><b>迁移建议：</b>编辑评测里，借助外部分割、检测或 Agent 流程得到的结果单列一栏，不和纯模型端到端分数混排比较。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>多能力同时训练时用面板盯每条曲线</h4>
+        <p class="paper">论文：多环境 RL 期间用 8 个基准的随 step 曲线证明各能力同时上升<span class="src">图 7 · §2.6</span>。</p>
+        <p class="do"><b>迁移建议：</b>编辑 RL / 偏好优化同时上多个 reward（指令遵循、保真、美学）时，每个编辑类型一条曲线，重点看有没有某类在中途掉下去（图 7 的 IFBench 中段就有回落）。</p></div>
+    </div>
+
+    <div class="impl-group">消融与 caption</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>对照实验严格配平预算</h4>
+        <p class="paper">论文：LatentMoE 消融两边约 8B 激活 / 73B 总参、同 1T token、同超参<span class="src">表 1 · §2.2</span>。</p>
+        <p class="do"><b>迁移建议：</b>比较两版 caption schema 或两种过滤策略时，固定训练 token / 图片数和步数；过滤掉一半数据的那一版要补到同样的训练步数，否则比的是数据量而不是质量。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>用逐位置的损失看长描述是否被用上</h4>
+        <p class="paper">论文：在 &gt;1M token 代码序列上画累计平均 NLL 随位置变化，用来证明长上下文确实被利用<span class="src">图 6</span>。</p>
+        <p class="do"><b>迁移建议：</b>长 caption / 多轮编辑历史作为条件时，测生成质量随「可见历史长度」的变化：如果加长条件后指标不再变化，说明后半段描述没被模型用上，可以截短 caption 或改写结构。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>Super / Ultra 只有承诺。</b>没有参数量、训练 token 数和评测分数，权重「在未来几个月」发布<span class="src">摘要 · §3</span>。LatentMoE 与 NVFP4 的收益只能从消融模型上推断。</li>
+    <li class="key"><b>数据几乎没有披露。</b>预训练来源、配比、过滤、合成数据占比、SFT/RL 规模都没有写；开放数据在摘要里写「持有再分发权的全部数据」，结论里写「大部分训练数据」<span class="src">摘要 · §3</span>。</li>
+    <li><b>图 2 与表 3 的 RULER 口径不同。</b>图 2 中 Nano 的 RULER@1M 是 86.3，表 3 中 Nano Base 在 1M 是 54.19；原文没有说明图 2 用的是哪个 checkpoint 和设置，不能直接对照。</li>
+    <li><b>LatentMoE 的 K′ 与公式不一致。</b>按 K′ = K·d/ℓ，6×4 应为 24，消融实际用 22<span class="src">§2.2</span>；且「推理成本大致不变」没有给出吞吐或延迟实测。</li>
+    <li><b>消融都在单一规模、1T token 上。</b>LatentMoE、MTP、NVFP4 下游对比均为约 8B 激活模型、1T token；MTP 消融明确是 Transformer MoE 而非混合架构，LatentMoE 消融是否为混合架构原文未写<span class="src">§2.2–2.4</span>。</li>
+    <li><b>NVFP4 用在哪个型号不清楚。</b>摘要说 Super / Ultra 用 NVFP4，图 4 却展示了 Nano 的 NVFP4 配方曲线；「25T token」也没说对应哪个模型<span class="src">摘要 · §2.4</span>。</li>
+    <li><b>长上下文只在 1M 处占优。</b>128k–512k 三档 Nemotron 3 Nano Base 均低于 Nemotron 2 Nano 12B Base<span class="src">表 3</span>。</li>
+    <li><b>评测细节外置。</b>图 2 的采样设置、吞吐测量的硬件和框架都指向 Nano 技术报告；多环境 RL「更稳、更少 reward hacking」没有与分阶段 RL 的量化对比<span class="src">图 2 · §2.6</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 FIG INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th style="text-align:left">内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>Nemotron-3-Nano-30B-A3B 层排布（p.2）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 2</td><td>Nano vs Qwen3-30B-A3B-Thinking-2507 / GPT-OSS-20B-A4B 准确率与吞吐（p.2）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 3</td><td>Standard MoE vs LatentMoE 结构（p.3）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 1</td><td>Standard MoE vs LatentMoE 下游准确率（p.4）</td><td><a href="#arch">架构（SVG）</a></td></tr>
+        <tr><td>表 2</td><td>有无 MTP 的准确率（p.5）</td><td><a href="#eval">评测（折叠）</a></td></tr>
+        <tr><td>图 4</td><td>NVFP4 vs BF16 训练 / 验证 loss 相对差（p.6）——未裁图，见原文</td><td><a href="#train">训练（文字）</a></td></tr>
+        <tr><td>图 5</td><td>8B 激活 MoE 上 BF16 vs NVFP4 的 8 项下游曲线（p.7）——未裁图，见原文</td><td><a href="#train">训练（文字）</a></td></tr>
+        <tr><td>表 3</td><td>Nemotron 2 Nano 12B Base vs Nemotron 3 Nano Base 的 RULER（p.8）</td><td><a href="#eval">评测（SVG）</a></td></tr>
+        <tr><td>图 6</td><td>代码数据累计平均 NLL 随位置变化（p.8）——未裁图，见原文</td><td><a href="#eval">评测（文字）</a></td></tr>
+        <tr><td>图 7</td><td>多环境 RL 中 8 个基准随 step 变化（p.9）</td><td><a href="#train">训练</a></td></tr>
+        <tr><td>图 8</td><td>推理预算控制的准确率—效率曲线（p.9）</td><td><a href="#train">训练</a></td></tr>
+        <tr><td>示意</td><td>Nano 52 层排布展开、LatentMoE 数据流（本页重画，非论文原图）</td><td><a href="#arch">架构</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">另有 <code>figures/fig0-teaser.jpg</code>：论文首页引言文字截图，不含图表，本页未引用。</p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 NVIDIA《NVIDIA Nemotron 3: Efficient and Open Intelligence》（<a href="https://arxiv.org/abs/2512.20856" target="_blank" rel="noopener">arXiv:2512.20856</a> v1，2025-12-24 提交；PDF 页眉日期为 2025-12-25）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页据原文数字计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，仅用于学习交流。<br>
+    <a href="../../../index.html">← 返回前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>
