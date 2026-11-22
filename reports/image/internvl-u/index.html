@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InternVL-U 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="InternVL-U（Shanghai AI Laboratory 等）中文深读：4B 统一多模态模型 = InternVL3.5-2B + 1.7B MMDiT 生成头；文字 / 科学 / 空间 / 梗图 / CoT 五类合成数据管线，三阶段训练，TextEdit 基准与 MLLM 评分协议。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+  .flow.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ratio .rbar .c { background: var(--good); }
+  .bar-legend span.i::before { background: var(--good); }
+  :root[data-theme="dark"] .ratio .rbar .c { color: #141218; }
+  /* 参数构成示意 */
+  .pm .seg-v { fill: color-mix(in srgb, var(--accent) 30%, var(--card)); stroke: var(--accent); }
+  .pm .seg-b { fill: var(--accent); }
+  .pm .seg-g { fill: var(--warm); }
+  .pm .t-in { fill: #fff; font: 700 12px var(--f-body); }
+  .pm .t-ink { fill: var(--ink); font: 700 12px var(--f-body); }
+  .pm .t-sm { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  :root[data-theme="dark"] .pm .t-in { fill: #141218; }
+  /* 位置插值示意 */
+  .ri .dot { fill: var(--accent); }
+  .ri .dot2 { fill: var(--warm); }
+  .ri .rail { stroke: var(--line); stroke-width: 6; stroke-linecap: round; }
+  .ri .hd { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .ri .sm { fill: var(--muted); font: 500 10.5px var(--f-mono); }
+  .ri .lb { fill: var(--ink-2); font: 600 11px var(--f-body); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pm .t-in { fill: #141218; } }
+  @media (max-width: 960px) { .flow.three { grid-template-columns: 1fr; } .flow.three .stage::after { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 统一多模态（理解 / 生成 / 编辑）</div>
+    <h1>InternVL-U<span class="sub">Democratizing Unified Multimodal Models for Understanding, Reasoning, Generation and Editing</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Shanghai AI Laboratory 等</b>（含港中文 MMLab、复旦、上交、清华等，共 9 家机构）</span>
+      <span>arXiv v1 <b>2026-03-10</b></span>
+      <span>arXiv <b>2603.09877</b></span>
+    </div>
+    <p class="lede">把 <strong>InternVL3.5-2B</strong> 当理解与上下文骨干，外挂一个从零训练的 <strong>1.7B 双流 MMDiT 生成头</strong>，总计 4B；重点不在模型多大，而在<strong>高语义密度合成数据</strong>（文字渲染与编辑、SVG / 程序化科学图、空间几何、梗图）加上 <strong>CoT 改写指令</strong>。结果是在文字渲染、知识型生成和推理型编辑上明显超过 BAGEL（7B+7B）等统一模型，但离 Qwen-Image 这类专用大模型还有距离。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源（原文给出 GitHub 与 HuggingFace 模型链接）</span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">参数：4B（0.3B ViT + 2B 骨干 + 1.7B 生成头）</span>
+      <span class="badge">统一多模态（理解 / 生成 / 编辑）</span>
+      <span class="badge">AR + Flow Matching · 无 RL</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2603.09877" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>arXiv 论文</a>
+      <a href="https://github.com/OpenGVLab/InternVL-U" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.3 6.4-1.5 6.4-7A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.7c0 5.4 3.3 6.6 6.4 7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/InternVL-U/InternVL-U" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>HuggingFace 模型</a>
+      <a href="https://github.com/open-compass/GenEditEvalKit" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>GenEditEvalKit</a>
+      <a href="https://github.com/open-compass/TextEdit" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>TextEdit 基准</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均摘自原文；<span class="src calc">推算</span> 为本页自行加减。</div>
+  </nav>
+
+  <main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">总参数</div><div class="stat-num">4B</div><div class="stat-sub">ViT 0.3B + 骨干 2B + 生成头 1.7B</div><span class="src">§5.1 表 2</span></div>
+    <div class="card stat"><div class="stat-k">理解骨干</div><div class="stat-num sm">InternVL3.5-2B</div><div class="stat-sub">ViT 与上下文骨干都用它的权重初始化，tokenizer 与对话格式不变</div><span class="src">§5.1</span></div>
+    <div class="card stat"><div class="stat-k">生成头</div><div class="stat-num sm">双流 MMDiT × 20 层</div><div class="stat-sub">随机初始化，带门控注意力；VAE 与 Qwen-Image 相同</div><span class="src">§3.1.2 表 2</span></div>
+    <div class="card stat"><div class="stat-k">训练</div><div class="stat-num sm">3 阶段 · 330K 步</div><div class="stat-sub">250K + 60K + 20K；只有第 3 阶段解冻骨干</div><span class="src">表 3 · <span class="calc">合计为推算</span></span></div>
+    <div class="card stat"><div class="stat-k">推理</div><div class="stat-num sm">20 步 · CFG 3.5 / 1.5</div><div class="stat-sub">Flow-DPM-Solver；1.5 为编辑任务的纯文本 CFG</div><span class="src">§5.1</span></div>
+    <div class="card stat"><div class="stat-k">GenEval Overall</div><div class="stat-num">0.85</div><div class="stat-sub">统一模型最高；BAGEL 0.82，Qwen-Image 0.87</div><span class="src">表 5</span></div>
+    <div class="card stat"><div class="stat-k">LongText-ZH</div><div class="stat-num">0.860</div><div class="stat-sub">BAGEL 0.310；Qwen-Image 0.946</div><span class="src">表 12</span></div>
+    <div class="card stat"><div class="stat-k">RISEBench（w/ CoT）</div><div class="stat-num">9.4</div><div class="stat-sub">不用 CoT 为 3.6；Qwen-Image-Edit 8.9</div><span class="src">表 19</span></div>
+    <div class="card stat"><div class="stat-k">自建基准</div><div class="stat-num sm">TextEdit · 2,148 条</div><div class="stat-sub">18 个子类，人工 GT；另有 MiniSet-500</div><span class="src">§5.4.2 表 21</span></div>
+    <div class="card stat"><div class="stat-k">许可证 / 算力</div><div class="stat-num sm"><span class="nd">原文未披露</span></div><div class="stat-sub">GPU 规模、训练时长亦未给</div><span class="src">全文</span></div>
+  </div>
+  <p class="footnote wide">版本说明：本页依据 arXiv v1（2026-03-10 发布，页眉印 2026-3-11）全文核对。</p>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看懂</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>理解和生成分开表示</h3><p>理解侧用 ViT 语义特征进自回归骨干；生成侧用独立 VAE latent，由 MMDiT 头以骨干隐状态为条件做 Flow Matching<span class="src">§3.1.1</span>。总参数 4B，不到 BAGEL（14B）的三分之一<span class="src">摘要 表 4</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>先冻骨干训头，最后全量解冻</h3><p>S1 冻结骨干，512px 训 250K 步；S2 换任意分辨率训 60K 步，并把条件图 VAE latent 注入生成头；S3 解冻全部参数，混入理解数据与 CoT 数据训 20K 步<span class="src">§3.2.2 表 3</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>数据瞄准“高语义密度”</h3><p>文字渲染与 OCR 驱动的文字编辑、SVG 物理编辑（单样本成本 $0.16 → $0.03）<span class="src">§4.4.2</span>、程序化 CS / 几何 / CAD、Objaverse 旋转、梗图，所有指令再做 CoT 增强<span class="src">§4.3–4.7</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>CoT 对知识和推理类任务帮助最大</h3><p>WISE 0.46 → 0.58<span class="src">表 13</span>，RISEBench 3.6 → 9.4<span class="src">表 19</span>，GEdit 6.66 → 6.88<span class="src">表 16</span>；文字编辑在 TextEdit Real 子集上 MLLM 均分 0.88，BAGEL 为 0.53<span class="src">表 18</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>没有消融，理解有回落</h3><p>门控注意力、MSRoPE 插值、数据管线都没有消融。与同表的 InternVL3.5-2B 相比，MathVerse 53.4 → 45.6、LogicVista 47.7 → 40.3<span class="src">表 4</span>，降幅 7–8 分<span class="src calc">推算</span>，而正文说的是“minimal degradation”。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：MLLM 骨干 + 专用 MMDiT 生成头</h2>
+  <p class="sec-intro">论文把设计归纳为三条原则：统一上下文建模但目标按模态区分、按模态模块化、理解与生成表示解耦<span class="src">§3.1.1</span>。属于“外挂生成头”这一路线，和完全原生训练的统一模型是两回事。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="论文图 3：InternVL-U 架构设计，文本 tokenizer 与视觉理解编码器进入统一骨干，输出多模态上下文嵌入，分别送入文本生成头（next token）与视觉生成头（velocity），视觉生成编码器（VAE）加噪后接入视觉生成头" loading="lazy"></div>
+    <figcaption><b>整体架构与三条设计原则。</b>理解侧：文本 tokenizer + 视觉理解编码器（ViT）→ 统一骨干 → 多模态上下文嵌入。生成侧：训练图像经视觉生成编码器（VAE）加噪后进入视觉生成头，预测 velocity；文本仍走 next-token。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide pm">
+    <svg viewBox="0 0 720 112" role="img" aria-label="InternVL-U 参数构成：ViT 0.3B、上下文骨干 2B、视觉生成头 1.7B">
+      <text class="t-ink" x="0" y="16">参数构成（按表 2 比例绘制，总长 = 4.0B）</text>
+      <rect class="seg-v" x="0" y="30" width="54" height="34" rx="4"/>
+      <rect class="seg-b" x="54" y="30" width="360" height="34"/>
+      <rect class="seg-g" x="414" y="30" width="306" height="34" rx="4"/>
+      <text class="t-ink" x="27" y="52" text-anchor="middle">0.3B</text>
+      <text class="t-in" x="234" y="52" text-anchor="middle">上下文骨干 2B · 28 层 · Q/KV 16/8</text>
+      <text class="t-in" x="567" y="52" text-anchor="middle">视觉生成头 1.7B · 20 层 · 12 头</text>
+      <text class="t-sm" x="0" y="84">ViT：24 层，patch 14</text>
+      <text class="t-sm" x="54" y="100">骨干：head size 128，FFN 6,144（InternVL3.5-2B）</text>
+      <text class="t-sm" x="414" y="84">生成头：head size 128，FFN 6,144，patch 2</text>
+      <text class="t-sm" x="414" y="100">VAE：与 Qwen-Image 相同（参数未计入）</text>
+    </svg>
+    <div class="cap">示意 · 数据来自表 2 与 §5.1。VAE 是否计入 4B 原文未明说；0.3+2+1.7 恰为 4.0B<span class="src calc">推算</span>。</div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="论文图 4：视觉生成头结构，(a) 噪声 latent 与多模态上下文嵌入分别经 Linear/Patching 与 Linear/Norm 进入 N 个双流 MMDiT 块；(b) 双流注意力块与 FFN 块，含 QKV Expert、Gate；(c) Unified MSRoPE 坐标示例" loading="lazy"></div>
+    <figcaption><b>视觉生成头。</b>(a) 噪声 latent 走 Patching + Linear，上下文嵌入走 Norm + Linear，两路进入 N 个双流 MMDiT 块；(b) 两路共享联合自注意力，但 QKV、FFN、门控参数各自独立；(c) Unified MSRoPE：上下文里的图像 token 也用 3D（t, h, w）坐标，而非展平成 1D。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>双投影 + 方差归一化 <span class="tag">§3.1.2</span></h4><p>上下文隐状态与 VAE latent 各用独立线性投影。作者观察到上下文嵌入幅值更大、离群值更多，于是在 VLM 分支投影前加一层归一化，把方差拉到 1，以稳定训练。</p></div>
+    <div class="card mod"><h4>MMDiT 内的门控注意力 <span class="tag">§3.1.2 式 1</span></h4><p>O′ = O ⊙ σ(XW<sub>g</sub>)，W<sub>g</sub> 每个流各一份；目的是增加非线性、缓解高分辨率长上下文下的 attention sink。作者称这是门控首次用在 MMDiT 里，<span class="nd">没有给对比实验</span>。</p></div>
+    <div class="card mod"><h4>Unified MSRoPE + 分辨率插值 <span class="tag">§3.1.2</span></h4><p>位置索引范围按最大目标分辨率（如 1024px）定义；512px 预训练时用满整个范围，只把相邻 token 的步长放大，避免高分辨率微调时直接外推带来的“tiling artifact”。</p></div>
+    <div class="card mod"><h4>编辑条件的两条通路 <span class="tag">§3.2.2</span></h4><p>条件图先以 ViT 特征进入上下文骨干；从 S2 起<b>另把条件图的 VAE latent 显式注入生成头</b>，以提升像素级一致性。具体拼接方式原文没画出，本页不作推测。</p></div>
+  </div>
+
+  <div class="card diagram wide ri">
+    <svg viewBox="0 0 720 150" role="img" aria-label="分辨率插值示意：512px 时用全范围索引、步长加倍；1024px 时步长为 1">
+      <text class="hd" x="0" y="16">分辨率插值（Resolution Interpolation）：低分辨率时不缩小索引范围，只放大步长</text>
+      <line class="rail" x1="120" y1="58" x2="700" y2="58"/>
+      <line class="rail" x1="120" y1="112" x2="700" y2="112"/>
+      <text class="lb" x="0" y="62">512px 预训练</text>
+      <text class="lb" x="0" y="116">1024px 微调</text>
+      <g>
+        <circle class="dot" cx="120" cy="58" r="6"/><circle class="dot" cx="192.5" cy="58" r="6"/><circle class="dot" cx="265" cy="58" r="6"/><circle class="dot" cx="337.5" cy="58" r="6"/><circle class="dot" cx="410" cy="58" r="6"/><circle class="dot" cx="482.5" cy="58" r="6"/><circle class="dot" cx="555" cy="58" r="6"/><circle class="dot" cx="627.5" cy="58" r="6"/><circle class="dot" cx="700" cy="58" r="6"/>
+      </g>
+      <g>
+        <circle class="dot2" cx="120" cy="112" r="4"/><circle class="dot2" cx="156.25" cy="112" r="4"/><circle class="dot2" cx="192.5" cy="112" r="4"/><circle class="dot2" cx="228.75" cy="112" r="4"/><circle class="dot2" cx="265" cy="112" r="4"/><circle class="dot2" cx="301.25" cy="112" r="4"/><circle class="dot2" cx="337.5" cy="112" r="4"/><circle class="dot2" cx="373.75" cy="112" r="4"/><circle class="dot2" cx="410" cy="112" r="4"/><circle class="dot2" cx="446.25" cy="112" r="4"/><circle class="dot2" cx="482.5" cy="112" r="4"/><circle class="dot2" cx="518.75" cy="112" r="4"/><circle class="dot2" cx="555" cy="112" r="4"/><circle class="dot2" cx="591.25" cy="112" r="4"/><circle class="dot2" cx="627.5" cy="112" r="4"/><circle class="dot2" cx="663.75" cy="112" r="4"/><circle class="dot2" cx="700" cy="112" r="4"/>
+      </g>
+      <text class="sm" x="120" y="84">token 少、步长大，但覆盖同一全局坐标范围</text>
+      <text class="sm" x="120" y="138">token 多、步长小；坐标范围不变，无需外推</text>
+    </svg>
+    <div class="cap">示意 · 原文只给出“用满范围、增大步长”的规则与 512 / 1024 两个例子，点数与 2 倍步长为本页按该例绘制。</div>
+  </div>
+
+  <details class="more wide"><summary>训练目标与 CFG 设置<span class="hint">§3.2.1 §5.1</span></summary><div class="body">
+    <dl class="kv">
+      <dt>文本</dt><dd>标准 NTP 交叉熵（式 2）</dd>
+      <dt>图像</dt><dd>Flow Matching，线性插值路径 z<sub>t</sub> = t·z<sub>1</sub> + (1−t)·z<sub>0</sub>，回归速度 z<sub>1</sub> − z<sub>0</sub>（式 3）</dd>
+      <dt>总损失</dt><dd>α·L<sub>NTP</sub> + β·L<sub>FM</sub>，按阶段调整；表 3 给出 NTP:VP = 0:1（S1/S2）、1:20（S3）</dd>
+      <dt>条件丢弃（训练）</dt><dd>T2I：10% 丢弃全部条件；编辑：5% 丢弃文本 + 图像，另 5% 只丢文本保留图像</dd>
+      <dt>CFG（推理）</dt><dd>丢全部条件的尺度 3.5；编辑任务里只丢文本的尺度 1.5</dd>
+      <dt>无条件占位</dt><dd>丢弃全部条件时用 “Here is a random image &lt;img_uncond&gt;:”，&lt;img_uncond&gt; 为可学习特殊 token（图 19）</dd>
+      <dt>系统提示</dt><dd>T2I / 编辑各有一段中文系统提示，要求描述颜色、形状、文字内容、空间关系等；送入生成头前截断这部分嵌入（图 19）</dd>
+    </dl>
+  </div></details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：开源池 + 六条合成管线 + CoT 改写</h2>
+  <p class="sec-intro">论文的核心判断：生成模型的训练数据多是纹理丰富但语义稀疏的自然图，理解模型的数据（GUI、信息图、文档）纹理简单但语义密集，这种分布差异是统一模型“好看但不聪明”的主要原因<span class="src">§1</span>。数据部分围绕补齐这块展开。<b>注意：除化学数据和 TextEdit 外，原文没有给出任何一条管线的样本量。</b></p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="论文图 6：通用数据合成管线，左列预处理（多步过滤、检索扩充、合成扩充、去重），右上 T2I 四种 caption，右下编辑管线：任务路由、四级指令生成、图像编辑、任务感知验证" loading="lazy"></div>
+    <figcaption><b>通用数据管线。</b>左：多步过滤 → 检索扩充 / 合成扩充 → p-hash 去重，得到源数据池。右上：T2I 分支四类 caption（concise / dense / human-centric / variant）。右下：编辑分支由任务路由分到全局 / 物体 / 属性 / 组合四类，生成指令和编辑结果后做三维验证（指令遵循、编辑一致性、生成质量）。<span class="from">来源：论文图 6</span></figcaption>
+  </figure>
+
+  <h3 class="wide">4.1 开源数据池</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>T2I：12 个数据集 <span class="tag">表 1</span></h4><p>LAION、BLIP-3o、ShareGPT-4o-Image、OSP、Echo-4o-Image、OpenGPT-4o、FaceCaption、Flux-Reason-6M、HumanCaption、POSTER-TEXT、AutoPoster、CTW。人像与含字图是专门补的长尾<span class="src">§4.1</span>。</p></div>
+    <div class="card mod"><h4>编辑（IT2I）：19 个数据集 <span class="tag">表 1</span></h4><p>InstructPix2Pix、AnyEdit、PIPE、ImgEdit、SEED-Data-Edit、OmniEdit、UltraEdit、HQEdit、ShareGPT-4o-Image、OpenGPT-4o、X2Edit、X2I2、UniWorld perception、NHR-Edit、GPT-hqedit / omniedit / ultraedit、Nano-consistent-150k、Pico Banana。</p></div>
+  </div>
+  <p class="tbl-note wide">数据集个数为本页按表 1 清点<span class="src calc">推算</span>；各数据集实际用量与采样权重<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="wide">4.2 通用预处理与合成</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span>环节</span><span>做法</span><span>模型 / 工具</span><span>输出 / 规则</span></div>
+    <div class="pipe-row"><div class="lbl">过滤<span class="src">§4.2.1</span></div><div class="chip">美学分、分辨率阈值、NSFW、水印</div><div class="chip">阈值<span class="nd">未披露</span></div><div class="chip o">高质量子集</div></div>
+    <div class="pipe-row"><div class="lbl">扩充<span class="src">§4.2.1</span></div><div class="chip">检索：用图像 + 文本 query 查大规模搜索引擎，补长尾概念</div><div class="chip">合成：为已有样本生成逼真变体</div><div class="chip o">提升域覆盖与域内多样性</div></div>
+    <div class="pipe-row"><div class="lbl">去重<span class="src">§4.2.1</span></div><div class="chip">全部样本算感知哈希</div><div class="chip">p-hash</div><div class="chip o">去掉近重复</div></div>
+    <div class="pipe-row"><div class="lbl">T2I caption<span class="src">§4.2.2</span></div><div class="chip m">Qwen2.5-VL 写 concise / dense / human-centric 三种粒度</div><div class="chip">含字图：先写 variant caption，再用 Qwen-Image 生成图</div><div class="chip o">全量做英译中，保证双语</div></div>
+    <div class="pipe-row"><div class="lbl">编辑对<span class="src">§4.2.3</span></div><div class="chip">MLLM 路由：全局 / 物体 / 属性 / 组合四类</div><div class="chip m">Qwen2.5-VL-72B 按任务写指令；异构编辑模型集成（引 [65, 83, 136]）按任务分配</div><div class="chip o">MLLM 三维打分，三项都过阈值才保留</div></div>
+  </div>
+
+  <h3 class="wide">4.3–4.7 专项合成管线</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>管线</th><th>任务</th><th>来源 / 生成方式</th><th>过滤与验证</th><th>caption / 指令</th></tr></thead>
+      <tbody>
+        <tr><td><b>文字 · 渲染</b><span class="src">§4.3.1 图 8</span></td><td>T2I</td><td>把原 caption 直接渲染到自然图上；另在纯色底上渲染纯文本。随机采样遮罩底图（牛皮纸 / 白纸 / 木纹）、字色、中英字体、自适应排版，字号随长度自动缩放并断行</td><td>按宽高约束搜索字号（图 8）</td><td>渲染后用 Qwen2.5-VL-72B 重写 caption</td></tr>
+        <tr><td><b>文字 · 编辑</b><span class="src">§4.3.2 图 9</span></td><td>编辑</td><td>PaddleOCR 取文本、置信度、多边形 → Qwen2.5-VL-72B 选区并写编辑指令 → Flux-Text 按多边形与新文本生成</td><td>由 MLLM 筛候选区域，校验文字相关性与视觉一致性</td><td>“Replace the text ‘A’ with ‘B’” 式显式指令</td></tr>
+        <tr><td><b>科学 · 通用 T2I</b><span class="src">§4.4.1 B.1</span></td><td>T2I</td><td>开源科学理解数据集、教材、竞赛（IPHO、高考、考研）、网页</td><td>去掉 &lt;256p；p-hash 去重；<b>剔除与 §5 评测基准相同的图</b>；Qwen3-VL-8B 按 5 维打分（图类、学科、文字长度 &gt;200 字符剔除、复杂度如 5–7、知识密度如 7–8）</td><td>Qwen3-VL-32B 写 caption</td></tr>
+        <tr><td><b>科学 · 化学</b><span class="src">B.2</span></td><td>T2I</td><td>PubChem 抓 800,000 条（CID、名称、分子式、SMILES、2D 结构图）</td><td>清洗后剩 600,000 条</td><td>QA 模板合成 600,000 对图文数据</td></tr>
+        <tr><td><b>科学 · 物理 SVG</b><span class="src">§4.4.2</span></td><td>编辑</td><td>PaddleOCR 从教材 / 试卷抽图与上下文 → Gemini-3-Flash 把原图转成 SVG，决定原图作输入还是输出，并写出另一张图的 SVG 与编辑指令 → 渲染成图对</td><td>Qwen3-VL-8B 先剔除插画、实拍、公式、难转 SVG 的图；Gemini-3-Flash 再剔除富文本、物理结构或标注错误</td><td>Gemini 原始指令很详细，作 CoT；训练指令是提炼后的简短隐式版</td></tr>
+        <tr><td><b>科学 · 计算机</b><span class="src">§4.4.3 B.3</span></td><td>编辑</td><td>15 类任务：树 6、图 6、FSM 3；树和图用 matplotlib，FSM 用 Graphviz（circo）</td><td>节点固定锚点保证图对一致；计算节点间、节点与边的距离，有重叠即丢弃</td><td>传统求解器解题 → 步骤映射到 13 个人工模板 → Qwen3-Max 改写增加多样性</td></tr>
+        <tr><td><b>空间 · 立体几何</b><span class="src">§4.5.1 B.4</span></td><td>编辑</td><td>GeoGebra / matplotlib：旋转体、面对称、点对称、平移、投影 5 类；顶点数 [3, 6]，平移量 [4, 10] 整数</td><td>参数约束保证可见、不退化</td><td>原文未单列</td></tr>
+        <tr><td><b>空间 · 多视图 CAD</b><span class="src">§4.5.2</span></td><td>编辑</td><td>ABC 数据集 + OCC 库渲染等轴测 / 正 / 侧 / 俯视图，随机颜色与材质</td><td>原文未单列</td><td>“根据等轴测图生成正视图”等</td></tr>
+        <tr><td><b>空间 · 旋转</b><span class="src">§4.5.3 图 13</span></td><td>编辑</td><td>Objaverse 均匀角度渲染；每个物体生成 4 张带背景参考图；两种策略：Object-First（Qwen-Image 合成编辑图）/ Background-First（FLUX.1 Kontext 抠掉物体得到干净背景，再贴入其他朝向的物体）</td><td>bbox 宽高比限定在 [0.9, 1.1]，排除旋转后出界；朝向一致性；融合质量取最高分；Object-First 再用 GPT-5.1 查朝向和背景一致性；Background-First 用 Qwen2.5-VL 验证抠除成功</td><td>由参考图写富上下文指令（Object-First）</td></tr>
+        <tr><td><b>梗图</b><span class="src">§4.6 图 15</span></td><td>T2I + 编辑</td><td>爬取网络与开源梗图，5 段：VLM 判断是否有字 → captioner 写模型风格描述 → CoT captioner 写用户风格短提示 → 有字则去字、无字则加字，构成图对 → 生成与图对严格对齐的编辑指令</td><td>原文未给阈值</td><td>同一张图同时保留 model-style 与 user-style 两种提示</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>4.7 推理型数据：CoT 当“翻译层” <span class="tag">§4.7 图 16–18</span></h4>
+      <p>把短而抽象的指令改写成带目标、子任务、可验证约束、有序操作的规格。<b>对构建数据集里的所有指令都做了 CoT 增强</b><span class="src">§4.7</span>。</p>
+      <ul><li>通用 T2I：展开物体、背景、风格细节</li><li>通用编辑：补定位参照、要改 / 要保留的属性、视觉一致性约束</li><li>知识型：如“中秋传统食物” → 月饼外观；“放一周的香蕉” → 褐斑</li><li>梗图：场景细节 + 幽默结构 + 版式约束（字放哪）；编辑还要写明哪些区域不变</li><li>科学：概念分析与版面规划；物理用摘要前的详细指令，CS 用求解步骤</li></ul></div>
+    <div class="card mod"><h4>编辑 CoT 样本里还附了评分 <span class="tag">图 16</span></h4>
+      <p>图 16 的通用编辑示例同时展示了“原指令 → CoT → 增强指令 → 结果评分”，评分维度为 Object Identity / Mask Precision / Visual Quality（1–5），并附 Brief reasoning。正文没有说明这套评分如何参与数据筛选。</p>
+      <p>CoT 由哪个模型生成：知识型写的是“open-source models”，CS 用 Qwen3-Max 改写模板，其余未写明<span class="src">§4.7</span>。</p></div>
+  </div>
+
+  <h3 class="wide">已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项目</th><th>数量</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>开源 T2I / 编辑数据集个数</td><td>12 / 19</td><td>表 1 <span class="src calc">清点</span></td></tr>
+        <tr><td>PubChem 原始条目 → 清洗后</td><td>800,000 → 600,000</td><td>B.2</td></tr>
+        <tr><td>化学图文 QA 对</td><td>600,000</td><td>B.2</td></tr>
+        <tr><td>CS 编辑任务类型 / CoT 模板</td><td>15 / 13</td><td>B.3 §4.7</td></tr>
+        <tr><td>物理编辑单样本成本（Nano Banana Pro → SVG 管线）</td><td>$0.16 → $0.03</td><td>§4.4.2</td></tr>
+        <tr><td>旋转数据每物体参考图</td><td>4 张</td><td>§4.5.3</td></tr>
+        <tr><td>各阶段任务配比 T2I : IT2I（: Und）</td><td>4:1 → 3:4 → 1:1:2</td><td>表 3</td></tr>
+        <tr><td>通用 / 文字 / 物理 / CS / 几何 / CAD / 旋转 / 梗图 / CoT 各自样本量</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>总训练样本量、各来源占比、过滤阈值与淘汰率</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>S3 理解数据（Und）的来源与规模</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：三阶段课程</h2>
+  <p class="sec-intro">表 3 给得相当全：学习率、调度、batch、步数、分辨率、任务配比、损失权重都有。<b>没有任何 RL / 偏好优化阶段。</b></p></div>
+
+  <div class="flow three wide">
+    <div class="card stage"><div class="sid">S1</div><h4>生成头预训练</h4><dl><dt>可训练</dt><dd>生成头 + 投影；骨干冻结</dd><dt>分辨率</dt><dd>固定 512（跳过 256）</dd><dt>LR</dt><dd>3e-4 · Constant</dd><dt>步数 × batch</dt><dd>250,000 × 2048</dd><dt>任务</dt><dd>T2I : IT2I = 4:1</dd><dt>NTP : VP</dt><dd>0 : 1</dd></dl></div>
+    <div class="card stage"><div class="sid">S2</div><h4>任意分辨率续训</h4><dl><dt>可训练</dt><dd>生成头；骨干仍冻结</dd><dt>分辨率</dt><dd>512–1024，宽高比 0.5–2.0</dd><dt>LR</dt><dd>1e-4 · Cosine</dd><dt>步数 × batch</dt><dd>60,000 × 1024</dd><dt>任务</dt><dd>T2I : IT2I = 3:4</dd><dt>NTP : VP</dt><dd>0 : 1</dd></dl></div>
+    <div class="card stage"><div class="sid">S3</div><h4>统一 SFT</h4><dl><dt>可训练</dt><dd>全部解冻</dd><dt>分辨率</dt><dd>512–1024</dd><dt>LR</dt><dd>1e-5 · Cosine</dd><dt>步数 × batch</dt><dd>20,000 × 1024</dd><dt>任务</dt><dd>T2I : IT2I : Und = 1:1:2</dd><dt>NTP : VP</dt><dd>1 : 20</dd></dl></div>
+  </div>
+  <p class="tbl-note wide">共享设置：AdamW（β₁=0.9，β₂=0.999，ε=1e-8），warm-up 1000 步，理解分辨率 448，diffusion timestep shift 3.0；weight decay 0 / 0 / 0.01，梯度裁剪 0.2 / 0.2 / 1<span class="src">表 3</span>。</p>
+
+  <div class="card mod wide"><h4>各阶段任务配比 <span class="tag">表 3</span></h4>
+    <div class="bar-legend"><span>T2I</span><span class="s">IT2I（编辑）</span><span class="i">Und（理解）</span></div>
+    <div class="ratio"><div class="rlab"><b>S1 · 4:1</b><span>80% / 20%<span class="src calc">推算</span></span></div><div class="rbar"><span class="a" style="width:80%">T2I</span><span class="b" style="width:20%">IT2I</span></div></div>
+    <div class="ratio"><div class="rlab"><b>S2 · 3:4</b><span>约 43% / 57%<span class="src calc">推算</span></span></div><div class="rbar"><span class="a" style="width:42.86%">T2I</span><span class="b" style="width:57.14%">IT2I</span></div></div>
+    <div class="ratio"><div class="rlab"><b>S3 · 1:1:2</b><span>25% / 25% / 50%<span class="src calc">推算</span></span></div><div class="rbar"><span class="a" style="width:25%">T2I</span><span class="b" style="width:25%">IT2I</span><span class="c" style="width:50%">Und</span></div></div>
+    <p class="tbl-note">比例原文给出；百分比为本页换算。表 3 未说明比例按样本数还是按 token 计。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>S1：从一开始就混编辑数据 <span class="tag">§3.2.2</span></h4><p>与只用 T2I 初始化的做法 [124, 136] 不同，S1 即混入编辑数据，迫使生成头同时关注文本指令和视觉上下文 token。沿用 Sana [142] 的做法跳过 256px，直接 512px。</p></div>
+    <div class="card mod"><h4>S2：二次过滤 + VAE 注入 <span class="tag">§3.2.2</span></h4><p>只保留高美学样本，丢弃极端宽高比；对编辑任务把条件图 VAE latent 显式注入生成头。</p></div>
+    <div class="card mod"><h4>S3：更严过滤 + CoT 数据 <span class="tag">§3.2.2</span></h4><p>全量解冻，过滤标准更严，加入 §4.7 的 CoT 数据，让模型先用文字规划再生成。损失以 VP 为主（1:20）。</p></div>
+    <div class="card mod"><h4>训练量（样本次数）<span class="tag nd-tag">推算</span></h4><p>S1 约 512M、S2 约 61M、S3 约 20M 样本次数（步数 × batch）<span class="src calc">推算</span>，不等于去重后的数据量。GPU 数与时长<span class="nd">原文未披露</span>。</p></div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：理解 7 项 · 生成 8 项 · 编辑 4 项</h2>
+  <p class="sec-intro">理解用 VLMEvalKit；生成与编辑用自研并开源的 GenEditEvalKit<span class="src">§5.1</span>。对比分两组：专用生成模型、统一模型。参数写成 “A+B” 的表示理解 A + 生成 B。原表加粗在纯文本中丢失，本页用 <b>●</b> 标出统一模型组内按数值重判的最佳。</p></div>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 230" role="img" aria-label="GEdit-Bench 平均分（0–10）">
+<text class="ch-t" x="0" y="15">GEdit-Bench Avg（0–10）</text><text class="ch-src" x="0" y="30">表 16 · 全部 7 行</text>
+<line class="grid-l" x1="132" y1="36" x2="132" y2="208"/><text class="ch-ax" x="132" y="222" text-anchor="middle">0</text>
+<line class="grid-l" x1="170" y1="36" x2="170" y2="208"/><text class="ch-ax" x="170" y="222" text-anchor="middle">2</text>
+<line class="grid-l" x1="208" y1="36" x2="208" y2="208"/><text class="ch-ax" x="208" y="222" text-anchor="middle">4</text>
+<line class="grid-l" x1="246" y1="36" x2="246" y2="208"/><text class="ch-ax" x="246" y="222" text-anchor="middle">6</text>
+<line class="grid-l" x1="284" y1="36" x2="284" y2="208"/><text class="ch-ax" x="284" y="222" text-anchor="middle">8</text>
+<line class="grid-l" x1="322" y1="36" x2="322" y2="208"/><text class="ch-ax" x="322" y="222" text-anchor="middle">10</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Qwen-Image-Edit</text><rect class="bar-o" x="132" y="44" width="152.2" height="15" rx="3"/><text class="ch-val" x="289.2" y="56">8.01</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">GPT Image 1</text><rect class="bar-o2" x="132" y="68" width="142.3" height="15" rx="3"/><text class="ch-val" x="279.3" y="80">7.49</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">InternVL-U w/ CoT</text><rect class="bar-qi" x="132" y="92" width="130.7" height="15" rx="3"/><text class="ch-val" x="267.7" y="104">6.88</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">InternVL-U</text><rect class="bar-q" x="132" y="116" width="126.5" height="15" rx="3"/><text class="ch-val" x="263.5" y="128">6.66</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">BAGEL</text><rect class="bar-o" x="132" y="140" width="123.9" height="15" rx="3"/><text class="ch-val" x="260.9" y="152">6.52</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">Ovis-U1</text><rect class="bar-o" x="132" y="164" width="122.0" height="15" rx="3"/><text class="ch-val" x="259.0" y="176">6.42</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">Lumina-DiMOO</text><rect class="bar-o" x="132" y="188" width="74.3" height="15" rx="3"/><text class="ch-val" x="211.3" y="200">3.91</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="208"/></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 254" role="img" aria-label="RISEBench Overall（0–60）">
+<text class="ch-t" x="0" y="15">RISEBench Overall（0–60）</text><text class="ch-src" x="0" y="30">表 19 · 节选 8 行</text>
+<line class="grid-l" x1="132" y1="36" x2="132" y2="232"/><text class="ch-ax" x="132" y="246" text-anchor="middle">0</text>
+<line class="grid-l" x1="195.3" y1="36" x2="195.3" y2="232"/><text class="ch-ax" x="195.3" y="246" text-anchor="middle">20</text>
+<line class="grid-l" x1="258.7" y1="36" x2="258.7" y2="232"/><text class="ch-ax" x="258.7" y="246" text-anchor="middle">40</text>
+<line class="grid-l" x1="322" y1="36" x2="322" y2="232"/><text class="ch-ax" x="322" y="246" text-anchor="middle">60</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">GPT-Image-1.5</text><rect class="bar-o2" x="132" y="44" width="158.3" height="15" rx="3"/><text class="ch-val" x="295.3" y="56">50.0</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Nano Banana Pro</text><rect class="bar-o2" x="132" y="68" width="149.5" height="15" rx="3"/><text class="ch-val" x="286.5" y="80">47.2</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Seedream 4.0</text><rect class="bar-o2" x="132" y="92" width="34.2" height="15" rx="3"/><text class="ch-val" x="171.2" y="104">10.8</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">InternVL-U w/ CoT</text><rect class="bar-qi" x="132" y="116" width="29.8" height="15" rx="3"/><text class="ch-val" x="166.8" y="128">9.4</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Qwen-Image-Edit</text><rect class="bar-o" x="132" y="140" width="28.2" height="15" rx="3"/><text class="ch-val" x="165.2" y="152">8.9</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">BAGEL</text><rect class="bar-o" x="132" y="164" width="19.3" height="15" rx="3"/><text class="ch-val" x="156.3" y="176">6.1</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">InternVL-U</text><rect class="bar-q" x="132" y="188" width="11.4" height="15" rx="3"/><text class="ch-val" x="148.4" y="200">3.6</text>
+<text class="ch-lbl" x="124" y="223" text-anchor="end">Ovis-U1</text><rect class="bar-o" x="132" y="212" width="8.9" height="15" rx="3"/><text class="ch-val" x="146.0" y="224">2.8</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="232"/></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 230" role="img" aria-label="LongText-Bench-ZH（0–1）">
+<text class="ch-t" x="0" y="15">LongText-Bench-ZH（0–1）</text><text class="ch-src" x="0" y="30">表 12 · 节选 7 行</text>
+<line class="grid-l" x1="132" y1="36" x2="132" y2="208"/><text class="ch-ax" x="132" y="222" text-anchor="middle">0</text>
+<line class="grid-l" x1="179.5" y1="36" x2="179.5" y2="208"/><text class="ch-ax" x="179.5" y="222" text-anchor="middle">.25</text>
+<line class="grid-l" x1="227" y1="36" x2="227" y2="208"/><text class="ch-ax" x="227" y="222" text-anchor="middle">.5</text>
+<line class="grid-l" x1="274.5" y1="36" x2="274.5" y2="208"/><text class="ch-ax" x="274.5" y="222" text-anchor="middle">.75</text>
+<line class="grid-l" x1="322" y1="36" x2="322" y2="208"/><text class="ch-ax" x="322" y="222" text-anchor="middle">1</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Seedream 4.5</text><rect class="bar-o2" x="132" y="44" width="187.5" height="15" rx="3"/><text class="ch-val" x="324.5" y="56">.987</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Nano Banana Pro</text><rect class="bar-o2" x="132" y="68" width="180.3" height="15" rx="3"/><text class="ch-val" x="317.3" y="80">.949</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Qwen-Image</text><rect class="bar-o" x="132" y="92" width="179.7" height="15" rx="3"/><text class="ch-val" x="316.7" y="104">.946</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">InternVL-U</text><rect class="bar-q" x="132" y="116" width="163.4" height="15" rx="3"/><text class="ch-val" x="300.4" y="128">.860</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">BAGEL</text><rect class="bar-o" x="132" y="140" width="58.9" height="15" rx="3"/><text class="ch-val" x="195.9" y="152">.310</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">OmniGen2</text><rect class="bar-o" x="132" y="164" width="11.2" height="15" rx="3"/><text class="ch-val" x="148.2" y="176">.059</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">Ovis-U1</text><rect class="bar-o" x="132" y="188" width="9.7" height="15" rx="3"/><text class="ch-val" x="146.7" y="200">.051</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="208"/></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">InternVL-U</span><span class="l2">InternVL-U w/ CoT</span><span class="l3">开源模型</span><span class="l4">闭源模型</span><span>坐标轴均从 0 起</span></div>
+
+  <h3 class="wide">生成与编辑总分（统一模型组）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th>InternVL-U<br><small>2B+1.7B</small></th><th>w/ CoT</th><th>BAGEL<br><small>7B+7B</small></th><th>Ovis-U1<br><small>2.4B+1.2B</small></th><th>参照：专用 / 闭源</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>GenEval Overall</td><td class="best">0.85</td><td>—</td><td>0.82</td><td>—</td><td>Qwen-Image 0.87 · Z-Image 0.84</td><td><span class="src">表 5</span></td></tr>
+        <tr><td>DPG-Bench Overall</td><td class="best">85.18</td><td>—</td><td>85.07</td><td>83.72</td><td>Qwen-Image 88.32 · Seedream 4.5 88.63</td><td><span class="src">表 6</span></td></tr>
+        <tr><td>TIIF Overall（短 / 长）</td><td class="best">74.9 / 73.9</td><td>—</td><td>71.5 / 71.7</td><td>66.7 / 68.2</td><td>Qwen-Image 86.1 / 86.8</td><td><span class="src">表 7/8</span></td></tr>
+        <tr><td>OneIG-EN / ZH Overall</td><td class="best">0.50 / 0.50</td><td>—</td><td>0.36 / 0.37</td><td>0.34 / 0.34</td><td>Nano Banana Pro 0.58 / 0.57</td><td><span class="src">表 9/10</span></td></tr>
+        <tr><td>CVTG-2k 平均词准确率</td><td class="best">0.623</td><td>—</td><td>0.356</td><td>0.093</td><td>Seedream 4.5 0.899 · Qwen-Image 0.829</td><td><span class="src">表 11</span></td></tr>
+        <tr><td>LongText EN / ZH</td><td class="best">0.738 / 0.860</td><td>—</td><td>0.373 / 0.310</td><td>0.030 / 0.051</td><td>Qwen-Image 0.943 / 0.946</td><td><span class="src">表 12</span></td></tr>
+        <tr><td>WISE Overall</td><td>0.46</td><td class="best">0.58</td><td>0.49</td><td>0.42</td><td>UniWorld-V1 0.55 · Qwen-Image 0.63</td><td><span class="src">表 13</span></td></tr>
+        <tr><td>GenExam Overall（Relaxed）</td><td>20.8</td><td class="best">22.9</td><td>11.9</td><td>11.4</td><td>Qwen-Image 27.5 · Nano Banana Pro 93.7</td><td><span class="src">表 14</span></td></tr>
+        <tr><td>ImgEdit Overall</td><td>3.67</td><td>3.82</td><td>3.20</td><td class="best">3.97</td><td>Z-Image-Edit 4.30 · Qwen-Image-Edit 4.27</td><td><span class="src">表 15</span></td></tr>
+        <tr><td>GEdit-Bench Avg</td><td>6.66</td><td class="best">6.88</td><td>6.52</td><td>6.42</td><td>Qwen-Image-Edit 8.01</td><td><span class="src">表 16</span></td></tr>
+        <tr><td>TextEdit Real · F1 / MLLM Avg</td><td class="best">0.71 / 0.88</td><td>—</td><td>0.55 / 0.53</td><td>0.35 / 0.18</td><td>Nano Banana Pro 0.71 / 0.91</td><td><span class="src">表 17/18</span></td></tr>
+        <tr><td>RISEBench Overall</td><td>3.6</td><td class="best">9.4</td><td>6.1</td><td>2.8</td><td>Qwen-Image-Edit 8.9 · GPT-Image-1.5 50.0</td><td><span class="src">表 19</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">“—” 表示该表没有这一行。TIIF 短提示上 Lumina-DiMOO 为 74.7，仅比 InternVL-U 低 0.2<span class="src">表 7</span>；DPG 领先 BAGEL 仅 0.11<span class="src calc">推算</span>。ImgEdit 上 Ovis-U1（3.97）高于 InternVL-U 的两种设置，正文说的是“competitive”。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>CoT 不是处处加分 <span class="tag">表 14–16 19</span></h4>
+      <ul>
+        <li>RISEBench Spatial：5.0 → <span class="down">1.8</span>，总分却 3.6 → 9.4</li>
+        <li>GEdit：PB 6.03 → <span class="down">5.77</span>、ST 6.27 → <span class="down">6.10</span>、TT 6.85 → <span class="down">6.46</span></li>
+        <li>ImgEdit：Style 4.77 → <span class="down">4.69</span>、Hybrid 3.03 → <span class="down">3.00</span></li>
+        <li>GenExam History：24.9 → <span class="down">20.3</span></li>
+      </ul>
+      <p>增益集中在知识、推理、颜色修改、文字修改等需要“想清楚改什么”的类别。</p></div>
+    <div class="card mod"><h4>理解：相对自己的基座有回落 <span class="tag">表 4</span></h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>基准</th><th>InternVL3.5-2B</th><th>InternVL-U</th><th>差值 <span class="src calc">推算</span></th></tr></thead>
+        <tbody>
+          <tr><td>MME-P</td><td>1552.1</td><td>1607.5</td><td class="up">+55.4</td></tr>
+          <tr><td>SEED</td><td>75.3</td><td>75.2</td><td>−0.1</td></tr>
+          <tr><td>ChartQA</td><td>80.7</td><td>76.6</td><td class="down">−4.1</td></tr>
+          <tr><td>OCRBench</td><td>83.6</td><td>83.9</td><td class="up">+0.3</td></tr>
+          <tr><td>MMMU</td><td>59.0</td><td>54.7</td><td class="down">−4.3</td></tr>
+          <tr><td>MathVerse</td><td>53.4</td><td>45.6</td><td class="down">−7.8</td></tr>
+          <tr><td>LogicVista</td><td>47.7</td><td>40.3</td><td class="down">−7.4</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">表中 * 表示用作者自己的脚本评测（Ovis-U1、BAGEL 部分格子带 *）；InternVL3.5-2B 一行不带 *，是否同脚本复测原文未说。</p></div>
+  </div>
+
+  <details class="more wide"><summary>TextEdit 分 Real / Virtual 结果（经典指标 + MLLM 指标）<span class="hint">表 17、18</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>模型</th><th>Real OA</th><th>Real F1</th><th>Real NED</th><th>Virtual OA</th><th>Virtual F1</th><th>Real MLLM Avg</th><th>Virtual MLLM Avg</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen-Image-Edit（20B）</td><td>0.75</td><td>0.67</td><td>0.71</td><td>0.78</td><td>0.74</td><td>0.77</td><td>0.77</td></tr>
+        <tr><td>GPT-Image-1.5</td><td>0.74</td><td>0.68</td><td>0.68</td><td>0.73</td><td>0.71</td><td>0.90</td><td>0.90</td></tr>
+        <tr><td>Nano Banana Pro</td><td>0.77</td><td>0.71</td><td>0.72</td><td>0.80</td><td>0.78</td><td>0.91</td><td>0.92</td></tr>
+        <tr><td>Lumina-DiMOO</td><td>0.22</td><td>0.20</td><td>0.19</td><td>0.22</td><td>0.22</td><td>0.09</td><td>0.08</td></tr>
+        <tr><td>Ovis-U1</td><td>0.40</td><td>0.35</td><td>0.35</td><td>0.37</td><td>0.39</td><td>0.18</td><td>0.19</td></tr>
+        <tr><td>BAGEL</td><td>0.60</td><td>0.55</td><td>0.55</td><td>0.57</td><td>0.57</td><td>0.53</td><td>0.54</td></tr>
+        <tr class="hl"><td>InternVL-U</td><td class="best">0.77</td><td class="best">0.71</td><td class="best">0.72</td><td class="best">0.79</td><td class="best">0.75</td><td class="best">0.88</td><td class="best">0.83</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">● 为统一模型组内最佳。OA = 目标区 OCR 准确率；F1 = <b>背景文字保持</b>的 OCR F1（不是目标文字正确率）；NED = 原文本框内的 ROI-Aware NED。MLLM Avg 是带截断的加权分，见下方“启示 E2”。<span class="src">表 22 A.2.2</span></p>
+  </div></details>
+
+  <details class="more wide"><summary>GenEval / WISE / GenExam 分项（节选）<span class="hint">表 5、13、14</span></summary><div class="body">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>模型</th><th>GenEval Counting</th><th>GenEval Position</th><th>WISE Cultural</th><th>WISE Physics</th><th>GenExam Math</th><th>GenExam Phy</th><th>GenExam Chem</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen-Image（20B）</td><td>0.89</td><td>0.76</td><td>0.63</td><td>0.72</td><td>18.9</td><td>26.3</td><td>15.3</td></tr>
+        <tr><td>BAGEL</td><td>0.81</td><td>0.64</td><td>0.44</td><td>0.62</td><td>14.7</td><td>10.6</td><td>7.9</td></tr>
+        <tr><td>Janus-Pro</td><td>0.59</td><td>0.79</td><td>0.30</td><td>0.42</td><td>13.7</td><td>8.8</td><td>8.2</td></tr>
+        <tr class="hl"><td>InternVL-U</td><td>0.74</td><td>0.77</td><td>0.37</td><td>0.62</td><td>21.5</td><td>22.2</td><td>19.3</td></tr>
+        <tr class="hl"><td>InternVL-U w/ CoT</td><td>—</td><td>—</td><td>0.55</td><td>0.72</td><td>25.6</td><td>24.2</td><td>23.5</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">GenEval 计数 0.74 低于 BAGEL 0.81；化学类 GenExam 19.3 / 23.5 高于 Qwen-Image 的 15.3，可能与 PubChem 60 万条化学数据有关——这是推测，论文没做归因实验。</p>
+  </div></details>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="论文图 1：InternVL-U 文生图（上）与图像编辑（下）效果拼图" loading="lazy"></div>
+    <figcaption><b>文生图（上）与编辑（下）展示。</b>作者挑选的案例，宣称支持任意分辨率生成与编辑；不代表平均水平。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪：五条可核对的点</h2>
+  <p class="sec-intro">MLLM + 外挂 DiT 头、Flow Matching、CFG、多阶段课程都已是常规做法，不计入。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>MMDiT 里加元素级门控注意力</h4><p>每个流独立的 sigmoid 门控乘在注意力输出上<span class="src">§3.1.2 式 1</span>，作者称是首次用于 MMDiT。</p><p class="why">只有动机（非线性、attention sink），没有消融，收益无法核对。</p></div>
+    <div class="card nv"><h4>上下文里的图像 token 也用 3D MSRoPE，并按最大分辨率做位置插值</h4><p>生成目标与上下文中的视觉 token 共用 (t, h, w) 坐标；低分辨率阶段用满索引范围、放大步长<span class="src">§3.1.2 图 4c</span>。</p><p class="why">针对编辑的空间对齐和分辨率扩展；同样没有对比实验。</p></div>
+    <div class="card nv"><h4>用 SVG 做物理图编辑对</h4><p>Gemini-3-Flash 把栅格图转 SVG，再写出编辑后 SVG 与指令，渲染成图对；单样本成本从 $0.16 降到 $0.03<span class="src">§4.4.2</span>。</p><p class="why">把“编辑像素”改成“编辑代码”，未改动部分天然一致。</p></div>
+    <div class="card nv"><h4>旋转编辑的 Background-First 构造</h4><p>先抠出干净背景，再贴入不同朝向的渲染物体，得到背景完全一致的编辑对<span class="src">§4.5.3 图 13</span>。</p><p class="why">与 Object-First（生成模型合成、GPT-5.1 过滤）并行，两种策略的比例原文未给。</p></div>
+    <div class="card nv"><h4>TextEdit：目标区 / 背景区分开评 + 带截断的 MLLM 评分</h4><p>2,148 条、18 子类、人工 GT；OCR 指标拆成目标准确率与背景保持，MLLM 评分在目标文字失败（s₁&lt;4）时把其余维度清零<span class="src">附录 A 式 6–14</span>。</p><p class="why">直接针对“没改动也能拿高一致性分”的漏洞。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">每条先写论文做法（带出处），再给一条可迁移做法。高亮框内都是<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>编辑对三维验收，全过才留</h4>
+        <p class="paper">论文：MLLM 按任务专属 prompt 评指令遵循、编辑一致性、生成质量三项，三项都超过阈值才保留<span class="src">§4.2.3</span>；阈值未给。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>三项分数全部落盘，不只存“过 / 不过”；被拒样本按失败维度分桶，“指令遵循高、一致性低”的样本可直接拿来做偏好对的负例。阈值用一两百条人工标注校准，并记录每类任务的通过率。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>按任务分配给最合适的编辑模型</h4>
+        <p class="paper">论文：MLLM 路由把源图分到全局 / 物体 / 属性 / 组合四类，再分给异构编辑模型集成里最擅长该粒度的模型<span class="src">§4.2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每条样本记下生成模型和路由类别；定期按“任务 × 模型”统计验收通过率，防止某个模型的风格偏差（色偏、过锐）集中出现在某一类任务里。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>文字编辑：OCR 定位 → MLLM 写指令 → 专用模型生成</h4>
+        <p class="paper">论文：PaddleOCR 取文本、置信度、多边形；Qwen2.5-VL-72B 选区并写指令；Flux-Text 生成<span class="src">§4.3.2 图 9</span>。原文没提生成后是否再验证。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>生成后再跑一遍 OCR，直接复用 TextEdit 的目标区 OA 与背景区 F1 公式做准入：目标串出现、原串消失、背景文字不变，三条都满足才入库。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>结构化图像改“代码”而不是改像素</h4>
+        <p class="paper">论文：物理图转 SVG 后编辑（$0.16 → $0.03）<span class="src">§4.4.2</span>；CS 图用 matplotlib / Graphviz，节点固定锚点并做重叠检测<span class="src">§4.4.3</span>；几何、CAD 也都是程序渲染<span class="src">§4.5</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>海报、图表、UI 截图这类有源码表示的图，可以用 SVG / HTML 渲染出编辑对，未改部分像素级一致，也就能当作保持类指标的干净 GT。渲染器版本和字体一并锁定，避免同一份代码渲染出漂移。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>用共享干净背景合成“只改一处”的编辑对</h4>
+        <p class="paper">论文：Background-First——FLUX.1 Kontext 抠除物体，Qwen2.5-VL 验证抠除成功，再按 bbox 贴入其他朝向的物体<span class="src">§4.5.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>同一张干净背景可以派生出多条编辑对（换朝向、换物体、增删），用来补“背景必须不动”的类别；这批样本也适合抽出来做保持度评测集。</p></div>
+      <div class="impl"><h4><span class="ix">D6</span>训练数据与评测集去重</h4>
+        <p class="paper">论文：科学 T2I 数据剔除与 §5 评测基准相同的图<span class="src">§4.4.1</span>；其他管线原文未提。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据同样要对 ImgEdit / GEdit / 内部评测集的<b>源图</b>做 p-hash 查重，尤其是开源编辑数据集与评测集同源的情况；查重结果写进数据卡。</p></div>
+    </div>
+
+    <div class="impl-group">Caption / 指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>同一对图保留“模型风格 + 用户风格”两种指令</h4>
+        <p class="paper">论文：梗图管线先写细粒度 model-style 描述，再由 CoT captioner 写贴近真实用户的短提示<span class="src">§4.6</span>；物理数据用 Gemini 的详细指令当 CoT，训练指令是摘要后的简短隐式版<span class="src">§4.4.2 §4.7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 一次产出两份：详细规格（改什么、改成什么、哪些不变）和一句话用户指令。训练时短指令作输入、规格作 think 目标或改写器训练数据，同一份标注能服务两个用途。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>CoT 增强要显式写“保留什么”</h4>
+        <p class="paper">论文：编辑类 CoT 补定位参照、要改 / 要保留的属性、一致性约束，且不改变原意<span class="src">§4.7 图 16</span>；梗图编辑明确写哪些区域不变<span class="src">§4.7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>在 JSON caption 里单列 <code>keep</code> 字段（区域 + 属性），评测时按 keep 列表逐项检查，而不是只看全图相似度；这样“保持”类失败可以定位到具体对象。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>能从构造过程得到的真值，先由程序写、再交给 LLM 改写</h4>
+        <p class="paper">论文：CS 数据用传统求解器解题，步骤映射到 13 个人工模板，再由 Qwen3-Max 改写<span class="src">§4.7</span>；文字渲染图渲染后再用 Qwen2.5-VL-72B 重写 caption<span class="src">§4.3.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>合成编辑对的指令（如“把 X 换成 Y”“旋转 150°”）先由生成参数直接填模板，LLM 只负责换说法；改写后用规则回查关键字段（数值、文字串、方向）是否被改掉。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>caption 粒度分档 + 全量双语</h4>
+        <p class="paper">论文：Qwen2.5-VL 写 concise / dense / human-centric 三档 caption；全数据集做英译中<span class="src">§4.2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>多档 caption 都存，训练时按步采样；翻译时把引号里的待渲染文字锁住不翻，否则文字编辑类样本的目标串会被一起译掉。</p></div>
+    </div>
+
+    <div class="impl-group">评测</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>“改没改对”和“别处坏没坏”分开算</h4>
+        <p class="paper">论文：TextEdit 的 OA 只看与目标区 IoU&gt;0.5 的文字，原文仍在且目标缺失时乘 0.2；OP / OR / F1 只看背景区文字保持<span class="src">A.2.2 式 6–9</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>任意局部编辑都可以照此拆：编辑区用任务指标（OCR、检测、属性分类），编辑区外用保持指标，并对“原样输出”单独设惩罚系数，防止保持分把没完成编辑的样本拉高。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>MLLM 评分加“主任务失败即清零”的截断</h4>
+        <p class="paper">论文：Gemini-3-Pro-Preview 看原图、GT、结果三张图，五维 1–5 打分，归一化后按 40/30/10/10/10 加权；目标文字分 s₁&lt;4 时其余四维计 0；要求输出 JSON（分数 + 理由）<span class="src">A.2.2 式 13 图 28–29</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测的 VLM judge 都可以加“指令遵循不及格 → 质量分不计”的门控，并把 GT 图（有就给）作为参考输入。同时报门控前后两套分，便于看清模型是输在“没改”还是“改坏”。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>分层抽样的小集用于快速迭代</h4>
+        <p class="paper">论文：从 18 个子类各自随机抽样组成 MiniSet-500，用于快速评测与消融<span class="src">A.3</span>；InternVL-U Real F1 在全集与小集上都是 0.71<span class="src">表 17/23</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每个 checkpoint 先跑分层小集，定期用全集复核小集的模型排序是否一致（可算 Kendall τ）；不一致时扩大样本量少的子类。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>CoT / 改写器要分开报，并看分项</h4>
+        <p class="paper">论文：每张表都列了 w/ CoT 与 w/o 两行；CoT 让 RISEBench 总分 3.6 → 9.4，但 Spatial 5.0 → 1.8，GEdit 的 PB / ST / TT 也下降<span class="src">表 16 19</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>上线带改写器的编辑系统时，按类别报改写前后差值，对改写后变差的类别（风格、美颜这类本来就不需要推理的）直接绕过改写器。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>没有消融。</b>门控注意力、Unified MSRoPE 与分辨率插值、双投影归一化、S1 混入编辑数据、S2 的 VAE 注入、各专项数据管线，都没有去掉某项的对比；唯一的对照是 CoT 开 / 关。</li>
+    <li class="key"><b>数据量与配比几乎全未披露。</b>只有任务级比例（表 3）、化学 80 万 → 60 万、TextEdit 2,148 条；每条管线的样本数、过滤阈值、淘汰率、S3 理解数据来源都没给。</li>
+    <li class="key"><b>理解能力回落比正文说得大。</b>同表对比 InternVL3.5-2B：MathVerse −7.8、LogicVista −7.4、MMMU −4.3、ChartQA −4.1<span class="src calc">推算</span><span class="src">表 4</span>，正文表述为“minimal degradation”。</li>
+    <li><b>表 18 Virtual 侧 TA 与 SI 两列疑似对调。</b>按附录的加权公式，MLLM Avg 不应超过 0.4·TA + 0.3·TP + 0.1·(SI+LR+VC)。Virtual 侧 Nano Banana Pro 按列算上界 0.90 &lt; 报告的 0.92，GPT-Image-1.5 0.88 &lt; 0.90，BAGEL 0.48 &lt; 0.54；把 TA 与 SI 对调后都能对上<span class="src calc">推算</span><span class="src">表 18 式 13</span>。Real 侧数值自洽。</li>
+    <li><b>TextEdit 自建自评，GT 来源说法不一。</b>A.1 说 GT 是人工编辑，A.2.1 说指令由规则生成、GT 经人工核验；训练里又有 OCR + Flux-Text 合成的文字编辑数据，两者是否同源原文未说明。评分器是单一闭源模型 Gemini-3-Pro-Preview。</li>
+    <li><b>LongText 表两行完全相同。</b>Z-Image 与 Qwen-Image 的 EN / ZH 都是 0.943 / 0.946<span class="src">表 12</span>，疑似抄错。</li>
+    <li><b>参数口径与引用不一致。</b>总参数 4B<span class="src">§5.1</span>，§5.3.3 又写“only 3.7B”；Janus-Pro 在表 4 记 1.5B、在表 5 记 7B；Qwen-Image 有 [136] / [137] 两条重复文献，表 14 中 GPT-Image-1.5 也被标成 [136]。</li>
+    <li><b>正文交叉引用错位。</b>梗图 Stage 5 说对齐“Stage 3 生成的图对”，图对实际在 Stage 4 产生<span class="src">§4.6</span>；立体几何实现指向 B.3，实际在 B.4<span class="src">§4.5.1</span>；CAD 示例说在图 11，实际在图 12<span class="src">§4.5.2</span>。</li>
+    <li><b>CoT 代价没报。</b>推理时先生成文字再出图，额外 token 数与延迟未报告；CoT 还让部分类别变差（见评测节）。</li>
+    <li><b>没有偏好优化 / RL，也没有算力信息。</b>GPU 规模、训练时长、许可证均未披露；对比基线的数值部分来自原论文、部分为作者自测（* 标注），评测设置并不完全统一。</li>
+  </ul>
+</section>
+
+<!-- 10 INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>文生图与编辑效果展示</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 3</td><td>整体架构与三条设计原则</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 4</td><td>视觉生成头：双流 MMDiT、门控注意力、Unified MSRoPE</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 6</td><td>通用数据管线：预处理、T2I caption、编辑合成与验证</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>表 1</td><td>开源 T2I / 编辑数据集清单</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>表 2</td><td>三个模块的层数、头数、参数量</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 3</td><td>三阶段超参、任务配比、损失权重</td><td><a href="#train">训练</a></td></tr>
+        <tr><td>表 4</td><td>理解与推理 7 项</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 5–14</td><td>GenEval、DPG、TIIF、OneIG、CVTG-2k、LongText、WISE、GenExam</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 15–19</td><td>ImgEdit、GEdit、TextEdit（经典 / MLLM）、RISEBench</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 20–24</td><td>TextEdit 对比、子类统计、指标定义、MiniSet-500</td><td><a href="#impl">启示</a> · <a href="#novel">新在哪</a></td></tr>
+        <tr><td>示意</td><td>参数构成条、分辨率插值（本页自绘，非原图）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>柱状图</td><td>GEdit Avg / RISEBench / LongText-ZH（本页据表 12、16、19 绘制）</td><td><a href="#eval">评测</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">figures/fig0-teaser.jpg 为论文首页摘要文字裁图，不是图表，本页未使用。论文图 2、5、7–29（数据示例、各管线流程、定性对比、评测 prompt）未提供裁图，本页以文字转述。</p>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本文基于 <a href="https://arxiv.org/abs/2603.09877" target="_blank" rel="noopener">InternVL-U: Democratizing Unified Multimodal Models for Understanding, Reasoning, Generation and Editing（arXiv:2603.09877）</a>，v1 发布于 2026-03-10，本页依据 v1 全文核对。文中数字均来自原文，标注 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，非论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

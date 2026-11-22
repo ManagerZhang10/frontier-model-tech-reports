@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LTX-2 中文深读 · 14B+5B 非对称双流 DiT、音画联合生成与 modality-CFG | 前沿模型技术报告</title>
+<meta name="description" content="LTX-2（Lightricks, arXiv 2601.03233）中文深读：14B 视频流 + 5B 音频流的非对称双流 DiT、双向音视频交叉注意力与跨模态 AdaLN、Gemma3-12B 多层特征 + thinking tokens、立体声音频 VAE、modality-CFG、音画联合 caption，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: dual-stream block schematic, CFG passes, speed / duration charts */
+.dsb .v-box { fill: color-mix(in srgb, var(--accent) 14%, var(--card)); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); stroke-width: 1.2; }
+.dsb .a-box { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.dsb .t-box { fill: var(--bg-accent); stroke: var(--line); stroke-width: 1.2; }
+.dsb .x-box { fill: var(--card); stroke: var(--ink-2); stroke-width: 1.3; stroke-dasharray: 4 3; }
+.dsb .ar { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#ltxah); }
+.dsb .ar-x { stroke: var(--good); stroke-width: 1.6; fill: none; marker-end: url(#ltxahg); marker-start: url(#ltxahg2); }
+.dsb .ah { fill: var(--muted); }
+.dsb .ahg { fill: var(--good); }
+.dsb .mono { fill: var(--accent-ink); font: 600 10.5px var(--f-mono); }
+.dsb .mono-w { fill: var(--warm); font: 600 10.5px var(--f-mono); }
+.dsb .mono-g { fill: var(--good); font: 600 10.5px var(--f-mono); }
+.cfg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.cfg3 .stage { border-top: 3px solid var(--accent); }
+.cfg3 .stage:nth-child(2) { border-top-color: var(--good); }
+.cfg3 .stage:nth-child(3) { border-top-color: var(--warm); }
+.cfg3 .stage::after { display: none !important; }
+.cfg3 code { white-space: normal; }
+.formula { font: 600 .92rem/1.7 var(--f-mono); padding: 12px 14px; overflow-x: auto; white-space: nowrap; color: var(--ink); }
+.flow .stage { border-top: 3px solid var(--accent); }
+.flow .stage.dim { border-top-color: var(--bar-other); }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .35rem 0 0; color: var(--ink-2); }
+.spd .grid { stroke: var(--line); stroke-width: 1; }
+.cap-anat { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.cap-anat .mod { margin: 0; }
+.cap-anat ul { padding-left: 1.1em; }
+.hero-fig figure.fig { margin: 0; max-width: 1080px; }
+@media (max-width: 960px) { .cfg3, .cap-anat { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视频生成（音画联合）</div>
+    <h1>LTX-2<span class="sub">LTX-2: Efficient Joint Audio-Visual Foundation Model</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Lightricks</b></span>
+      <span>发布 <b>2026-01-06</b>（arXiv v1）</span>
+      <span>arXiv <b>2601.03233</b></span>
+      <span>本页依据 <b>v1</b> 全文</span>
+    </div>
+    <p class="lede">一个文本到「视频 + 音频」（T2AV）的联合扩散模型：<b>14B</b> 视频流 + <b>5B</b> 音频流的非对称双流 DiT<span class="src">摘要 · §3.1</span>，每层都用只带时间 RoPE 的双向音视频交叉注意力对齐两路<span class="src">§3.1.1</span>，再加一个可单独调节的「跨模态」CFG 项<span class="src">§4.1</span>。720p、121 帧下每个扩散步 <b>1.22 s</b>，Wan 2.2-14B 是 22.30 s<span class="src">表 1</span>。对编辑方向的读者，最值得看的是 §5.1 的音画联合 caption 规范：只写看到和听到的，不写情绪解读，台词要逐字转写并标说话人、语种和口音。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源：权重 + 代码</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>19B（14B 视频 + 5B 音频）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>视频生成（音画联合）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h2l2-6 4 12 3-9 2 3h5"/></svg>T2AV · 立体声</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2601.03233" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>arXiv 2601.03233</a>
+      <a href="https://github.com/Lightricks/LTX-2" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.3 6.4-1.5 6.4-7A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.7c0 5.5 3.3 6.7 6.4 7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub · Lightricks/LTX-2</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据与 caption</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">正文 10 页 + 附录 1 页。全文只有 1 张数字表（表 1）。</div>
+  </nav>
+
+  <main>
+
+<!-- ============ 01 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">卡片里的数字都来自原文；论文没写的标 <span class="nd">原文未披露</span>。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">总参数</span><span class="stat-num">19B</span><span class="stat-sub">视频流 14B + 音频流 5B</span><span class="src">摘要 · 表 1</span></div>
+    <div class="card stat"><span class="stat-k">文本编码器</span><span class="stat-num sm">Gemma3-12B（冻结）</span><span class="stat-sub">取所有 decoder 层的特征，不只取最后一层</span><span class="src">§3.2</span></div>
+    <div class="card stat"><span class="stat-k">每步耗时（H100）</span><span class="stat-num">1.22 s</span><span class="stat-sub">Wan 2.2-14B 22.30 s；720p、121 帧、CFG=1</span><span class="src">表 1</span></div>
+    <div class="card stat"><span class="stat-k">提速倍数</span><span class="stat-num">≈18×</span><span class="stat-sub">22.30 / 1.22 ≈ 18.3</span><span class="src calc">推算</span></div>
+    <div class="card stat"><span class="stat-k">最长时长</span><span class="stat-num">20 s</span><span class="stat-sub">连续视频 + 同步立体声</span><span class="src">§6.3</span></div>
+    <div class="card stat"><span class="stat-k">最高分辨率</span><span class="stat-num sm">1080p</span><span class="stat-sub">约 0.5 MP 起生成 → latent 上采样 → 分块细化</span><span class="src">§4.2</span></div>
+    <div class="card stat"><span class="stat-k">音频 latent</span><span class="stat-num sm">1 token ≈ 1/25 s</span><span class="stat-sub">每 token 128 维；16 kHz 立体声 mel 输入</span><span class="src">§3.3</span></div>
+    <div class="card stat"><span class="stat-k">输出音频</span><span class="stat-num sm">24 kHz 立体声</span><span class="stat-sub">HiFi-GAN 系 vocoder，通道数比 V1 翻倍</span><span class="src">§3.3.1</span></div>
+    <div class="card stat"><span class="stat-k">CFG 权重</span><span class="stat-num sm">视频 s<sub>t</sub>=3, s<sub>m</sub>=3<br>音频 s<sub>t</sub>=7, s<sub>m</sub>=3</span><span class="stat-sub">所有报告结果都用这组</span><span class="src">§4.1</span></div>
+    <div class="card stat"><span class="stat-k">Artificial Analysis 排名</span><span class="stat-num sm">I2V 第 3 · T2V 第 4</span><span class="stat-sub">截至 2025-11-06</span><span class="src">§6.2</span></div>
+    <div class="card stat"><span class="stat-k">训练数据规模</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只说是 LTX-Video 数据集里「音频有信息量」的子集</span><span class="src">§5</span></div>
+    <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">原文只写「权重和代码全部公开」并给出 GitHub 链接</span><span class="src">摘要 · 脚注 2</span></div>
+  </div>
+  <p class="footnote wide">版本说明：本页依据 arXiv v1（2026-01-06）。结论 §9 写的是「13B 视频 DiT + 3B 音频流」，和摘要/§3.1/表 1 的 14B + 5B（共 19B）对不上，详见 <a href="#limits">局限</a>。本页统一用 14B + 5B。</p>
+</section>
+
+<!-- ============ 02 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>非对称双流：视频分到大部分参数</h3><p>视频流 14B、音频流 5B，共享深度，每层四步：自注意力 → 文本交叉注意力 → 音视频交叉注意力 → FFN<span class="src">§3.1</span>。思路是视频的信息密度更高，所以拿更多参数；不像 Ovi 那样复制两个同尺寸骨干<span class="src">§2.1 · §6.3</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>跨模态注意力只用时间 RoPE</h3><p>视频用 3D RoPE（x, y, t），音频用 1D RoPE；音视频互相注意时 Q/K 只加时间分量，强制它学「何时对齐」而不是「哪里对齐」<span class="src">§3.1.1</span>。跨模态 AdaLN 门控用的是对方模态的 timestep<span class="src">§3.1.2</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>文本侧下了很重的功夫</h3><p>冻结的 Gemma3-12B，取全部层特征，经 mean-centered scaling 后拼接，再用投影矩阵 W 投影；之后接双向 Text Connector，并用可学习的 thinking tokens 替换 padding 位置；视频流和音频流各自有一个 connector<span class="src">§3.2</span>。作者认为这对语音的发音准确性很关键<span class="src">§1</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>modality-CFG：文本和跨模态分开加权</h3><p>在标准 CFG 上再加一项 s<sub>m</sub>·(M(x,t,m) − M(x,t,∅))，s<sub>m</sub> 调大时音画同步更好<span class="src">§4.1</span>。报告结果用视频 3/3、音频 7/3<span class="src">§4.1</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>效果结论大多没给数字</h3><p>音画联合的人评只有定性描述：明显优于 Ovi，与 Veo 3 和 Sora 2 相当，没给胜率和样本数<span class="src">§6.1</span>。全文唯一的数字表是每步耗时<span class="src">表 1</span>；数据规模、配比和训练超参都 <span class="nd">原文未披露</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 03 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：两个 causal VAE、一条文本管线、一个非对称双流 DiT</h2>
+    <p class="sec-intro">三大组件：(i) 两个模态各自的 VAE；(ii) 精修过的文本嵌入管线；(iii) 双流 DiT 联合去噪<span class="src">§3</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="LTX-2 总体架构：音频经 mel 谱和音频 VAE 编码，视频经视频 VAE 编码，文本经冻结的文本编码器、特征提取器和两个 Text Connector，进入 N 层音频流/视频流，中间以音视频交叉注意力相连，分别计算音频损失和视频损失" loading="lazy" width="1022" height="573"></div>
+    <figcaption><b>总体架构。</b>音频、视频各自用 causal VAE 编码成 latent；文本经冻结的编码器 → 特征提取器 → 两个 Text Connector（音频流、视频流各一个），通过交叉注意力送入双流 DiT；两路之间用音视频交叉注意力相连，分别计算音频损失和视频损失。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>相对前代 LTX-Video 改了什么</h3>
+    <p>作者说 LTX-2 沿用 LTX-Video 的设计原则和时空 latent 空间，新加的是高保真音频、多语言支持和精修后的文本理解管线<span class="src">§1</span>。按组件拆开看：</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>视频 latent <span class="tag">沿用</span></h4>
+      <p>时空 causal VAE 编码，线性投影到 Transformer 宽度后进入 DiT 堆叠<span class="src">§3</span>。VAE 的压缩率、通道数本文没写，需看 LTX-Video 原文 <span class="nd">原文未披露</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>音频 VAE <span class="tag ok-tag">新增</span></h4>
+      <p>输入 16 kHz 立体声，两个声道各算一个 mel 谱后在通道维拼接，送进 causal 音频 VAE。输出 1D latent 序列，每个 token 约 1/25 秒、128 维<span class="src">§3.3</span>。mel 参数化沿用 AudioLDM 系做法，扩展成原生立体声<span class="src">§3.3</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>Vocoder <span class="tag ok-tag">新增</span></h4>
+      <p>基于 HiFi-GAN，输入两声道 16 kHz mel，联合合成 <b>24 kHz</b> 双声道波形，相当于顺带做了上采样；生成器通道数是 HiFi-GAN V1 的 2 倍<span class="src">§3.3.1</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>双流 DiT <span class="tag ok-tag">新增</span></h4>
+      <p>视频流 14B，音频流 5B<span class="src">§3.1</span>。每个 block 依次做：自注意力 → 文本交叉注意力 → AV 交叉注意力 → FFN，主操作之间插 RMSNorm<span class="src">§3.1</span>。附录图 A2 说两条流的结构相同<span class="src">图 A2</span>，差别在宽度/参数量。具体层数和宽度 <span class="nd">原文未披露</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>位置编码 <span class="tag ok-tag">新增</span></h4>
+      <p>视频用 3D RoPE（x, y, t），音频用 1D RoPE；<b>AV 交叉注意力里 Q/K 只加时间分量</b><span class="src">§3.1.1</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>跨模态 AdaLN <span class="tag ok-tag">新增</span></h4>
+      <p>在 AV 交叉注意力里，先用<em>本流</em>的 timestep 分别调制 Q 和 (K, V)；注意力的输出再过一个门，门的参数取决于<em>对方模态</em>的 timestep<span class="src">§3.1.2</span>。作者说这样两路的 timestep 或时间分辨率不同时也能对齐<span class="src">§3.1</span>。</p>
+    </div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="(a) 双流骨干：视频流与音频流各有 Self Attention、T2V/T2A Cross Attention、A2V/V2A Cross Attention、FFN；(b) 交叉注意力块细节：Q/K/V 经 timestep 驱动的 Scale/Shift、Temporal 1D RoPE，Cross Attention 后接由另一模态 timestep 控制的 Gate" loading="lazy" width="1018" height="544"></div>
+    <figcaption><b>(a) 双流骨干的一层；(b) AV 交叉注意力块。</b>注意 (b) 中左侧 Gate 由 Audio Timestep 驱动、右侧 Gate 由 Video Timestep 驱动，这就是「跨模态 AdaLN」。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide">
+    <svg class="dsb" viewBox="0 0 820 300" role="img" aria-label="双流 block 内的四步操作示意">
+      <defs>
+        <marker id="ltxah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ltxahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahg" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="ltxahg2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahg" d="M10 0 0 5 10 10z"/></marker>
+      </defs>
+      <!-- video column -->
+      <text class="dg-t" x="30" y="26">视频流 · 14B</text>
+      <text class="mono" x="30" y="42">3D RoPE (x, y, t)</text>
+      <rect class="v-box" x="30" y="56" width="250" height="40" rx="9"/><text class="dg-t" x="46" y="81">① Self-Attention（视频内）</text>
+      <rect class="v-box" x="30" y="110" width="250" height="40" rx="9"/><text class="dg-t" x="46" y="135">② Text Cross-Attn（视频 connector）</text>
+      <rect class="x-box" x="30" y="164" width="250" height="40" rx="9"/><text class="dg-t" x="46" y="189">③ A2V Cross-Attn（Q=视频）</text>
+      <rect class="v-box" x="30" y="218" width="250" height="40" rx="9"/><text class="dg-t" x="46" y="243">④ FFN</text>
+      <!-- audio column -->
+      <text class="dg-t" x="540" y="26">音频流 · 5B</text>
+      <text class="mono-w" x="540" y="42">1D RoPE (t)</text>
+      <rect class="a-box" x="540" y="56" width="250" height="40" rx="9"/><text class="dg-t" x="556" y="81">① Self-Attention（音频内）</text>
+      <rect class="a-box" x="540" y="110" width="250" height="40" rx="9"/><text class="dg-t" x="556" y="135">② Text Cross-Attn（音频 connector）</text>
+      <rect class="x-box" x="540" y="164" width="250" height="40" rx="9"/><text class="dg-t" x="556" y="189">③ V2A Cross-Attn（Q=音频）</text>
+      <rect class="a-box" x="540" y="218" width="250" height="40" rx="9"/><text class="dg-t" x="556" y="243">④ FFN</text>
+      <!-- vertical arrows -->
+      <path class="ar" d="M155 96v12"/><path class="ar" d="M155 150v12"/><path class="ar" d="M155 204v12"/>
+      <path class="ar" d="M665 96v12"/><path class="ar" d="M665 150v12"/><path class="ar" d="M665 204v12"/>
+      <!-- cross link -->
+      <path class="ar-x" d="M290 184h240"/>
+      <text class="mono-g" x="322" y="174">只加时间 RoPE 分量</text>
+      <text class="dg-s" x="300" y="206">输出门 ← 对方模态 timestep</text>
+      <text class="dg-s" x="300" y="222">Q / (K,V) 调制 ← 本流 timestep</text>
+      <text class="dg-s" x="30" y="286">每个主操作之间插 RMSNorm；共享深度（层数原文未披露）</text>
+    </svg>
+    <p class="cap">示意：根据 §3.1–§3.1.2 的文字和图 2 重画，只画原文写明的顺序和条件关系；方框大小不代表真实参数比例。</p>
+  </div>
+
+  <div class="prose">
+    <h3>文本管线：多层特征 + thinking tokens</h3>
+    <p>作者的判断是：只用 decoder-only LLM 最后一层不够好，而且 Gemma3 是因果注意力，缺少双向上下文<span class="src">§3.2</span>。于是做了两层补偿。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="文本理解管线：文本经冻结的 Gemma3 12B 得到 L 层 T×D 特征，Feature Extractor 压成 T×D，再拼接若干 R×D 的可学习 thinking tokens，送入包含两个 Transformer Block 的 Text Connector" loading="lazy" width="987" height="268"></div>
+    <figcaption><b>文本理解管线。</b>Gemma3-12B（冻结）的 L 层 T×D 特征 → Feature Extractor → T×D，接上可学习的 thinking tokens（R×D）→ Text Connector。图中 connector 画了 2 个 Transformer Block，正文只写「several」。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>Multi-Layer Feature Extractor <span class="src">§3.2.1</span></h4>
+      <ul>
+        <li>输入形状 [B, T, D, L]，L 是层数（取全部 decoder 层）</li>
+        <li>① 对每层在序列维和嵌入维上做 mean-centered scaling</li>
+        <li>② 拉平成 [B, T, D×L]</li>
+        <li>③ 用可学习的稠密矩阵 W 投影回 D</li>
+        <li>W 只在一个<em>简短的初始阶段</em>和 LTX-2 一起训练（diffusion MSE），之后冻结；LLM 全程冻结</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Text Connector + Thinking Tokens <span class="src">§3.2.2</span></h4>
+      <ul>
+        <li>若干层全双向注意力的 Transformer block</li>
+        <li>可学习的 thinking tokens 拼到输入后面，<b>占掉原来 padding 的位置</b></li>
+        <li>作用类似 ViT 的 register，充当全局信息载体</li>
+        <li>最后经 caption projection 投影成 DiT 的条件输入</li>
+        <li><b>视频流和音频流各有一个 connector</b>，和 DiT 一起训练</li>
+        <li>thinking token 数 R、connector 层数 <span class="nd">原文未披露</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>推理侧：modality-CFG 与多尺度分块</h3>
+    <p>每条流都看作一个模型 M(x, t, m)：x 是本模态 latent，t 是文本条件，m 是另一模态的特征<span class="src">§4.1</span>。</p>
+  </div>
+  <div class="card formula wide">M̂(x,t,m) = M(x,t,m) + s<sub>t</sub>·[M(x,t,m) − M(x,∅,m)] + s<sub>m</sub>·[M(x,t,m) − M(x,t,∅)] <span class="src">§4.1</span></div>
+  <div class="cfg3 wide">
+    <div class="card stage"><span class="sid">PASS 1</span><h4>全条件 M(x,t,m)</h4><p class="stat-sub">文本 + 对方模态都给</p></div>
+    <div class="card stage"><span class="sid">PASS 2 · s<sub>t</sub></span><h4>去文本 M(x,∅,m)</h4><p class="stat-sub">视频 s<sub>t</sub>=3，音频 s<sub>t</sub>=7<span class="src">§4.1</span></p></div>
+    <div class="card stage"><span class="sid">PASS 3 · s<sub>m</sub></span><h4>去对方模态 M(x,t,∅)</h4><p class="stat-sub">两路 s<sub>m</sub> 都是 3<span class="src">§4.1</span></p></div>
+  </div>
+  <p class="footnote wide">按公式，每条流每步要算 3 次前向（全条件、去文本、去对方模态）<span class="src calc">推算</span>；表 1 的测速是在 CFG=1 下做的，没有算进这部分开销。</p>
+
+  <div class="grid2 wide">
+    <figure class="fig card" style="margin:12px 0">
+      <div class="img-pad"><img src="figures/fig5.jpg" alt="多模态 CFG 示意：从 M(x,t,m) 出发，沿文本引导方向 s_t 和跨模态引导方向 s_m 得到最终预测 M'(x,t,m)" loading="lazy" width="1018" height="884"></div>
+      <figcaption><b>modality-CFG 的几何示意。</b>橙点是全条件输出，绿色是文本引导方向（s<sub>t</sub>），蓝色是跨模态引导方向（s<sub>m</sub>）。裁图下半部分带出了 §4.2 的正文。<span class="from">来源：论文图 5</span></figcaption>
+    </figure>
+    <div class="card mod" style="margin:12px 0">
+      <h4>多尺度、多分块推理到 1080p <span class="src">§4.2</span></h4>
+      <ol>
+        <li><b>Base Generation</b>：先在约 0.5 MP 生成 base latent，确定构图、运动和音画同步</li>
+        <li><b>Latent Upscaling</b>：用专门的 latent upscaler 提高视频 latent 的空间分辨率</li>
+        <li><b>Tiled Refinement</b>：切成有重叠的空间 + 时间 tile，用同一套基础模型参数逐块细化，在 latent 空间融合后再 VAE 解码</li>
+      </ol>
+      <p class="stat-sub">upscaler 的结构、训练方式，以及细化阶段的步数和噪声强度 <span class="nd">原文未披露</span>。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 04 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据与 caption：披露得很少，但 caption 规范值得细看</h2>
+    <p class="sec-intro">原文的数据章节（§5 + §5.1）只有两段。下面把能找到的信息全部列出，没写的逐项标出来。</p>
+  </div>
+
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>来源</span><span>筛选</span><span>标注</span></div>
+    <div class="pipe-row">
+      <div class="lbl">训练语料</div>
+      <div class="chip">LTX-Video 使用的同一数据集<span class="src">§5</span></div>
+      <div class="chip m">取其中「含显著且有信息量音频」的视频片段子集<span class="src">§5</span></div>
+      <div class="chip o">新的音画联合 captioner，逐片段写详尽描述<span class="src">§5.1</span></div>
+    </div>
+  </div>
+  <p class="legend-dots wide"><span>原有资产</span><span class="m">本文的筛选</span><span class="o">本文新做的标注</span></p>
+
+  <h3 class="wide">已披露的信息</h3>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>维度</th><th>原文怎么说</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>数据来源</td><td>LTX-Video 数据集的子集；LTX-Video 数据本身的来源本文没讲</td><td><span class="src">§5</span></td></tr>
+        <tr><td>筛选标准</td><td>「contained significant and informative audio components」；作者称该子集在视觉与听觉内容上分布均衡</td><td><span class="src">§5</span></td></tr>
+        <tr><td>筛选方法 / 阈值</td><td><span class="nd">原文未披露</span>（用什么模型或指标判断「音频有信息量」都没写）</td><td>—</td></tr>
+        <tr><td>片段数 / 时长 / token 数</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>语音 / 音乐 / 音效配比</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>语种分布</td><td><span class="nd">原文未披露</span>；局限章节承认训练数据中少见的语种/方言效果更差</td><td><span class="src">§7</span></td></tr>
+        <tr><td>分辨率 / 时长分桶</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>合成数据</td><td>原文未提及</td><td>—</td></tr>
+        <tr><td>去重 / 安全过滤</td><td>原文未提及；§8 只说模型会反映训练数据中的偏见</td><td><span class="src">§8</span></td></tr>
+        <tr><td>Captioner 模型</td><td>只说是「新开发的视频 captioning 系统」；用了哪个模型、是否微调 <span class="nd">原文未披露</span></td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>Caption 长度 / 格式</td><td><span class="nd">原文未披露</span>（没有给 caption 样例）</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">原文没有给任何比例，所以本页不画配比条形图。</p>
+
+  <h3 class="wide">Caption 规范：原文写明要覆盖的内容</h3>
+  <p class="prose">目标是「comprehensive yet factual」：<b>只描述看到和听到的，不做情绪解读</b>，要捕捉每个有意义的动作、外观和声音<span class="src">§5.1</span>。</p>
+  <div class="cap-anat wide">
+    <div class="card mod">
+      <h4>听觉 <span class="tag ok-tag">新</span></h4>
+      <ul>
+        <li>完整声景：音乐、环境声</li>
+        <li>台词<b>逐字精确转写</b></li>
+        <li>标注<b>说话人</b>、<b>语种</b>、<b>口音</b></li>
+      </ul>
+      <span class="src">§5.1</span>
+    </div>
+    <div class="card mod">
+      <h4>视觉</h4>
+      <ul>
+        <li>镜头运动</li>
+        <li>光照</li>
+        <li>主体行为</li>
+        <li>动作、外观</li>
+      </ul>
+      <span class="src">§5.1</span>
+    </div>
+    <div class="card mod">
+      <h4>写法约束</h4>
+      <ul>
+        <li>只写客观事实，不做情绪解读</li>
+        <li>要详尽（exhaustive）</li>
+        <li>作为视频、音频和语言之间的统一文本接口</li>
+      </ul>
+      <span class="src">§5.1</span>
+    </div>
+  </div>
+
+  <div class="card mod wide">
+    <h4>caption 和架构是互相配合的 <span class="tag">本页解读</span></h4>
+    <p>caption 要求逐字转写台词、标出说话人，对应的是文本侧的重投入：Gemma3-12B 全层特征加 thinking tokens，作者说这对「语音的发音和语义准确性」很关键<span class="src">§1 · §2.2</span>；局限章节承认的「多说话人时台词分配给错角色」<span class="src">§7</span>，恰好也是 caption 里说话人标注要解决的问题。两者之间的因果关系，论文没有做消融验证。</p>
+  </div>
+
+  <details class="more wide">
+    <summary>Figure 3 的 prompt 片段（论文唯一能看到的类 caption 文本）<span class="hint">本地 figures/ 未裁此图</span></summary>
+    <div class="body">
+      <p>图 3 的注意力可视化里出现了几段标注，例如 <code>&lt;Car passing by&gt;</code>、<code>"Listen to this" &lt;Clapping&gt;</code>、<code>S1: "I'm James" S2: "I'm Arnold" Both: "And we are in sync"</code>、<code>"Welcome… to LTX-2"</code><span class="src">图 3</span>。看得出音效用尖括号、台词用引号，并区分 S1/S2/Both 这样的说话人。但这些只是图上的说明文字，不能直接当成训练 caption 的格式。</p>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 05 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING</div>
+    <h2>训练配方：只有骨架，没有超参</h2>
+    <p class="sec-intro">原文没有单独的训练章节。下面这些信息是从 §3.2.1、§3.2.2、§9 和附录图 A1 里拼出来的。</p>
+  </div>
+
+  <div class="flow wide">
+    <div class="card stage dim">
+      <span class="sid">S0</span><h4>预训练视频 DiT</h4>
+      <p>从已预训练的视频 DiT 扩展，不重复复制视觉骨干<span class="src">§9</span>；架构沿用 LTX-Video<span class="src">§2.1</span></p>
+    </div>
+    <div class="card stage">
+      <span class="sid">S1</span><h4>简短初始阶段</h4>
+      <p>投影矩阵 W 和 LTX-2 一起训练，用 diffusion MSE；Gemma3 冻结；作者说整体质量有提升<span class="src">§3.2.1</span></p>
+    </div>
+    <div class="card stage">
+      <span class="sid">S2</span><h4>音画联合训练</h4>
+      <p>W 冻结；两个 Text Connector 和音视频 DiT block 一起训练<span class="src">§3.2.1–3.2.2</span>；flow matching 速度场损失，音频和视频分别算损失<span class="src">图 A1 · 图 1</span></p>
+    </div>
+    <div class="card stage dim">
+      <span class="sid">S?</span><h4>「progressive joint training」</h4>
+      <p>结论里提到这个说法<span class="src">§9</span>，但分几个阶段、分辨率和时长怎么递进，<span class="nd">原文未披露</span></p>
+    </div>
+  </div>
+  <p class="footnote wide">示意：阶段划分是本页根据零散描述整理的；S0 和 S1 之间的先后关系原文没有明说。</p>
+
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>项目</th><th>原文信息</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>目标函数</td><td>flow matching，学习音频与视频 latent 的速度场；W 的初始阶段写作「standard diffusion MSE loss」</td><td><span class="src">图 A1 · §3.2.1</span></td></tr>
+        <tr><td>冻结策略</td><td>Gemma3-12B 全程冻结；W 训练完初始阶段后冻结</td><td><span class="src">§3.2.1</span></td></tr>
+        <tr><td>音频流初始化</td><td><span class="nd">原文未披露</span>（是随机初始化还是有预训练的 T2A 模型）</td><td>—</td></tr>
+        <tr><td>两路 timestep</td><td>两路 timestep 可以不同，跨模态 AdaLN 就是为此设计的；训练时怎么采样 <span class="nd">原文未披露</span></td><td><span class="src">§3.1</span></td></tr>
+        <tr><td>学习率 / batch / 步数 / 算力</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>条件 dropout（供 CFG 用）</td><td><span class="nd">原文未披露</span>（推理要用 M(x,t,∅)，训练时应当丢弃过对方模态，但原文没写）</td><td>—</td></tr>
+        <tr><td>后训练 / SFT / RL / 蒸馏</td><td>原文未提及</td><td>—</td></tr>
+        <tr><td>latent upscaler 训练</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.2</span></td></tr>
+        <tr><td>音频 VAE / vocoder 训练</td><td>只写了结构（立体声 mel、通道翻倍），训练数据和损失 <span class="nd">原文未披露</span></td><td><span class="src">§3.3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 06 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测：一张测速表、一份第三方榜单排名、一段定性人评</h2>
+    <p class="sec-intro">作者从三个维度评估：音画质量、纯视频基准、计算效率<span class="src">§6</span>。只有效率给了具体数字。</p>
+  </div>
+
+  <h3 class="wide">效率：每步耗时（表 1）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>模态</th><th>参数</th><th class="q">Sec / Step ↓</th></tr></thead>
+      <tbody>
+        <tr><td>Wan 2.2-14B</td><td>Video Only</td><td>14B</td><td>22.30 s</td></tr>
+        <tr class="hl"><td>LTX-2</td><td>Audio + Video</td><td>19B</td><td class="q best">1.22 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">设置：1 张 NVIDIA H100，121 帧，720p，单步 Euler solver，CFG=1<span class="src">§6.3</span>。比较的是<b>每个扩散步</b>的耗时，不是端到端耗时；两者各自需要多少步，<span class="nd">原文未披露</span>。</p>
+
+  <div class="chart-grid wide" style="grid-template-columns: repeat(2, minmax(0,1fr));">
+    <div class="chart-cell">
+      <svg class="chart spd" viewBox="0 0 420 150" role="img" aria-label="每步耗时柱状图">
+        <text class="ch-t" x="0" y="16">每步耗时（秒，越低越好）</text>
+        <text class="ch-src" x="420" y="16" text-anchor="end">表 1</text>
+        <line class="grid" x1="110" y1="30" x2="110" y2="120"/>
+        <line class="grid" x1="220" y1="30" x2="220" y2="120"/>
+        <line class="grid" x1="330" y1="30" x2="330" y2="120"/>
+        <text class="ch-lbl" x="0" y="57">Wan 2.2-14B</text>
+        <rect class="bar-o2" x="110" y="42" width="290" height="22" rx="4"/>
+        <text class="ch-val" x="396" y="57" text-anchor="end" style="fill:#fff">22.30</text>
+        <text class="ch-lbl" x="0" y="97">LTX-2</text>
+        <rect class="bar-q" x="110" y="82" width="15.9" height="22" rx="4"/>
+        <text class="ch-val" x="132" y="97">1.22</text>
+        <line class="axis" x1="110" y1="30" x2="110" y2="120"/>
+        <text class="ch-ax" x="110" y="134" text-anchor="middle">0</text>
+        <text class="ch-ax" x="220" y="134" text-anchor="middle">8.4</text>
+        <text class="ch-ax" x="330" y="134" text-anchor="middle">16.9</text>
+        <text class="ch-ax" x="400" y="134" text-anchor="middle">22.3</text>
+      </svg>
+      <div class="chart-legend"><span class="l1">LTX-2（音频 + 视频，19B）</span><span class="l4">Wan 2.2-14B（只出视频）</span></div>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart spd" viewBox="0 0 420 200" role="img" aria-label="最长生成时长对比">
+        <text class="ch-t" x="0" y="16">最长连续生成时长（秒）</text>
+        <text class="ch-src" x="420" y="16" text-anchor="end">§6.3</text>
+        <line class="axis" x1="110" y1="28" x2="110" y2="172"/>
+        <text class="ch-lbl" x="0" y="45">LTX-2</text><rect class="bar-q" x="110" y="32" width="290" height="18" rx="4"/><text class="ch-val" x="394" y="45" text-anchor="end" style="fill:var(--card)">20</text>
+        <text class="ch-lbl" x="0" y="73">Sora 2</text><rect class="bar-o2" x="110" y="60" width="232" height="18" rx="4"/><text class="ch-val" x="348" y="73">16</text>
+        <text class="ch-lbl" x="0" y="101">Veo 3</text><rect class="bar-o2" x="110" y="88" width="174" height="18" rx="4"/><text class="ch-val" x="290" y="101">12</text>
+        <text class="ch-lbl" x="0" y="129">Ovi</text><rect class="bar-o" x="110" y="116" width="145" height="18" rx="4"/><text class="ch-val" x="261" y="129">10</text>
+        <text class="ch-lbl" x="0" y="157">Wan 2.5</text><rect class="bar-o" x="110" y="144" width="145" height="18" rx="4"/><text class="ch-val" x="261" y="157">10</text>
+        <text class="ch-ax" x="110" y="188" text-anchor="middle">0</text>
+        <text class="ch-ax" x="400" y="188" text-anchor="middle">20</text>
+      </svg>
+      <div class="chart-legend"><span class="l1">LTX-2</span><span class="l4">闭源</span><span class="l3">开源</span></div>
+    </div>
+  </div>
+  <p class="tbl-note wide">两张图的横轴都从 0 开始。时长数字是作者对各家上限的说法<span class="src">§6.3</span>，没有给出处或测量方式；LTX-2 自己也在局限里承认超过约 20 秒会出现漂移<span class="src">§7</span>。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>音画联合人评 <span class="tag nd-tag">无数字</span> <span class="src">§6.1</span></h4>
+      <ul>
+        <li>形式：人工偏好研究，用的是内部 benchmark</li>
+        <li>评估维度：视觉真实感、音频保真度、时间同步（口型、音效）</li>
+        <li>结论：「significantly outperforms」Ovi；与 Veo 3、Sora 2 「comparable」</li>
+        <li>样本数、评审人数、胜率、prompt 集 <span class="nd">原文未披露</span></li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>纯视频：Artificial Analysis 公开榜 <span class="src">§6.2</span></h4>
+      <ul>
+        <li>截至 2025-11-06：<b>Image-to-Video 第 3</b>，<b>Text-to-Video 第 4</b></li>
+        <li>排在 Sora 2 Pro 和 Wan 2.2-14B 之前</li>
+        <li>第三方公开榜单，排名会随时间变；原文没给分数，也没列排在前面的是哪几家</li>
+      </ul>
+    </div>
+  </div>
+
+  <details class="more wide">
+    <summary>其他定性的效率说法<span class="hint">没有数字</span></summary>
+    <div class="body">
+      <ul>
+        <li>分辨率越高、时长越长，和 Wan 2.2 的速度差距越大，作者归因于 latent 空间设计<span class="src">§6.3</span>。没给数据。</li>
+        <li>比 Ovi 快（Ovi 是两个从 Wan 2.2-5B 微调来的 5B 流）<span class="src">§6.3</span>。没给数据。</li>
+        <li>图 3 的注意力可视化：V2A 图取前 1/3 推理步，A2V 图取后 1/3；能看到注意力跟着移动的车走、在说话人之间切换、特写时聚焦嘴唇<span class="src">图 3</span>。属于定性证据。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 07 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">只列可以对照原文核实的结构性做法。RMSNorm、RoPE、Rectified Flow 这类常规组件不算在内。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>非对称双流，而不是复制两个同尺寸骨干</h4><p>视频 14B / 音频 5B，深度共享、宽度不同<span class="src">§3.1</span>。对比对象是 Ovi、BridgeDiT 这类「复制 T2V + T2A 骨干再拼起来」的做法<span class="src">§2.1</span>。</p><p class="why">可核对的收益只有表 1 的每步耗时；非对称和对称在质量上的对比没有做消融。</p></div>
+    <div class="card nv"><h4>跨模态注意力只用时间 RoPE</h4><p>音视频交叉注意力里 Q/K 只加时间分量，把对齐问题限制在时间轴上<span class="src">§3.1.1</span>。</p><p class="why">图 3 显示视频侧仍会在空间上聚焦到车、嘴唇等区域，说明空间定位是靠内容学出来的，而不是靠位置编码。</p></div>
+    <div class="card nv"><h4>跨模态 AdaLN：由对方的 timestep 控制「收多少」</h4><p>Q 和 (K, V) 由本流 timestep 调制，输出门由对方模态的 timestep 调制<span class="src">§3.1.2 · 图 2b</span>。这让两路处在不同噪声水平时也能合理交换信息。</p></div>
+    <div class="card nv"><h4>thinking tokens 替换 padding</h4><p>Text Connector 里把 padding 位置换成可学习 token，作为全局信息载体，视频流和音频流各有一个 connector<span class="src">§3.2.2</span>。效果只有一句定性描述：「显著提升语音发音准确性和复杂 prompt 遵循」<span class="src">§2.2</span>。</p></div>
+    <div class="card nv"><h4>modality-CFG</h4><p>把对方模态当成一种可以丢弃的条件，单独加一个引导项 s<sub>m</sub><span class="src">§4.1</span>。作者观察到 s<sub>m</sub> 越大同步越好，但没有给出 s<sub>m</sub> 扫描曲线。</p></div>
+  </div>
+</section>
+
+<!-- ============ 08 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测和 caption 的启示</h2>
+    <p class="sec-intro">每条先写论文的做法（带来源），再写一条可以迁移到编辑任务的做法。<b>「迁移建议」都是本页的推断，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">C1</span>只写观察到的，不写解读</h4>
+        <p class="paper">论文：caption 要「comprehensive yet factual」，只写看到和听到的，不做情绪解读<span class="src">§5.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 和指令里，把「看得见的变化」（物体、属性、位置、光照）和「主观风格词」（氛围感、高级感）分到不同字段。训练时以前者为主，后者作为可选条件单独 dropout，避免模型把主观词和某种固定画面变化绑在一起。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C2</span>文字内容要逐字写，并标出归属</h4>
+        <p class="paper">论文：台词要精确转写，并标注说话人、语种和口音<span class="src">§5.1</span>；局限里承认多说话人时会把台词分错人<span class="src">§7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>对应到编辑任务是图中文字编辑：caption 里写出原文字和目标文字的逐字内容，并写明属于哪个载体（招牌、T 恤、屏幕）。多主体场景下的指令要能明确指到某个主体（左边的人、穿红衣的人），专门留一个多主体评测子集，检查编辑有没有落到错误的对象上。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C3</span>caption 要覆盖每个需要控制的维度</h4>
+        <p class="paper">论文：视觉部分固定要写镜头运动、光照和主体行为，听觉部分要写音乐、环境声和台词<span class="src">§5.1</span>，这样 caption 才能成为「视频、音频、语言之间的统一文本接口」。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>为编辑数据列一张固定的「必写维度清单」（主体、属性、构图、光照、文字、风格、保持区域），captioner 输出时逐项填写或注明「无」。这样做的好处是可以统计每个维度的覆盖率，发现缺口时补数据比较有针对性。</p>
+      </div>
+    </div>
+
+    <div class="impl-group">数据过滤</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">D1</span>按「条件信号有没有信息量」筛选子集</h4>
+        <p class="paper">论文：从 LTX-Video 的数据中只取「音频显著且有信息量」的片段来做联合训练<span class="src">§5</span>。判断方法没有公开。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑对的对应问题是：源图和目标图之间的差异是否真的反映了指令。可以对每个编辑对算一个「指令-差异一致性」分数（例如用 VLM 判断差异是否只发生在指令描述的范围内），过滤掉差异很小或差异超出指令范围的样本。阈值需要自己在留出集上标定。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D2</span>先有原有资产，再在上面加一层条件</h4>
+        <p class="paper">论文：沿用已有视频数据集，只是从中筛子集并重新写 caption；骨干也从已预训练的视频 DiT 扩展而来<span class="src">§5 · §9</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>做编辑模型时，可以先复用 T2I 的数据和权重，编辑数据只承担「学会根据参考图和指令做修改」这一层，不必从头收集一个全新的大规模数据集。新数据的预算优先投在 T2I 数据缺少的条件维度上，例如保持区域标注和多主体指令。</p>
+      </div>
+    </div>
+
+    <div class="impl-group">评测与条件控制</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">E1</span>评测维度拆开，每一维都要给数字</h4>
+        <p class="paper">论文：人评拆成视觉真实感、音频保真度和时间同步三项<span class="src">§6.1</span>，但只给了定性结论，没有胜率和样本数。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测同样拆成三项：指令遵循、非编辑区域保持、画质，每项单独报告 GSB 或胜率，并写明样本数和评审人数。拿这篇当反例看：如果只写「comparable to proprietary」，读者无法判断差距有多大。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E2</span>每个条件单独一个引导项，引导权重可以分开调</h4>
+        <p class="paper">论文：文本和对方模态各有一个 CFG 项（s<sub>t</sub>, s<sub>m</sub>），视频流和音频流的权重也不同<span class="src">§4.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型也有两个条件：文本指令和参考图。可以拆成文本引导和参考图引导两项，分别扫描权重，画出「指令遵循 vs 保持度」的取舍曲线，评测时固定一组权重并在报告里写明。注意训练时要对两个条件分别做 dropout，否则推理时拿不到 M(x,t,∅) 这一项。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E3</span>测速要写全条件，并报告端到端耗时</h4>
+        <p class="paper">论文：表 1 只比较每步耗时，而且是在 CFG=1 下测的<span class="src">表 1 · §6.3</span>；实际使用三项 CFG 时每条流每步要算 3 次前向<span class="src calc">推算</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型报告速度时，同时给出每步耗时、步数、CFG 的前向次数和端到端耗时，并写明分辨率和参考图的 token 数，否则不同模型之间没法比。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 09 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>正文与结论的参数量不一致。</b>摘要、§3.1 和表 1 写的是 14B 视频流 + 5B 音频流（共 19B）；§9 结论写的是「pretrained 13B video diffusion transformer + lightweight 3B audio stream」。原文没有解释，可能一个是骨干参数、一个是含 connector 等的总量，也可能只是笔误。</li>
+    <li class="key"><b>音画联合人评没有任何数字。</b>「显著优于 Ovi」「与 Veo 3、Sora 2 相当」都没有附胜率、样本数、评审人数和 prompt 集，而且用的是内部 benchmark，无法复现<span class="src">§6.1</span>。</li>
+    <li><b>没有任何消融。</b>非对称和对称双流、只用时间 RoPE 和完整 RoPE、thinking tokens 加与不加、多层特征和最后一层特征、s<sub>m</sub> 取不同值，这些对比都只有定性描述，没有表格。</li>
+    <li><b>测速口径偏向 LTX-2。</b>比较的是每步耗时（不是端到端），CFG=1，单步 Euler<span class="src">§6.3</span>；实际推理用三项 CFG，再加上上采样和分块细化，真实耗时没有报告。</li>
+    <li><b>数据几乎没有披露。</b>规模、筛选方法、语种分布、语音/音乐/音效配比、captioner 模型都没写<span class="src">§5</span>。</li>
+    <li><b>训练超参没有披露。</b>学习率、batch、步数、算力，以及「progressive joint training」具体是怎样的，原文都没写<span class="src">§9</span>。</li>
+    <li><b>时长对比没有出处。</b>Veo 3 12s、Sora 2 16s、Ovi 10s、Wan 2.5 10s 都是作者的说法，没有引用来源<span class="src">§6.3</span>。</li>
+    <li><b>作者自述的局限</b><span class="src">§7</span>：训练数据中少见的语种和方言效果差；多说话人场景下会把台词分配给错误的角色；超过约 20 秒会出现时间漂移、同步变差、场景多样性下降；没有显式推理或世界建模能力，叙事上的连贯性依赖外部 LLM 写的 prompt。</li>
+    <li><b>命名不统一。</b>摘要里叫「modality-CFG」，贡献列表里叫「Bimodal CFG」，§4.1 里叫「multimodal extension of CFG」，指的是同一个机制。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="figs">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>首页图</td><td>figures/fig0-teaser.jpg 裁到的只是摘要和引言文字，没有图，本页不展示</td><td>—</td></tr>
+        <tr><td>图 1</td><td>LTX-2 总体架构（VAE、文本管线、双流 DiT、损失）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 2</td><td>(a) 双流骨干的一层；(b) AV 交叉注意力块（时间 1D RoPE + 跨模态 AdaLN）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 3</td><td>AV 交叉注意力图可视化（汽车、多说话人、口型）；figures/ 中没有这张图</td><td><a href="#data">数据</a> · <a href="#eval">评测</a>（文字引用）</td></tr>
+        <tr><td>图 4</td><td>文本理解管线（Gemma3-12B → Feature Extractor → thinking tokens → Text Connector）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 5</td><td>modality-CFG 示意</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 1</td><td>H100 上每个扩散步的耗时：LTX-2 vs Wan 2.2-14B</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 A1</td><td>训练与推理流程（flow matching）；figures/ 中没有这张图</td><td><a href="#train">训练</a>（文字引用）</td></tr>
+        <tr><td>图 A2</td><td>单条流的细节；两条流结构相同；figures/ 中没有这张图</td><td><a href="#arch">架构</a>（文字引用）</td></tr>
+        <tr><td>示意图</td><td>双流 block 四步操作（本页根据 §3.1 重画）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>柱状图</td><td>每步耗时（表 1）、最长时长（§6.3），横轴从 0 开始</td><td><a href="#eval">评测</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 HaCohen et al., <i>LTX-2: Efficient Joint Audio-Visual Foundation Model</i>（Lightricks, <a href="https://arxiv.org/abs/2601.03233" target="_blank" rel="noopener">arXiv:2601.03233</a> v1，2026-01-06）写成。文中数字均来自原文，标「推算」的是本页自行计算的结果；「迁移建议」是本页观点，不是论文内容。论文图片版权归原作者所有，这里仅用于学习交流。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

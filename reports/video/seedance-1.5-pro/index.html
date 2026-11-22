@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seedance 1.5 pro · 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Seedance 1.5 pro（ByteDance Seed）技术报告中文深读：双分支 DiT 原生音画联合生成、SFT + 多维 reward RLHF、>10× 推理加速，以及对图像编辑数据、评测与 caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* page-specific: SVG diagrams & charts */
+  .grid { stroke: var(--line); stroke-width: 1; }
+  .bar-veo { fill: var(--warm); }
+  .chart-legend .l5::before { background: var(--warm); }
+  .gsb-g { fill: var(--good); }
+  .gsb-s { fill: var(--bar-other); }
+  .gsb-b { fill: var(--warn); }
+  .gsb-t { fill: #fff; font: 700 10.5px var(--f-mono); }
+  :root[data-theme="dark"] .gsb-t { fill: #141218; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .gsb-t { fill: #141218; } }
+  .chart-legend .g1::before { background: var(--good); }
+  .chart-legend .g2::before { background: var(--bar-other); }
+  .chart-legend .g3::before { background: var(--warn); }
+  .dg-dash { stroke-dasharray: 5 4; }
+  .dg-audio { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); }
+  .dg-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+  .dg-unk { fill: var(--warn); font: 600 11px var(--f-body); }
+  #arr path { fill: var(--muted); }
+  .chart-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 640px) { .chart-grid.two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视频生成（音画联合）</div>
+    <h1>Seedance 1.5 pro<span class="sub">A Native Audio-Visual Joint Generation Foundation Model</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>ByteDance Seed</b></span>
+      <span>arXiv v1 <b>2025-12-15</b></span>
+      <span>本文依据 <b>v3（2025-12-23）</b></span>
+      <span>Model ID <b>Doubao-Seedance-1.5-pro</b></span>
+    </div>
+    <p class="lede">一个模型原生地同时生成视频和音频：双分支 Diffusion Transformer + 跨模态 joint module，配多阶段数据管线与音视频双模态 caption，后训练走 SFT → 多维 reward RLHF，再用多阶段蒸馏把推理提速 10× 以上。报告主体是内部 SeedVideoBench 1.5 的人评结果；数据规模、参数量、消融均未披露。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>闭源 · API（火山引擎）</span>
+      <span class="badge">许可证：原文未披露</span>
+      <span class="badge">参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="m17 10 5-3v10l-5-3z"/></svg>视频生成（音画联合）</span>
+      <span class="badge">T2VA · I2VA · T2V · I2V</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2512.13507" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2512.13507</a>
+      <a href="https://arxiv.org/pdf/2512.13507" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 21h16"/></svg>PDF</a>
+      <a href="https://seed.bytedance.com/seedance1_5_pro" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>官方页面</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均来自原文。<br>标「读图」的是从原文柱状图量出的估计值，原文未给数值表。</div>
+</nav>
+
+<main>
+
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">发布日期（arXiv v1）</span><span class="stat-num sm">2025-12-15</span><span class="stat-sub">v2 12-16，v3 12-23；本文按 v3 正文核对</span><span class="src">arXiv</span></div>
+    <div class="card stat"><span class="stat-k">骨干</span><span class="stat-num sm">双分支 DiT</span><span class="stat-sub">基于 MMDiT，含跨模态 joint module</span><span class="src">摘要 · §1</span></div>
+    <div class="card stat"><span class="stat-k">任务</span><span class="stat-num sm">T2VA / I2VA / T2V / I2V</span><span class="stat-sub">多任务、混合模态预训练</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">参数量</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">编码器 / VAE / 音频 codec 同样未披露</span><span class="src">全文</span></div>
+    <div class="card stat"><span class="stat-k">训练流程</span><span class="stat-num sm">预训练 → SFT → RLHF</span><span class="stat-sub">RLHF 用多维 reward model</span><span class="src">图 2 · §1</span></div>
+    <div class="card stat"><span class="stat-k">RLHF 训练提速</span><span class="stat-num">≈3×</span><span class="stat-sub">原文 “nearly 3×”，来自管线基建优化</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">端到端推理加速</span><span class="stat-num">&gt;10×</span><span class="stat-sub">多阶段蒸馏降 NFE + 量化 + 并行</span><span class="src">摘要 · §1</span></div>
+    <div class="card stat"><span class="stat-k">评测</span><span class="stat-num sm">SeedVideoBench 1.5</span><span class="stat-sub">内部集；5 分 Likert + GSB 专家人评</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">数据规模 / 配比</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只有定性描述</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">获取方式</span><span class="stat-num sm">火山引擎 API</span><span class="stat-sub">计划 2025 年 12 月接入豆包、即梦</span><span class="src">摘要 · §1</span></div>
+  </div>
+</section>
+
+<!-- 02 TL;DR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>原生音画联合，一个模型四种任务</h3><p>双分支 DiT（基于 MMDiT）加跨模态 joint module，同时出视频和音频；同一套权重覆盖 T2VA、I2VA，以及纯视频的 T2V、I2V。<span class="src">摘要 · §1</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>数据框架被列为第一项技术贡献</h3><p>多阶段 curation，优先保证音画一致和运动表现力，按课程式调度喂数据；caption 系统对视频和音频<em>两种模态</em>都写专业级描述。没有任何规模数字。<span class="src">§1</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>后训练 + 加速</h3><p>高质量音视频 SFT → 面向音视频定制的 RLHF（多维 reward：运动、美学、音频保真），RLHF 训练提速近 3×；多阶段蒸馏 + 量化并行，端到端推理加速 &gt;10×。<span class="src">§1</span></p></div>
+    <div class="card tl"><span class="idx">04</span><h3>T2V 指令遵循小幅领先，I2V 落后 Veo 3.1</h3><p>T2V Prompt Following ≈3.11，Veo 3.1 ≈3.05；I2V 两项均低于 Veo 3.1（Motion ≈2.60 对 2.71，Prompt ≈2.69 对 2.86）。音频 GSB 对 Kling 2.6 的 Expressiveness 偏好约 60%。<span class="src">图 3/4/5 读图</span></p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>读之前先降预期</h3><p>9 页正文里没有参数量、数据量、超参、消融；评测只在未公开的内部集上做人评，且只有图、没有数值表。它更像产品能力说明，而不是可复现的技术报告。<span class="src">全文</span></p></div>
+  </div>
+</section>
+
+<!-- 03 架构 -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：双分支 DiT + 跨模态 joint module</h2>
+  <p class="sec-intro">原文只有一张训练 / 推理流程总览图，没有网络结构图。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Seedance 1.5 pro 训练与推理流程总览" loading="lazy"></div>
+    <figcaption><b>训练与推理流程。</b>训练：音视频联合模型预训练 → SFT → 反馈对齐（RLHF）。推理：用户 prompt → Prompt Engineering 改写 → Text-Encoder → 音视频联合 DiT → 音视频联合 Refiner → 输出。（裁图上下带有正文片段。）<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>原文明确给出的结构信息</h3>
+    <ul>
+      <li><b>骨干</b>：dual-branch Diffusion Transformer，含 cross-modal joint module。<span class="src">摘要</span></li>
+      <li><b>框架</b>：基于 MMDiT [1] 的统一框架，目标是“深度跨模态交互”，保证音画时间同步和语义一致。<span class="src">§1</span></li>
+      <li><b>推理链路</b>多了两个外挂环节：前置 <code>Prompt Engineering</code>（把用户 prompt 改写成 optimized prompt），后置 <code>Refiner</code>（音视频联合）。<span class="src">图 2</span></li>
+      <li><b>I2V 场景</b>：音频生成以参考图中的视觉线索为条件（这句出现在评测标注方法里）。<span class="src">§2.1.1</span></li>
+    </ul>
+    <h3>相对 Seedance 1.0 的变化</h3>
+    <p>最大的变化是<em>从纯视频变成原生音画联合</em>：新增音频分支、跨模态 joint module，以及配套的音频 caption、音频评测维度。原文没有逐项对比 1.0 的结构（例如是否沿用 1.0 的 VAE、文本编码器），这里不做推测。<span class="src">§1</span></p>
+  </div>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 900 260" role="img" aria-label="双分支 DiT 示意图">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z"/></marker></defs>
+      <rect class="dg-box" x="10" y="40" width="120" height="52" rx="10"/><text class="dg-t" x="70" y="62" text-anchor="middle">用户 prompt</text><text class="dg-s" x="70" y="80" text-anchor="middle">→ Prompt Eng.</text>
+      <rect class="dg-vit" x="10" y="150" width="120" height="52" rx="10"/><text class="dg-t" x="70" y="172" text-anchor="middle">参考图（可选）</text><text class="dg-s" x="70" y="190" text-anchor="middle">I2VA / I2V</text>
+      <rect class="dg-box" x="170" y="40" width="120" height="52" rx="10"/><text class="dg-t" x="230" y="70" text-anchor="middle">Text-Encoder</text>
+      <path class="dg-arrow" d="M130 66H168"/>
+      <rect class="dg-box dg-dash" x="320" y="20" width="370" height="220" rx="14" fill="none"/>
+      <text class="dg-s" x="505" y="38" text-anchor="middle">Video-Audio Joint Model（DiT，基于 MMDiT）</text>
+      <rect class="dg-llm" x="340" y="52" width="150" height="56" rx="10"/><text class="dg-t" x="415" y="76" text-anchor="middle">视频分支</text><text class="dg-s" x="415" y="94" text-anchor="middle">Transformer blocks</text>
+      <rect class="dg-audio" x="340" y="160" width="150" height="56" rx="10"/><text class="dg-t" x="415" y="184" text-anchor="middle">音频分支</text><text class="dg-s" x="415" y="202" text-anchor="middle">Transformer blocks</text>
+      <rect class="dg-llm-hot dg-dash" x="520" y="96" width="150" height="66" rx="10"/><text class="dg-t" x="595" y="122" text-anchor="middle">cross-modal</text><text class="dg-t" x="595" y="140" text-anchor="middle">joint module</text>
+      <text class="dg-unk" x="595" y="182" text-anchor="middle">内部结构与接入位置</text><text class="dg-unk" x="595" y="197" text-anchor="middle">原文未披露</text>
+      <path class="dg-arrow dg-dash" d="M490 80 C505 80 505 115 518 115"/>
+      <path class="dg-arrow dg-dash" d="M490 188 C505 188 505 145 518 145"/>
+      <path class="dg-arrow" d="M290 66H338"/>
+      <path class="dg-arrow dg-dash" d="M130 176H318"/>
+      <rect class="dg-merger" x="720" y="95" width="80" height="66" rx="10"/><text class="dg-t" x="760" y="124" text-anchor="middle">Refiner</text><text class="dg-s" x="760" y="142" text-anchor="middle">音视频联合</text>
+      <path class="dg-arrow" d="M690 128H718"/>
+      <rect class="dg-box" x="820" y="95" width="70" height="66" rx="10"/><text class="dg-t" x="855" y="124" text-anchor="middle">视频</text><text class="dg-t" x="855" y="142" text-anchor="middle">+ 音频</text>
+      <path class="dg-arrow" d="M800 128H818"/>
+    </svg>
+    <div class="cap">示意。只有方框名称来自原文（摘要、§1、图 2）；虚线表示原文未给出的连接方式——joint module 在哪几层、怎么交互、参考图从哪进，都没有写。</div>
+  </div>
+</section>
+
+<!-- 04 数据 -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：被列为第一贡献，但只有定性描述</h2>
+  <p class="sec-intro">原文关于训练数据的全部信息在 §1 的一段 bullet 里；评测数据（SeedVideoBench 1.5）的标签体系反而写得更细。</p></div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>多阶段 curation pipeline <span class="tag">§1</span></h4>
+      <p>pipeline 优先保证三件事：</p>
+      <ul>
+        <li><b>video–audio coherence</b>：音画一致性</li>
+        <li><b>motion expressiveness</b>：运动表现力</li>
+        <li><b>curriculum-based data scheduling</b>：课程式数据调度</li>
+      </ul>
+      <p>各阶段的具体过滤器、阈值、过滤掉的比例：<span class="nd">原文未披露</span></p>
+    </div>
+    <div class="card mod">
+      <h4>Captioning 系统 <span class="tag">§1</span></h4>
+      <p>为<b>视频和音频两种模态</b>分别提供 “rich, professional-grade descriptions”。</p>
+      <p>caption 模型、caption 格式、长度、是否结构化、是否包含台词 / 方言标注：<span class="nd">原文未披露</span></p>
+      <p class="footnote" style="margin-top:4px">从评测标签可以反推 caption 至少需要覆盖的维度：人声类型（说话 / 唱歌 / 笑声等非语言发声）、音色、口音、情绪、音效来源、音乐风格（见下方评测标签表，§2.1.1）。这是推断，不是原文对 caption 的描述。</p>
+    </div>
+    <div class="card mod">
+      <h4>数据基建 <span class="tag">§1</span></h4>
+      <p>“efficient engineering infrastructure optimized for massive multi-modal data processing”。吞吐、存储、处理时长：<span class="nd">原文未披露</span></p>
+    </div>
+    <div class="card mod">
+      <h4>各阶段用的数据 <span class="tag">§1</span></h4>
+      <ul>
+        <li><b>预训练</b>：large-scale mixed-modality datasets，多任务（T2VA / I2VA / T2V / I2V）</li>
+        <li><b>SFT</b>：high-quality audio-video datasets</li>
+        <li><b>RLHF</b>：多维 reward model 打分；prompt 集来源<span class="nd">原文未披露</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="wide">已披露规模</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项目</th><th style="text-align:left">原文信息</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>预训练视频 / 音频总量（条数、时长）</td><td style="text-align:left"><span class="nd">原文未披露</span>（仅称 large-scale）</td><td><span class="src">§1</span></td></tr>
+        <tr><td>音画配对 vs 纯视频数据比例</td><td style="text-align:left"><span class="nd">原文未披露</span>（仅称 mixed-modality）</td><td><span class="src">§1</span></td></tr>
+        <tr><td>各任务（T2VA / I2VA / T2V / I2V）配比</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td><span class="src">§1</span></td></tr>
+        <tr><td>语言 / 方言分布</td><td style="text-align:left"><span class="nd">原文未披露</span>（能力描述提到四川话、台湾腔普通话、粤语、上海话）</td><td><span class="src">§2.2</span></td></tr>
+        <tr><td>课程阶段数与切换条件</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td><span class="src">§1</span></td></tr>
+        <tr><td>SFT 数据量与筛选标准</td><td style="text-align:left"><span class="nd">原文未披露</span>（仅称 high-quality）</td><td><span class="src">§1</span></td></tr>
+        <tr><td>合成数据</td><td style="text-align:left"><span class="nd">原文未提及</span></td><td><span class="src">全文</span></td></tr>
+        <tr><td>SeedVideoBench 1.5 条数</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td><span class="src">§2.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">没有任何比例数字，因此本节不画配比条形图。</p>
+
+  <h3 class="wide">评测数据：SeedVideoBench 1.5 的标签体系</h3>
+  <div class="prose">
+    <p>在 1.0 版“基于真实用户 prompt”构建的基础上，1.5 版扩充了行业场景（广告、微短剧），并新增音频维度。标签由专业导演参与制定，影视制作、摄影、设计领域专家打分。<span class="src">§2.1</span></p>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>维度</th><th>标签内容</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">视频</td></tr>
+        <tr><td>核心标签</td><td>主体、运动动态、交互、运镜</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr><td>应用场景</td><td>广告、社交媒体内容、短叙事内容</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr class="grp"><td colspan="3">音频（新增）</td></tr>
+        <tr><td>Human Voice Types</td><td>说话、唱歌、非语言发声（如笑声），带细粒度子维度</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr><td>Human Voice Attributes</td><td>音色、口音、情绪语气</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr><td>Non-Speech Audio</td><td>按声源（动物、机械工具等）、声学属性、音乐风格、技术参数分类</td><td><span class="src">§2.1.1</span></td></tr>
+        <tr><td>T2V vs I2V</td><td>标注原则一致；I2V 中音频以参考图视觉线索为条件</td><td><span class="src">§2.1.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 05 训练 -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">三段式训练 + 推理加速。所有超参（步数、学习率、batch、分辨率、时长、NFE）原文均未给出。</p></div>
+
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">S1</span><h4>音视频联合预训练</h4>
+      <dl><dt>数据</dt><dd>大规模混合模态</dd><dt>任务</dt><dd>T2VA / I2VA / T2V / I2V</dd><dt>调度</dt><dd>课程式</dd><dt>超参</dt><dd><span class="nd">未披露</span></dd></dl>
+      <p class="footnote"><span class="src">§1 · 图 2</span></p></div>
+    <div class="card stage"><span class="sid">S2</span><h4>SFT</h4>
+      <dl><dt>数据</dt><dd>高质量音视频</dd><dt>超参</dt><dd><span class="nd">未披露</span></dd></dl>
+      <p class="footnote"><span class="src">§1 · 图 2</span></p></div>
+    <div class="card stage"><span class="sid">S3</span><h4>RLHF（反馈对齐）</h4>
+      <dl><dt>reward</dt><dd>多维 reward model</dd><dt>优化目标</dt><dd>运动质量、视觉美学、音频保真</dd><dt>基建</dt><dd>训练提速近 3×</dd><dt>算法</dt><dd><span class="nd">未具体说明</span></dd></dl>
+      <p class="footnote"><span class="src">§1</span></p></div>
+    <div class="card stage"><span class="sid">S4</span><h4>推理加速</h4>
+      <dl><dt>方法</dt><dd>多阶段蒸馏降 NFE</dd><dt>基建</dt><dd>量化 + 并行</dd><dt>效果</dt><dd>端到端 &gt;10×</dd><dt>NFE</dt><dd><span class="nd">未披露</span></dd></dl>
+      <p class="footnote"><span class="src">§1</span></p></div>
+  </div>
+
+  <div class="prose">
+    <h3>几个需要读准的细节</h3>
+    <ul>
+      <li><b>RLHF 只点名了 T2V 和 I2V。</b>原文写 multi-dimensional reward model “enhances performance in T2V and I2V tasks”，同时提到音频保真是优化维度之一；reward 如何同时覆盖音频，没有展开。<span class="src">§1</span></li>
+      <li><b>RLHF 方法只给了引用</b>：[7] Flow-GRPO、[14] RewardDance、[15] DanceGRPO、[16] UniFL。原文说算法“specifically tailored for audio-video contexts”，但没说用的是哪一个、改了什么。<span class="src">§1 · 参考文献</span></li>
+      <li><b>蒸馏同样只给引用</b>：[4] MeanFlow、[8] Hyper-SD、[10] RayFlow；“further optimized a multi-stage distillation framework”。<span class="src">§1 · 参考文献</span></li>
+      <li><b>“&gt;10×” 是端到端</b>，叠加了蒸馏、量化、并行三者；各自贡献、基线配置与硬件均未披露。<span class="src">§1</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 06 评测 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：内部集 + 专家人评</h2>
+  <p class="sec-intro">原文只有柱状图 / 雷达图，没有数值表。下面所有分数都是从 PDF 嵌入图像按像素量出的估计值（误差约 ±0.02 分 / ±2 个百分点），标作「读图」。</p></div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>协议 <span class="tag">§2.1.4</span></h4>
+      <ul>
+        <li><b>Absolute Score</b>：5 分 Likert，1 = Extremely Dissatisfied，5 = Extremely Satisfied</li>
+        <li><b>GSB</b>：两两对比，Good / Same / Bad</li>
+        <li>评分人：影视制作、摄影、设计领域专家 <span class="src">§2.1</span></li>
+        <li>样本数、评分人数、一致性：<span class="nd">原文未披露</span></li>
+      </ul></div>
+    <div class="card mod"><h4>对比对象 <span class="tag">§2.1.4</span></h4>
+      <ul>
+        <li><b>视频（Absolute）</b>：Seedance 1.0 Pro、Kling 2.5、Kling 2.6、Veo 3.1</li>
+        <li><b>音频 T2V（GSB）</b>：Kling 2.6、Veo 3.1、Sora2 Pro（图 5 标签）</li>
+        <li><b>音频 I2V（GSB）</b>：Kling 2.6、Veo 3.1</li>
+        <li>正文还提到 Wan 2.5，但所有图中都没有它的结果</li>
+      </ul></div>
+  </div>
+
+  <h3 class="wide">视频指标定义的两处更新</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Motion Quality → 强调 Vividness <span class="tag">§2.1.2</span></h4><p>稳定性、物理合理性、时间准确性仍是硬门槛；新增 Vividness，从动作、运镜、氛围、情绪四个维度综合评。原文点名一种常见取巧：用慢动作换稳定感，会显著拉低生动性。</p></div>
+    <div class="card mod"><h4>Prompt Following → 按意图评 <span class="tag">§2.1.2</span></h4><p>用户要求逐字执行时仍按字面评；否则评“底层意图”的一致性，允许补全视觉细节、调整叙事结构、生成更贴合情绪的台词，只要核心意图不丢。</p></div>
+  </div>
+
+  <h3 class="wide">视频 Absolute：T2V（图 3）</h3>
+  <div class="chart-legend wide"><span class="l1">Seedance 1.5 pro</span><span class="l2">Seedance 1.0 Pro</span><span class="l3">Kling 2.6</span><span class="l4">Kling 2.5</span><span class="l5">Veo 3.1</span></div>
+  <div class="chart-grid wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 330 186" role="img" aria-label="Motion Quality">
+<text class="ch-t" x="0" y="14">Motion Quality</text><text class="ch-src" x="330" y="14" text-anchor="end">图 3 读图</text>
+<line x1="98.0" y1="26" x2="98.0" y2="168" class="grid"/>
+<text class="ch-ax" x="98.0" y="182" text-anchor="middle">1</text>
+<line x1="145.5" y1="26" x2="145.5" y2="168" class="grid"/>
+<text class="ch-ax" x="145.5" y="182" text-anchor="middle">2</text>
+<line x1="193.0" y1="26" x2="193.0" y2="168" class="grid"/>
+<text class="ch-ax" x="193.0" y="182" text-anchor="middle">3</text>
+<line x1="240.5" y1="26" x2="240.5" y2="168" class="grid"/>
+<text class="ch-ax" x="240.5" y="182" text-anchor="middle">4</text>
+<line x1="288.0" y1="26" x2="288.0" y2="168" class="grid"/>
+<text class="ch-ax" x="288.0" y="182" text-anchor="middle">5</text>
+<text class="ch-lbl" x="92" y="43" text-anchor="end">Seedance 1.5 pro</text>
+<rect class="bar-q" x="98" y="32" width="87.4" height="16" rx="3"/>
+<text class="ch-val" x="190.4" y="44">≈2.84</text>
+<text class="ch-lbl" x="92" y="69" text-anchor="end">Seedance 1.0 Pro</text>
+<rect class="bar-qi" x="98" y="58" width="85.0" height="16" rx="3"/>
+<text class="ch-val" x="188.0" y="70">≈2.79</text>
+<text class="ch-lbl" x="92" y="95" text-anchor="end">Kling 2.6</text>
+<rect class="bar-o" x="98" y="84" width="101.7" height="16" rx="3"/>
+<text class="ch-val" x="204.7" y="96">≈3.14</text>
+<text class="ch-lbl" x="92" y="121" text-anchor="end">Kling 2.5</text>
+<rect class="bar-o2" x="98" y="110" width="101.2" height="16" rx="3"/>
+<text class="ch-val" x="204.2" y="122">≈3.13</text>
+<text class="ch-lbl" x="92" y="147" text-anchor="end">Veo 3.1</text>
+<rect class="bar-veo" x="98" y="136" width="104.0" height="16" rx="3"/>
+<text class="ch-val" x="207.0" y="148">≈3.19 ▲</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 186" role="img" aria-label="Prompt Following">
+<text class="ch-t" x="0" y="14">Prompt Following</text><text class="ch-src" x="330" y="14" text-anchor="end">图 3 读图</text>
+<line x1="98.0" y1="26" x2="98.0" y2="168" class="grid"/>
+<text class="ch-ax" x="98.0" y="182" text-anchor="middle">1</text>
+<line x1="145.5" y1="26" x2="145.5" y2="168" class="grid"/>
+<text class="ch-ax" x="145.5" y="182" text-anchor="middle">2</text>
+<line x1="193.0" y1="26" x2="193.0" y2="168" class="grid"/>
+<text class="ch-ax" x="193.0" y="182" text-anchor="middle">3</text>
+<line x1="240.5" y1="26" x2="240.5" y2="168" class="grid"/>
+<text class="ch-ax" x="240.5" y="182" text-anchor="middle">4</text>
+<line x1="288.0" y1="26" x2="288.0" y2="168" class="grid"/>
+<text class="ch-ax" x="288.0" y="182" text-anchor="middle">5</text>
+<text class="ch-lbl" x="92" y="43" text-anchor="end">Seedance 1.5 pro</text>
+<rect class="bar-q" x="98" y="32" width="100.2" height="16" rx="3"/>
+<text class="ch-val" x="203.2" y="44">≈3.11 ▲</text>
+<text class="ch-lbl" x="92" y="69" text-anchor="end">Seedance 1.0 Pro</text>
+<rect class="bar-qi" x="98" y="58" width="73.2" height="16" rx="3"/>
+<text class="ch-val" x="176.2" y="70">≈2.54</text>
+<text class="ch-lbl" x="92" y="95" text-anchor="end">Kling 2.6</text>
+<rect class="bar-o" x="98" y="84" width="93.6" height="16" rx="3"/>
+<text class="ch-val" x="196.6" y="96">≈2.97</text>
+<text class="ch-lbl" x="92" y="121" text-anchor="end">Kling 2.5</text>
+<rect class="bar-o2" x="98" y="110" width="77.0" height="16" rx="3"/>
+<text class="ch-val" x="179.9" y="122">≈2.62</text>
+<text class="ch-lbl" x="92" y="147" text-anchor="end">Veo 3.1</text>
+<rect class="bar-veo" x="98" y="136" width="97.4" height="16" rx="3"/>
+<text class="ch-val" x="200.4" y="148">≈3.05</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 186" role="img" aria-label="Visual Aesthetic">
+<text class="ch-t" x="0" y="14">Visual Aesthetic</text><text class="ch-src" x="330" y="14" text-anchor="end">图 3 读图</text>
+<line x1="98.0" y1="26" x2="98.0" y2="168" class="grid"/>
+<text class="ch-ax" x="98.0" y="182" text-anchor="middle">1</text>
+<line x1="145.5" y1="26" x2="145.5" y2="168" class="grid"/>
+<text class="ch-ax" x="145.5" y="182" text-anchor="middle">2</text>
+<line x1="193.0" y1="26" x2="193.0" y2="168" class="grid"/>
+<text class="ch-ax" x="193.0" y="182" text-anchor="middle">3</text>
+<line x1="240.5" y1="26" x2="240.5" y2="168" class="grid"/>
+<text class="ch-ax" x="240.5" y="182" text-anchor="middle">4</text>
+<line x1="288.0" y1="26" x2="288.0" y2="168" class="grid"/>
+<text class="ch-ax" x="288.0" y="182" text-anchor="middle">5</text>
+<text class="ch-lbl" x="92" y="43" text-anchor="end">Seedance 1.5 pro</text>
+<rect class="bar-q" x="98" y="32" width="105.0" height="16" rx="3"/>
+<text class="ch-val" x="208.0" y="44">≈3.21</text>
+<text class="ch-lbl" x="92" y="69" text-anchor="end">Seedance 1.0 Pro</text>
+<rect class="bar-qi" x="98" y="58" width="74.1" height="16" rx="3"/>
+<text class="ch-val" x="177.1" y="70">≈2.56</text>
+<text class="ch-lbl" x="92" y="95" text-anchor="end">Kling 2.6</text>
+<rect class="bar-o" x="98" y="84" width="102.1" height="16" rx="3"/>
+<text class="ch-val" x="205.1" y="96">≈3.15</text>
+<text class="ch-lbl" x="92" y="121" text-anchor="end">Kling 2.5</text>
+<rect class="bar-o2" x="98" y="110" width="124.0" height="16" rx="3"/>
+<text class="ch-val" x="227.0" y="122">≈3.61 ▲</text>
+<text class="ch-lbl" x="92" y="147" text-anchor="end">Veo 3.1</text>
+<rect class="bar-veo" x="98" y="136" width="92.6" height="16" rx="3"/>
+<text class="ch-val" x="195.6" y="148">≈2.95</text>
+</svg></div></div>
+  <p class="tbl-note wide">横轴为完整 Likert 1–5 分（原图纵轴从 2.0 起，会放大差距）。▲ 为该项最高。图 3 的图例：蓝 = Kling 2.6、红 = Kling 2.5；<b>图 4 中两者颜色对调</b>，这里按各自图例着色，同一型号在两张图里颜色一致。</p>
+
+  <h3 class="wide">视频 Absolute：I2V（图 4）</h3>
+  <div class="chart-grid two wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 330 186" role="img" aria-label="Motion Quality">
+<text class="ch-t" x="0" y="14">Motion Quality</text><text class="ch-src" x="330" y="14" text-anchor="end">图 4 读图</text>
+<line x1="98.0" y1="26" x2="98.0" y2="168" class="grid"/>
+<text class="ch-ax" x="98.0" y="182" text-anchor="middle">1</text>
+<line x1="145.5" y1="26" x2="145.5" y2="168" class="grid"/>
+<text class="ch-ax" x="145.5" y="182" text-anchor="middle">2</text>
+<line x1="193.0" y1="26" x2="193.0" y2="168" class="grid"/>
+<text class="ch-ax" x="193.0" y="182" text-anchor="middle">3</text>
+<line x1="240.5" y1="26" x2="240.5" y2="168" class="grid"/>
+<text class="ch-ax" x="240.5" y="182" text-anchor="middle">4</text>
+<line x1="288.0" y1="26" x2="288.0" y2="168" class="grid"/>
+<text class="ch-ax" x="288.0" y="182" text-anchor="middle">5</text>
+<text class="ch-lbl" x="92" y="43" text-anchor="end">Seedance 1.5 pro</text>
+<rect class="bar-q" x="98" y="32" width="76.0" height="16" rx="3"/>
+<text class="ch-val" x="179.0" y="44">≈2.60</text>
+<text class="ch-lbl" x="92" y="69" text-anchor="end">Seedance 1.0 Pro</text>
+<rect class="bar-qi" x="98" y="58" width="65.5" height="16" rx="3"/>
+<text class="ch-val" x="168.6" y="70">≈2.38</text>
+<text class="ch-lbl" x="92" y="95" text-anchor="end">Kling 2.5</text>
+<rect class="bar-o2" x="98" y="84" width="72.2" height="16" rx="3"/>
+<text class="ch-val" x="175.2" y="96">≈2.52</text>
+<text class="ch-lbl" x="92" y="121" text-anchor="end">Kling 2.6</text>
+<rect class="bar-o" x="98" y="110" width="74.6" height="16" rx="3"/>
+<text class="ch-val" x="177.6" y="122">≈2.57</text>
+<text class="ch-lbl" x="92" y="147" text-anchor="end">Veo 3.1</text>
+<rect class="bar-veo" x="98" y="136" width="81.2" height="16" rx="3"/>
+<text class="ch-val" x="184.2" y="148">≈2.71 ▲</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 186" role="img" aria-label="Prompt Following">
+<text class="ch-t" x="0" y="14">Prompt Following</text><text class="ch-src" x="330" y="14" text-anchor="end">图 4 读图</text>
+<line x1="98.0" y1="26" x2="98.0" y2="168" class="grid"/>
+<text class="ch-ax" x="98.0" y="182" text-anchor="middle">1</text>
+<line x1="145.5" y1="26" x2="145.5" y2="168" class="grid"/>
+<text class="ch-ax" x="145.5" y="182" text-anchor="middle">2</text>
+<line x1="193.0" y1="26" x2="193.0" y2="168" class="grid"/>
+<text class="ch-ax" x="193.0" y="182" text-anchor="middle">3</text>
+<line x1="240.5" y1="26" x2="240.5" y2="168" class="grid"/>
+<text class="ch-ax" x="240.5" y="182" text-anchor="middle">4</text>
+<line x1="288.0" y1="26" x2="288.0" y2="168" class="grid"/>
+<text class="ch-ax" x="288.0" y="182" text-anchor="middle">5</text>
+<text class="ch-lbl" x="92" y="43" text-anchor="end">Seedance 1.5 pro</text>
+<rect class="bar-q" x="98" y="32" width="80.3" height="16" rx="3"/>
+<text class="ch-val" x="183.3" y="44">≈2.69</text>
+<text class="ch-lbl" x="92" y="69" text-anchor="end">Seedance 1.0 Pro</text>
+<rect class="bar-qi" x="98" y="58" width="66.0" height="16" rx="3"/>
+<text class="ch-val" x="169.0" y="70">≈2.39</text>
+<text class="ch-lbl" x="92" y="95" text-anchor="end">Kling 2.5</text>
+<rect class="bar-o2" x="98" y="84" width="67.5" height="16" rx="3"/>
+<text class="ch-val" x="170.4" y="96">≈2.42</text>
+<text class="ch-lbl" x="92" y="121" text-anchor="end">Kling 2.6</text>
+<rect class="bar-o" x="98" y="110" width="76.0" height="16" rx="3"/>
+<text class="ch-val" x="179.0" y="122">≈2.60</text>
+<text class="ch-lbl" x="92" y="147" text-anchor="end">Veo 3.1</text>
+<rect class="bar-veo" x="98" y="136" width="88.3" height="16" rx="3"/>
+<text class="ch-val" x="191.3" y="148">≈2.86 ▲</text>
+</svg></div></div>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>指标（读图）</th><th class="q">Seedance 1.5 pro</th><th>Seedance 1.0 Pro</th><th>Kling 2.6</th><th>Kling 2.5</th><th>Veo 3.1</th><th>1.5 相对 1.0</th><th>1.5 排名</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="8">T2V · 图 3</td></tr>
+        <tr><td>Motion Quality</td><td class="q">2.84</td><td>2.79</td><td>3.14</td><td>3.13</td><td class="best">3.19</td><td>+0.05</td><td>4 / 5</td></tr>
+        <tr class="hl"><td>Prompt Following</td><td class="q best">3.11</td><td>2.54</td><td>2.97</td><td>2.62</td><td>3.05</td><td>+0.57</td><td>1 / 5</td></tr>
+        <tr><td>Visual Aesthetic</td><td class="q">3.21</td><td>2.56</td><td>3.15</td><td class="best">3.61</td><td>2.95</td><td>+0.65</td><td>2 / 5</td></tr>
+        <tr class="grp"><td colspan="8">I2V · 图 4（无 Aesthetic 维度）</td></tr>
+        <tr><td>Motion Quality</td><td class="q">2.60</td><td>2.38</td><td>2.57</td><td>2.52</td><td class="best">2.71</td><td>+0.22</td><td>2 / 5</td></tr>
+        <tr><td>Prompt Following</td><td class="q">2.69</td><td>2.39</td><td>2.60</td><td>2.42</td><td class="best">2.86</td><td>+0.30</td><td>2 / 5</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">分数均为读图估计 <span class="src">图 3/4 读图</span>；「1.5 相对 1.0」与排名由读图值计算 <span class="src calc">推算</span>。正文结论：T2V 指令遵循领先，美学和运动“有竞争力”，I2V 也“有竞争力”。<span class="src">§2.1.4</span></p>
+
+  <h3 class="wide">音频 GSB：T2V（图 5）与 I2V（图 6）</h3>
+  <div class="chart-legend wide"><span class="g1">Seedance 1.5 pro preferred</span><span class="g2">Same</span><span class="g3">Competitor preferred</span></div>
+  <div class="chart-grid wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 330 170" role="img" aria-label="T2V · vs Kling 2.6">
+<text class="ch-t" x="0" y="14">T2V · vs Kling 2.6</text><text class="ch-src" x="330" y="14" text-anchor="end">图 5 读图</text>
+<text class="ch-lbl" x="90" y="40" text-anchor="end">Prompt Following</text>
+<rect class="gsb-g" x="96" y="28" width="43.4" height="18"/>
+<rect class="gsb-s" x="139.4" y="28" width="171.2" height="18"/>
+<rect class="gsb-b" x="310.6" y="28" width="11.4" height="18"/>
+<text class="gsb-t" x="100" y="41">19</text>
+<text class="ch-lbl" x="90" y="70" text-anchor="end">Quality</text>
+<rect class="gsb-g" x="96" y="58" width="59.4" height="18"/>
+<rect class="gsb-s" x="155.4" y="58" width="134.7" height="18"/>
+<rect class="gsb-b" x="290.0" y="58" width="32.0" height="18"/>
+<text class="gsb-t" x="100" y="71">26</text>
+<text class="gsb-t" x="318" y="71" text-anchor="end">14</text>
+<text class="ch-lbl" x="90" y="100" text-anchor="end">AV Sync</text>
+<rect class="gsb-g" x="96" y="88" width="50.2" height="18"/>
+<rect class="gsb-s" x="146.2" y="88" width="152.9" height="18"/>
+<rect class="gsb-b" x="299.2" y="88" width="22.8" height="18"/>
+<text class="gsb-t" x="100" y="101">22</text>
+<text class="gsb-t" x="318" y="101" text-anchor="end">10</text>
+<text class="ch-lbl" x="90" y="130" text-anchor="end">Expressiveness</text>
+<rect class="gsb-g" x="96" y="118" width="137.0" height="18"/>
+<rect class="gsb-s" x="233.0" y="118" width="68.5" height="18"/>
+<rect class="gsb-b" x="301.5" y="118" width="20.5" height="18"/>
+<text class="gsb-t" x="100" y="131">60</text>
+<text class="gsb-t" x="318" y="131" text-anchor="end">9</text>
+<text class="ch-ax" x="96.0" y="166" text-anchor="middle">0%</text>
+<text class="ch-ax" x="209.0" y="166" text-anchor="middle">50%</text>
+<text class="ch-ax" x="322.0" y="166" text-anchor="middle">100%</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 170" role="img" aria-label="T2V · vs Veo 3.1">
+<text class="ch-t" x="0" y="14">T2V · vs Veo 3.1</text><text class="ch-src" x="330" y="14" text-anchor="end">图 5 读图</text>
+<text class="ch-lbl" x="90" y="40" text-anchor="end">Prompt Following</text>
+<rect class="gsb-g" x="96" y="28" width="45.2" height="18"/>
+<rect class="gsb-s" x="141.2" y="28" width="167.2" height="18"/>
+<rect class="gsb-b" x="308.4" y="28" width="13.6" height="18"/>
+<text class="gsb-t" x="100" y="41">20</text>
+<text class="ch-lbl" x="90" y="70" text-anchor="end">Quality</text>
+<rect class="gsb-g" x="96" y="58" width="70.1" height="18"/>
+<rect class="gsb-s" x="166.1" y="58" width="113.0" height="18"/>
+<rect class="gsb-b" x="279.1" y="58" width="42.9" height="18"/>
+<text class="gsb-t" x="100" y="71">31</text>
+<text class="gsb-t" x="318" y="71" text-anchor="end">19</text>
+<text class="ch-lbl" x="90" y="100" text-anchor="end">AV Sync</text>
+<rect class="gsb-g" x="96" y="88" width="61.0" height="18"/>
+<rect class="gsb-s" x="157.0" y="88" width="144.6" height="18"/>
+<rect class="gsb-b" x="301.7" y="88" width="20.3" height="18"/>
+<text class="gsb-t" x="100" y="101">27</text>
+<text class="gsb-t" x="318" y="101" text-anchor="end">9</text>
+<text class="ch-lbl" x="90" y="130" text-anchor="end">Expressiveness</text>
+<rect class="gsb-g" x="96" y="118" width="93.6" height="18"/>
+<rect class="gsb-s" x="189.6" y="118" width="89.0" height="18"/>
+<rect class="gsb-b" x="278.6" y="118" width="43.4" height="18"/>
+<text class="gsb-t" x="100" y="131">41</text>
+<text class="gsb-t" x="318" y="131" text-anchor="end">19</text>
+<text class="ch-ax" x="96.0" y="166" text-anchor="middle">0%</text>
+<text class="ch-ax" x="209.0" y="166" text-anchor="middle">50%</text>
+<text class="ch-ax" x="322.0" y="166" text-anchor="middle">100%</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 170" role="img" aria-label="T2V · vs Sora2 Pro">
+<text class="ch-t" x="0" y="14">T2V · vs Sora2 Pro</text><text class="ch-src" x="330" y="14" text-anchor="end">图 5 读图</text>
+<text class="ch-lbl" x="90" y="40" text-anchor="end">Prompt Following</text>
+<rect class="gsb-g" x="96" y="28" width="22.8" height="18"/>
+<rect class="gsb-s" x="118.8" y="28" width="180.3" height="18"/>
+<rect class="gsb-b" x="299.2" y="28" width="22.8" height="18"/>
+<text class="gsb-t" x="100" y="41">10</text>
+<text class="gsb-t" x="318" y="41" text-anchor="end">10</text>
+<text class="ch-lbl" x="90" y="70" text-anchor="end">Quality</text>
+<rect class="gsb-g" x="96" y="58" width="101.7" height="18"/>
+<rect class="gsb-s" x="197.7" y="58" width="97.2" height="18"/>
+<rect class="gsb-b" x="294.9" y="58" width="27.1" height="18"/>
+<text class="gsb-t" x="100" y="71">45</text>
+<text class="gsb-t" x="318" y="71" text-anchor="end">12</text>
+<text class="ch-lbl" x="90" y="100" text-anchor="end">AV Sync</text>
+<rect class="gsb-g" x="96" y="88" width="56.5" height="18"/>
+<rect class="gsb-s" x="152.5" y="88" width="142.4" height="18"/>
+<rect class="gsb-b" x="294.9" y="88" width="27.1" height="18"/>
+<text class="gsb-t" x="100" y="101">25</text>
+<text class="gsb-t" x="318" y="101" text-anchor="end">12</text>
+<text class="ch-lbl" x="90" y="130" text-anchor="end">Expressiveness</text>
+<rect class="gsb-g" x="96" y="118" width="32.0" height="18"/>
+<rect class="gsb-s" x="128.0" y="118" width="116.4" height="18"/>
+<rect class="gsb-b" x="244.4" y="118" width="77.6" height="18"/>
+<text class="gsb-t" x="100" y="131">14</text>
+<text class="gsb-t" x="318" y="131" text-anchor="end">34</text>
+<text class="ch-ax" x="96.0" y="166" text-anchor="middle">0%</text>
+<text class="ch-ax" x="209.0" y="166" text-anchor="middle">50%</text>
+<text class="ch-ax" x="322.0" y="166" text-anchor="middle">100%</text>
+</svg></div></div>
+  <div class="chart-grid two wide"><div class="chart-cell"><svg class="chart" viewBox="0 0 330 170" role="img" aria-label="I2V · vs Kling 2.6">
+<text class="ch-t" x="0" y="14">I2V · vs Kling 2.6</text><text class="ch-src" x="330" y="14" text-anchor="end">图 6 读图</text>
+<text class="ch-lbl" x="90" y="40" text-anchor="end">Prompt Following</text>
+<rect class="gsb-g" x="96" y="28" width="63.3" height="18"/>
+<rect class="gsb-s" x="159.3" y="28" width="133.3" height="18"/>
+<rect class="gsb-b" x="292.6" y="28" width="29.4" height="18"/>
+<text class="gsb-t" x="100" y="41">28</text>
+<text class="gsb-t" x="318" y="41" text-anchor="end">13</text>
+<text class="ch-lbl" x="90" y="70" text-anchor="end">Quality</text>
+<rect class="gsb-g" x="96" y="58" width="94.9" height="18"/>
+<rect class="gsb-s" x="190.9" y="58" width="101.7" height="18"/>
+<rect class="gsb-b" x="292.6" y="58" width="29.4" height="18"/>
+<text class="gsb-t" x="100" y="71">42</text>
+<text class="gsb-t" x="318" y="71" text-anchor="end">13</text>
+<text class="ch-lbl" x="90" y="100" text-anchor="end">AV Sync</text>
+<rect class="gsb-g" x="96" y="88" width="52.0" height="18"/>
+<rect class="gsb-s" x="148.0" y="88" width="146.9" height="18"/>
+<rect class="gsb-b" x="294.9" y="88" width="27.1" height="18"/>
+<text class="gsb-t" x="100" y="101">23</text>
+<text class="gsb-t" x="318" y="101" text-anchor="end">12</text>
+<text class="ch-lbl" x="90" y="130" text-anchor="end">Expressiveness</text>
+<rect class="gsb-g" x="96" y="118" width="137.0" height="18"/>
+<rect class="gsb-s" x="233.0" y="118" width="70.8" height="18"/>
+<rect class="gsb-b" x="303.7" y="118" width="18.3" height="18"/>
+<text class="gsb-t" x="100" y="131">60</text>
+<text class="gsb-t" x="318" y="131" text-anchor="end">8</text>
+<text class="ch-ax" x="96.0" y="166" text-anchor="middle">0%</text>
+<text class="ch-ax" x="209.0" y="166" text-anchor="middle">50%</text>
+<text class="ch-ax" x="322.0" y="166" text-anchor="middle">100%</text>
+</svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 330 170" role="img" aria-label="I2V · vs Veo 3.1">
+<text class="ch-t" x="0" y="14">I2V · vs Veo 3.1</text><text class="ch-src" x="330" y="14" text-anchor="end">图 6 读图</text>
+<text class="ch-lbl" x="90" y="40" text-anchor="end">Prompt Following</text>
+<rect class="gsb-g" x="96" y="28" width="56.5" height="18"/>
+<rect class="gsb-s" x="152.5" y="28" width="144.6" height="18"/>
+<rect class="gsb-b" x="297.1" y="28" width="24.9" height="18"/>
+<text class="gsb-t" x="100" y="41">25</text>
+<text class="gsb-t" x="318" y="41" text-anchor="end">11</text>
+<text class="ch-lbl" x="90" y="70" text-anchor="end">Quality</text>
+<rect class="gsb-g" x="96" y="58" width="76.8" height="18"/>
+<rect class="gsb-s" x="172.8" y="58" width="122.0" height="18"/>
+<rect class="gsb-b" x="294.9" y="58" width="27.1" height="18"/>
+<text class="gsb-t" x="100" y="71">34</text>
+<text class="gsb-t" x="318" y="71" text-anchor="end">12</text>
+<text class="ch-lbl" x="90" y="100" text-anchor="end">AV Sync</text>
+<rect class="gsb-g" x="96" y="88" width="66.2" height="18"/>
+<rect class="gsb-s" x="162.2" y="88" width="130.1" height="18"/>
+<rect class="gsb-b" x="292.3" y="88" width="29.7" height="18"/>
+<text class="gsb-t" x="100" y="101">29</text>
+<text class="gsb-t" x="318" y="101" text-anchor="end">13</text>
+<text class="ch-lbl" x="90" y="130" text-anchor="end">Expressiveness</text>
+<rect class="gsb-g" x="96" y="118" width="89.0" height="18"/>
+<rect class="gsb-s" x="185.0" y="118" width="102.7" height="18"/>
+<rect class="gsb-b" x="287.8" y="118" width="34.2" height="18"/>
+<text class="gsb-t" x="100" y="131">39</text>
+<text class="gsb-t" x="318" y="131" text-anchor="end">15</text>
+<text class="ch-ax" x="96.0" y="166" text-anchor="middle">0%</text>
+<text class="ch-ax" x="209.0" y="166" text-anchor="middle">50%</text>
+<text class="ch-ax" x="322.0" y="166" text-anchor="middle">100%</text>
+</svg></div></div>
+  <p class="tbl-note wide">条内数字为百分比（读图），三段之和因量取误差可能不等于 100。<span class="src">图 5/6 读图</span></p>
+
+  <div class="prose">
+    <h3>原文对音频的三条结论</h3>
+    <ul>
+      <li><b>中文音频</b>：中文对白、方言、独白上持续优于 Veo 3.1，少有吞字、读错。<span class="src">§2.1.4</span>（图中没有单独的中文子集结果）</li>
+      <li><b>音画同步</b>：能对上说话角色的数量和身份，减少嘴型多余或缺失；优于 Veo 3.1 与 Kling 2.6。<span class="src">§2.1.4</span> 读图：AV Sync 上 Seedance 偏好约 22–29%，对手偏好约 9–13%。<span class="src">图 5/6 读图</span></li>
+      <li><b>表现力</b>：承认 Sora 2 情绪更外放，Seedance “更平衡、可控”。读图：对 Sora2 Pro 的 Expressiveness，Seedance 偏好 ≈14%、对手偏好 ≈34%，是全部 GSB 中唯一明显输的一项。<span class="src">§2.1.4 · 图 5 读图</span></li>
+    </ul>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="论文图 1 雷达图（裁切版）" loading="lazy"></div>
+    <figcaption><b>总体评测雷达图（裁切版）。</b>左：视频能力（Alignment / Aesthetics / Motion，分 T2V、I2V）；右：音频能力（Quality / Synchronization / Alignment / Expressiveness，分 T2V、I2V）。此裁图缺少顶部标签与图例；据原 PDF，左图对比 Seedance 1.5 pro（青）、Seedance 1.0 pro、Kling 2.6、Kling 2.5、Veo 3.1，右图对比 Seedance 1.5 pro、Kling 2.6、Veo 3.1。雷达图无刻度，不读数。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <details class="more wide">
+    <summary>原图：图 3、图 4（裁图不含标题与图例）<span class="hint">展开</span></summary>
+    <div class="body">
+      <figure class="fig card">
+        <div class="img-pad"><img src="figures/fig3.jpg" alt="论文图 3" loading="lazy"></div>
+        <figcaption><b>T2V 视频绝对分。</b>三栏依次为 Motion Quality、Prompt Following、Visual Aesthetic；柱色依次为 Seedance 1.5 pro（绿）、Seedance 1.0 pro（橙）、Kling 2.6（蓝）、Kling 2.5（红）、Veo 3.1（黄）。纵轴 2.0 起。<span class="from">来源：论文图 3</span></figcaption>
+      </figure>
+      <figure class="fig card">
+        <div class="img-pad"><img src="figures/fig4.jpg" alt="论文图 4" loading="lazy"></div>
+        <figcaption><b>I2V 视频绝对分。</b>两栏为 Motion Quality、Prompt Following；柱色依次为 Seedance 1.5 pro（绿）、Seedance 1.0 pro（橙）、<b>Kling 2.5（蓝）、Kling 2.6（红）</b>、Veo 3.1（黄）——与图 3 的 Kling 颜色对调。纵轴 2.0 起。<span class="from">来源：论文图 4</span></figcaption>
+      </figure>
+    </div>
+  </details>
+</section>
+
+<!-- 07 新在哪 -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">只列能在原文里核对到的；双分支 / MMDiT、SFT+RLHF、蒸馏本身都是业内常规，不算新。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>Seedance 系列第一次做原生音画联合</h4><p>从 1.0 的纯视频扩展到同一模型同时出视频和音频，并用多任务预训练让一套权重兼容 T2VA / I2VA / T2V / I2V。<span class="src">§1</span></p><p class="why">联合生成本身不是首创（原文自己列了 Wan 2.5、Kling 2.6、Sora 2），新的是在这个系列里的落地。</p></div>
+    <div class="card nv"><h4>caption 覆盖音频模态</h4><p>caption 系统同时为视频和音频写专业级描述。<span class="src">§1</span></p><p class="why">对编辑 / 生成数据组最有参考价值的一点，但格式与模型未披露。</p></div>
+    <div class="card nv"><h4>评测把 “Vividness” 拉成主指标，并点名慢动作取巧</h4><p>认为基础运动指标将饱和，转而评动作 / 运镜 / 氛围 / 情绪四维生动性；明确指出用慢动作换稳定的 trade-off。<span class="src">§2.1.2</span></p></div>
+    <div class="card nv"><h4>Prompt Following 改为“意图一致”口径</h4><p>允许补细节、改叙事、补台词，只要核心意图保留；逐字要求时仍按字面。<span class="src">§2.1.2</span></p></div>
+    <div class="card nv"><h4>四维音频评测 + 方言 / 戏曲场景</h4><p>Audio Prompt Following、Quality、AV Sync、Expressiveness 四维 GSB；能力描述覆盖四川话、台湾腔普通话、粤语、上海话以及戏曲念白。<span class="src">§2.1.3 · §2.2</span></p></div>
+  </div>
+</section>
+
+<!-- 08 启示 -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">每条先写论文做法（带出处），再写一条可迁移做法。<b>橙色「迁移建议」均为本文作者的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>每个模态都要有自己的 caption</h4>
+        <p class="paper">论文：caption 系统对视频和音频分别给专业级描述。<span class="src">§1</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑样本把 caption 拆成「源图描述 / 编辑指令 / 目标图描述 / 应保持不变的要素」四个字段分别写，而不是一条混合指令；缺哪个字段就能直接定位数据问题。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>推理侧改写 prompt，对齐训练 caption 分布</h4>
+        <p class="paper">论文：推理链路前置 Prompt Engineering，把用户 prompt 改写为 optimized prompt 再进文本编码器。<span class="src">图 2</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型若用长、结构化 caption 训练，上线须配一个把短指令改写成训练风格的 rewriter；评测时同时报「原始指令」和「改写后指令」两套分，看清楚分数有多少来自 rewriter。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>用评测标签倒推 caption 字段</h4>
+        <p class="paper">论文：音频评测标签细到人声类型、音色、口音、情绪、声源、音乐风格。<span class="src">§2.1.1</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>先定编辑 bench 的标签树（编辑类型、对象、区域大小、风格），再要求训练 caption 能覆盖这些字段，保证训练数据能按 bench 维度切片统计覆盖率。</p></div>
+    </div>
+
+    <div class="impl-group">数据</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>“跨模态一致性” 作为第一过滤优先级</h4>
+        <p class="paper">论文：curation pipeline 优先保证 video–audio coherence。<span class="src">§1</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据的对应物是「源图–目标图–指令」三者一致：先过滤指令与实际变化不符、非编辑区域漂移的样本，再谈美学分。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>课程式数据调度</h4>
+        <p class="paper">论文：pipeline 包含 curriculum-based data scheduling，细节未披露。<span class="src">§1</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>按编辑难度（单一局部编辑 → 多操作复合 → 全局风格 + 局部保持）分桶，记录每桶进入训练的时间点，便于事后归因。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>一套权重兼容带 / 不带条件的任务</h4>
+        <p class="paper">论文：多任务预训练覆盖 T2VA、I2VA 和纯视频 T2V、I2V。<span class="src">§1</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑基模混入一定比例的纯 T2I 与「空编辑」（指令要求不改）样本，防止模型对每条指令都强行改图；比例需自己做消融，论文没有给。</p></div>
+    </div>
+
+    <div class="impl-group">评测</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>警惕“保守输出换稳定分”</h4>
+        <p class="paper">论文：指出部分模型用慢动作换稳定感，因而单独评 Vividness。<span class="src">§2.1.2</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑里的同类现象是「改得少 → 保持分高」。保持度指标必须和编辑完成度成对报告，或加一项「编辑力度是否到位」的人评维度。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>字面遵循 vs 意图遵循分开定义</h4>
+        <p class="paper">论文：逐字要求按字面评，其余按意图评，允许补细节。<span class="src">§2.1.2</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测写清「允许的额外修改」白名单（如光影随之协调），超出白名单记为过度编辑，避免评分人各自理解。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>失败模式写进指标定义</h4>
+        <p class="paper">论文：Audio Prompt Following 明列常见失败：漏音效、语言 / 方言错误、有声无嘴型。<span class="src">§2.1.3</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>为编辑 bench 每个维度列 3–5 个典型失败（漏编辑、改错对象、身份漂移、文字乱码），让评分人勾选，既能打分也能产出错误分布。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>Absolute + GSB 双协议，并报 Same</h4>
+        <p class="paper">论文：视频用 5 分 Likert 绝对分，音频用三段式 GSB；音频图中 Same 占约 30–79%。<span class="src">§2.1.4 · 图 5/6 读图</span></p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>GSB 一定要把 Same 的占比报出来；Same 很高时，「Good 比 Bad 多」的结论要配样本数和置信区间。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 局限 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>没有可复现信息。</b>参数量、层数、VAE / 音频编码、文本编码器、joint module 结构、训练超参、数据规模与配比全部未披露。<span class="src">全文</span></li>
+    <li class="key"><b>零消融。</b>joint module、课程调度、RLHF、Refiner、Prompt Engineering 各自贡献多少，没有任何对照实验。<span class="src">全文</span></li>
+    <li><b>只有内部集、只有人评、只有图。</b>SeedVideoBench 1.5 未说明是否公开；样本数、评分人数、一致性均未给；没有任何公开 benchmark，结果只能以柱状图呈现。<span class="src">§2.1</span></li>
+    <li><b>正文措辞比图乐观。</b>正文称 T2V 运动“有竞争力”，读图 Motion Quality ≈2.84，在 5 个模型中排第 4；I2V 两项都低于 Veo 3.1。<span class="src">§2.1.4 · 图 3/4 读图</span></li>
+    <li><b>声明的视频 GSB 没有结果。</b>§2.1.4 说视频评测采用 Absolute + GSB 双协议，但视频只展示了 Absolute（图 3/4），GSB 只出现在音频（图 5/6）。<span class="src">§2.1.4</span></li>
+    <li><b>对比对象前后不一。</b>正文列了 Wan 2.5、Sora 2，图中没有 Wan 2.5；图 5 标签是 “Sora2 Pro”；I2V 音频不含 Sora。<span class="src">§2.1.4 · 图 5/6</span></li>
+    <li><b>图例颜色在图 3、图 4 之间对调</b>（Kling 2.5 / 2.6），且纵轴从 2.0 起，直接看柱高容易读错、读大差距。<span class="src">图 3/4</span></li>
+    <li><b>加速数字无基线。</b>“&gt;10×”和“近 3×”都没给基线 NFE、硬件、分辨率与时长。<span class="src">§1</span></li>
+    <li><b>中文 / 方言优势无定量支撑。</b>“持续优于 Veo 3.1”的中文结论和方言能力只有文字与示例，没有分语言子集结果。<span class="src">§2.1.4 · §2.2</span></li>
+  </ul>
+</section>
+
+<!-- 10 图表索引 -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>原文图号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1（p.1）</td><td>总体评测雷达图：视频 / 音频。本页用裁切版 <code>fig0-teaser.jpg</code>，缺图例。</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 2（p.2）</td><td>训练与推理流程总览 <code>fig2.jpg</code></td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 3（p.5）</td><td>T2V 视频绝对分 <code>fig3.jpg</code>；本页另有读图重绘</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 4（p.6）</td><td>I2V 视频绝对分 <code>fig4.jpg</code>；本页另有读图重绘</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 5（p.6）</td><td>T2V 音频 GSB（vs Kling 2.6 / Veo 3.1 / Sora2 Pro）。未提供裁图，本页为读图重绘 SVG。</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 6（p.7）</td><td>I2V 音频 GSB（vs Kling 2.6 / Veo 3.1）。本页为读图重绘 SVG。</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>无图号（p.7）</td><td>运镜与风格一致性示例帧（两行十帧）。文件名为 <code>fig6.jpg</code>，但内容不是图 6。</td><td>下方</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="论文第 7 页示例帧" loading="lazy"></div>
+    <figcaption><b>示例帧。</b>位于 §2.2 “复杂运镜（环绕、弧线、跟拍）并与参考图保持风格一致”一段之后，原文未配题注。注意：manifest 将此文件标为图 6，实际图 6 是 I2V 音频 GSB 条形图。<span class="from">来源：论文第 7 页插图（无图号）</span></figcaption>
+  </figure>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 <a href="https://arxiv.org/abs/2512.13507" target="_blank" rel="noopener">Seedance 1.5 pro: A Native Audio-Visual Joint Generation Foundation Model</a>（ByteDance Seed，arXiv:2512.13507；v1 2025-12-15，本文按 v3 2025-12-23 核对）。所有数字均来自原文；原文仅以图表呈现的分数由本文从 PDF 图像量取，标注为「读图」，相加相减标注为「推算」。论文图片版权归原作者所有。「迁移建议」为本文观点，非论文内容。<br>
+    <a href="../../../index.html">← 返回前沿模型技术报告</a>
+  </div>
+</footer>
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

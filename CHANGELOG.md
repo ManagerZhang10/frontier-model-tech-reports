@@ -15,4 +15,8 @@
   - [HunyuanVideo 1.5](./reports/video/hunyuanvideo-1.5/)（视频生成）
   - [Kling-Omni](./reports/video/kling-omni/)（视频生成）
   - [Seedance 2.0](./reports/video/seedance-2.0/)（视频生成）
+  - [InternVL-U](./reports/image/internvl-u/)（统一多模态：理解 / 生成 / 编辑）
+  - [Seedance 1.5 pro](./reports/video/seedance-1.5-pro/)（视频生成 · 音画联合）
+  - [LTX-2](./reports/video/ltx-2/)（视频生成 · 音画联合）
+  - [Wan-Streamer](./reports/video/wan-streamer/)（实时交互音视频）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

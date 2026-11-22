@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wan-Streamer v0.1 中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="Wan-Streamer v0.1（Wan Team, Alibaba Group）中文深读：单一 Transformer 同时进出文本 / 音频 / 视频的全双工实时交互模型，约 200 ms 模型侧延迟。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<style>
+  /* page-specific SVG bits */
+  .dg-txt { fill: color-mix(in srgb, #d9534f 14%, var(--card)); stroke: color-mix(in srgb, #d9534f 45%, var(--line)); stroke-width: 1.2; }
+  .dg-aud { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.2; }
+  .dg-vid { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1.2; }
+  .dg-core { fill: color-mix(in srgb, var(--accent) 16%, var(--card)); stroke: var(--accent); stroke-width: 1.6; }
+  .dg-dash { stroke: var(--warm); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+  .dg-arrow { fill: var(--muted); }
+  .dg-arrow-w { fill: var(--warm); }
+  .dg-mute { stroke: var(--muted); stroke-width: 1.3; fill: none; }
+  .dg-zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .rng { fill: var(--bar-other); }
+  .rng-q { fill: var(--accent); }
+  .grid-l { stroke: var(--line); stroke-width: 1; }
+  .lat-a { fill: var(--accent); }
+  .lat-b { fill: var(--bar-other); }
+  .lat-t { fill: #fff; font: 600 12px var(--f-body); }
+  :root[data-theme="dark"] .lat-t { fill: #141218; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .lat-t { fill: #141218; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 实时交互音视频基础模型</div>
+    <h1>Wan-Streamer v0.1<span class="sub">End-to-end Real-time Interactive Foundation Models</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Wan Team, Alibaba Group</b></span>
+      <span>arXiv v1 <b>2026-06-23</b></span>
+      <span>本页依据 <b>v3（2026-06-29）</b></span>
+      <span>编号 <b>arXiv:2606.25041</b></span>
+    </div>
+    <p class="lede">把文本、音频、视频<b>同时作为输入和输出</b>，塞进<b>一个</b>块因果（block-causal）Transformer 里做全双工流式交互：不接外部 VAD / ASR / LLM / TTS / 数字人渲染模块，160 ms 一个流式单元，模型侧约 200 ms 出响应<span class="src">摘要</span><span class="src">§3</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z" fill="currentColor"/></svg>video · 实时交互音视频</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>开源：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg>全双工 · 192p · 25 FPS</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2606.25041" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/></svg>arXiv 论文</a>
+      <a href="https://arxiv.org/pdf/2606.25041" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>PDF</a>
+      <a href="https://wan-streamer.com/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>项目网站</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#index">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">正文 8 页 + 参考文献 / 作者表；只有 2 张图、2 张表，无消融。</div>
+  </nav>
+
+  <main>
+
+<!-- ============ 01 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">这是一篇偏「系统宣言 + 延迟报告」的短报告：架构与部署讲得清楚，数据、规模、质量指标几乎全空。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">发布日期（arXiv v1）</span><span class="stat-num sm">2026-06-23</span><span class="stat-sub">本页对照的 PDF 为 v3，标注 29 Jun 2026</span><span class="src">arXiv 页眉</span></div>
+    <div class="card stat"><span class="stat-k">模型侧响应延迟</span><span class="stat-num">≈200 ms</span><span class="stat-sub">从收到 160 ms 用户单元到对应音视频单元解码完成</span><span class="src">§3</span></div>
+    <div class="card stat"><span class="stat-k">总交互延迟</span><span class="stat-num">≈550 ms</span><span class="stat-sub">含 350 ms 双向网络预算</span><span class="src">§3 · 表 1</span></div>
+    <div class="card stat"><span class="stat-k">流式单元</span><span class="stat-num">160 ms</span><span class="stat-sub">25 FPS 输出 → 每单元 4 帧 <span class="src calc">推算</span></span><span class="src">摘要</span></div>
+    <div class="card stat"><span class="stat-k">输出分辨率</span><span class="stat-num">192p</span><span class="stat-sub">v0.1 定位为概念验证</span><span class="src">§5</span></div>
+    <div class="card stat"><span class="stat-k">部署</span><span class="stat-num sm">2 GPU<br>thinker + performer</span><span class="stat-sub">GPU 型号原文未披露</span><span class="src">§2.4 · §3</span></div>
+    <div class="card stat"><span class="stat-k">骨干初始化</span><span class="stat-num sm">从语言模型初始化</span><span class="stat-sub">引用 Qwen3 / Qwen2.5 技术报告；具体尺寸未写</span><span class="src">§2.3 [42,43]</span></div>
+    <div class="card stat"><span class="stat-k">训练</span><span class="stat-num sm">3 阶段</span><span class="stat-sub">独立任务预训练 → 端到端交互 → 低延迟蒸馏</span><span class="src">§2.3</span></div>
+    <div class="card stat"><span class="stat-k">参数 / 数据量 / 许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">开源与否原文未说明，仅给项目网站</span><span class="src">全文</span></div>
+  </div>
+</section>
+
+<!-- ============ 02 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>一句话之外的 5 条</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>三模态双向进出，一个 Transformer</h3><p>用户侧文本 / 音频 / 视频 token 与 agent 侧文本 / 音频 / 视频 token 交错成一条因果序列；文本走 next-token CE，音视频走连续 latent 上的条件流匹配<span class="src">§2.1 式 1–3</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>全栈「因果化」是前提</h3><p>严格因果的音频 / 视频 VAE、因果编码器、因果解码器、块因果注意力，生成的干净 latent 直接写回历史，作为下一单元的上下文<span class="src">§1</span><span class="src">§2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>200 ms 来自 thinker-performer 流水</h3><p>一卡做编码 + KV 更新 + 解码，另一卡只跑流匹配求解；当前帧感知、上一帧解码、下一帧去噪、KV/latent 通信重叠。实时条件：performer 时间 + 通信 &lt; 160 ms<span class="src">§2.4 · 图 2</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>蒸馏同时解决速度和长程漂移</h3><p>把带 CFG、多步求解的 teacher 蒸进少步 student；再用 rolling distillation（self-forcing + 分布匹配）在自己生成的历史上训练，缓解长时退化<span class="src">§2.3</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>没有任何质量指标</h3><p>评测只有两张延迟 / 运行时对照表（多为第三方公开数字，测量边界不一）；理解、生成、唇同步、打断都只有定性描述，无消融<span class="src">§3 · 表 1–2</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 03 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：一条交错的因果流</h2>
+    <p class="sec-intro">相对级联式实时对话 / 数字人系统，核心改动是把「感知 → 推理 → 说话 → 画面」压进同一个模型状态里。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="Wan-Streamer 总览：每个 160 ms 流式帧里，用户文本/音频/视频经 tokenizer 与编码器进入 Wan-Streamer，输出 agent 文本/音频/视频 token 并经解码器输出" loading="lazy"></div>
+    <figcaption><b>Wan-Streamer 总览。</b>每个 160 ms 的流式帧内，用户文本（tokenizer）、音频（编码器）、视频（编码器）的 token 进入同一个 Transformer；输出端同时产出 agent 的文本、音频、视频 token，分别经 tokenizer / 音频解码器 / 视频解码器还原。块因果注意力负责跨帧增量生成。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>建模目标</h3>
+    <p>第 k 个流式单元，用户观测 <code>u_k=(u^t,u^a,u^v)</code>，agent 响应 <code>y_k=(y^t,y^a,y^v)</code>。模型按完整因果历史预测当前响应：<code>p(y_k | u_≤k, y_&lt;k)</code>，K 个单元连乘<span class="src">式 1</span>。</p>
+    <ul>
+      <li><b>文本</b>：离散 token，next-token 交叉熵<span class="src">§2.1</span>。</li>
+      <li><b>音频 / 视频</b>：连续 latent，条件流匹配。线性插值 <code>z_τ=(1−τ)z_0+τε</code>，回归速度 <code>ε−z_0</code><span class="src">式 2</span>；同一个干净上下文 <code>c_k</code> 同时条件化音频和视频的速度预测，「语音、动作、外观、场景演化」作为耦合响应联合优化<span class="src">式 3 · §2.1</span>。</li>
+      <li><b>写回</b>：去噪得到的干净 latent 直接追加进历史，供后续单元使用；同时由因果解码器渲染成外部音视频<span class="src">§2.1</span>。</li>
+    </ul>
+  </div>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 900 330" role="img" aria-label="Wan-Streamer 组件关系示意">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="dg-arrow"/></marker>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" class="dg-arrow-w"/></marker>
+      </defs>
+      <!-- inputs -->
+      <text x="20" y="22" class="dg-s">用户输入（第 k 个 160 ms 单元）</text>
+      <rect x="20" y="36" width="170" height="40" rx="8" class="dg-txt"/><text x="34" y="61" class="dg-t">文本 → tokenizer</text>
+      <rect x="20" y="86" width="170" height="40" rx="8" class="dg-aud"/><text x="34" y="111" class="dg-t">音频 → 因果音频编码器</text>
+      <rect x="20" y="136" width="170" height="40" rx="8" class="dg-vid"/><text x="34" y="161" class="dg-t">视频 → 因果视频编码器</text>
+      <path d="M190 56 L262 100" class="dg-mute" marker-end="url(#ah)"/>
+      <path d="M190 106 L262 106" class="dg-mute" marker-end="url(#ah)"/>
+      <path d="M190 156 L262 114" class="dg-mute" marker-end="url(#ah)"/>
+      <!-- core -->
+      <rect x="266" y="40" width="330" height="140" rx="12" class="dg-core"/>
+      <text x="282" y="66" class="dg-t">单一 Transformer（块因果注意力）</text>
+      <text x="282" y="88" class="dg-s">完整历史：u≤k、已提交的 y&lt;k（KV cache）</text>
+      <rect x="282" y="102" width="140" height="62" rx="8" class="dg-box"/>
+      <text x="292" y="124" class="dg-t">token 因果短路径</text>
+      <text x="292" y="142" class="dg-s">文本预测 + 状态更新</text>
+      <text x="292" y="157" class="dg-s">NTP / CE</text>
+      <rect x="436" y="102" width="146" height="62" rx="8" class="dg-box"/>
+      <text x="446" y="124" class="dg-t">音视频 latent 生成</text>
+      <text x="446" y="142" class="dg-s">条件流匹配（联合）</text>
+      <text x="446" y="157" class="dg-s">同一上下文 c_k</text>
+      <!-- outputs -->
+      <text x="690" y="22" class="dg-s">agent 输出</text>
+      <rect x="690" y="36" width="190" height="40" rx="8" class="dg-txt"/><text x="704" y="61" class="dg-t">文本 token</text>
+      <rect x="690" y="86" width="190" height="40" rx="8" class="dg-aud"/><text x="704" y="111" class="dg-t">因果音频解码器 → 语音</text>
+      <rect x="690" y="136" width="190" height="40" rx="8" class="dg-vid"/><text x="704" y="161" class="dg-t">因果视频解码器 → 25 FPS</text>
+      <path d="M596 86 L686 58" class="dg-mute" marker-end="url(#ah)"/>
+      <path d="M596 122 L686 106" class="dg-mute" marker-end="url(#ah)"/>
+      <path d="M596 140 L686 154" class="dg-mute" marker-end="url(#ah)"/>
+      <!-- commit loop -->
+      <path d="M509 180 L509 240 L431 240 L431 186" class="dg-dash" marker-end="url(#ahw)"/>
+      <text x="520" y="232" class="dg-s" style="fill:var(--warm)">干净 latent + 文本写回历史 → 第 k+1 单元的上下文</text>
+      <!-- zones -->
+      <rect x="10" y="262" width="880" height="58" rx="10" class="dg-zone"/>
+      <text x="24" y="284" class="dg-t">部署切分（§2.4）</text>
+      <text x="24" y="306" class="dg-s">Thinker GPU：编码器 + token 因果路径 + KV 构建 + 解码器　｜　Performer GPU：仅流匹配求解器（拿 KV 切片，产 latent 回传）</text>
+    </svg>
+    <div class="cap">示意，按 §2.1、§2.4 文字整理。原文未给出模态 token 数、块内注意力形式、文本与 latent 在序列中的具体排布，图中不代表这些细节。</div>
+  </div>
+
+  <div class="prose">
+    <h3>相对级联系统改了什么</h3>
+  </div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>环节</th><th style="text-align:left">典型级联 / 数字人系统</th><th style="text-align:left" class="q">Wan-Streamer</th></tr></thead>
+      <tbody>
+        <tr><td>轮次与打断</td><td style="text-align:left;white-space:normal">VAD + 规则式 turn-taking</td><td class="q" style="text-align:left;white-space:normal">从交错交互数据中学习何时继续、停顿、重叠、打断、让出、恢复<span class="src">§3</span></td></tr>
+        <tr><td>中间表示</td><td style="text-align:left;white-space:normal">文本常作为模块间隐藏中间层<span class="src">§1</span></td><td class="q" style="text-align:left;white-space:normal">共享 KV 状态；音视频在解码前就已耦合<span class="src">§1</span></td></tr>
+        <tr><td>音画同步</td><td style="text-align:left;white-space:normal">音频驱动渲染 / 后对齐</td><td class="q" style="text-align:left;white-space:normal">语音与视频 latent 由同一因果上下文预测，唇动与韵律原生同步<span class="src">§3 Naturalness</span></td></tr>
+        <tr><td>编解码器</td><td style="text-align:left;white-space:normal">离线编码器、双向视频解码器</td><td class="q" style="text-align:left;white-space:normal">严格因果的音频 / 视频 VAE 与因果编解码器<span class="src">§1</span></td></tr>
+        <tr><td>听的时候</td><td style="text-align:left;white-space:normal">常为静止或循环动画</td><td class="q" style="text-align:left;white-space:normal">持续生成凝视、点头、微表情、姿态变化<span class="src">§3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Thinker-performer 流式推理重叠时序图" loading="lazy"></div>
+    <figcaption><b>Thinker-performer 重叠调度。</b>单元 k：thinker 编码 u_k、更新 KV、解码上一单元的 y_{k−1} 并立即输出；performer 拿到当前 KV 切片，只跑流匹配求解器生成 y_k 的干净 latent，下一单元回传给 thinker。图中 performer 窗口画成满 160 ms，实际只要求 performer 时间 + KV/latent 通信低于单元时长。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <details class="more wide">
+    <summary>推理流水的逐步细节<span class="hint">§2.4</span></summary>
+    <div class="body">
+      <ol>
+        <li>系统 prefill 后，thinker 把初始 KV cache 广播给 performer，双方共享同一份完整历史。</li>
+        <li>第 k 步：thinker 处理当前用户音视频 → 因果编码 → 在语言与状态槽位上做 token 因果解码，得到当前 KV 切片。</li>
+        <li>同一通信边界：thinker 收到 performer 上一步产出的干净 latent，并把新 KV 切片发过去。</li>
+        <li>thinker 解码回传的 latent 并立即输出；performer 把 KV 切片拼进自己的完整历史，只为下一单元跑求解器，结果留在本地，下一步再回传。</li>
+        <li>吞吐由 performer 墙钟决定；<b>吞吐条件 ≠ 响应延迟</b>：后者 = 编码 + thinker 状态更新 + performer 生成 + 解码，当前约 200 ms<span class="src">§2.4</span>。另用 CUDA graph、编译、优化 kernel 提速。</li>
+      </ol>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 04 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：只给了类目清单</h2>
+    <p class="sec-intro">§2.2 全文一段，列出三大块数据的任务类型；规模、来源、清洗、caption、配比全部没有。所以这里不画任何比例条。</p>
+  </div>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>数据块</th><th style="text-align:left">原文列出的任务类型</th><th style="text-align:left">作用（原文表述）</th><th>规模</th><th>配比</th></tr></thead>
+      <tbody>
+        <tr><td>理解向</td><td style="text-align:left;white-space:normal">图像 / 音频 / 视频理解、文本对话、ASR、TTS、音频对话及相关语言-音频-视觉监督</td><td style="text-align:left;white-space:normal">把流式多模态观测转成共享因果上下文；在多模态输入下保住对话能力</td><td><span class="nd">未披露</span></td><td><span class="nd">未披露</span></td></tr>
+        <tr><td>生成向</td><td style="text-align:left;white-space:normal">图像生成、音频生成、视频生成、联合音视频生成；单模态与跨模态条件都有</td><td style="text-align:left;white-space:normal">在因果音视频 latent 空间上学生成</td><td><span class="nd">未披露</span></td><td><span class="nd">未披露</span></td></tr>
+        <tr><td>端到端双工交互</td><td style="text-align:left;white-space:normal">输入侧、输出侧都可出现文本 / 音频 / 视频的双工交互数据</td><td style="text-align:left;white-space:normal">让模型接触「同时感知与表达」的目标设定</td><td><span class="nd">未披露</span></td><td><span class="nd">未披露</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">来源：§2.2；第三块在第二阶段单独使用（§2.3）。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>能从正文推出的数据性质 <span class="tag">§2.3 · §3</span></h4>
+      <ul>
+        <li>交互数据把用户与 agent 的三模态放在<b>同一时间轴</b>上，模型由此看到人类何时继续、停顿、重叠、打断、让出、恢复<span class="src">§3</span>。</li>
+        <li>打断、主动开口（看到显著视觉事件时发起评论或提问）均声明为<b>从数据学到</b>，而非手写规则<span class="src">§3</span>。</li>
+        <li>第一阶段理解与生成任务<b>混合</b>训练，而不是分模块各训各的<span class="src">§2.3</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>原文没有回答的问题 <span class="tag nd-tag">未披露</span></h4>
+      <ul>
+        <li>双工交互数据从哪来：真人录制、合成拼接，还是由级联系统生成？</li>
+        <li>agent 侧视频是同一身份还是多身份；身份 / 场景如何筛选。</li>
+        <li>音视频清洗、唇同步过滤、质量打分；文本 caption 或转写如何得到。</li>
+        <li>各任务的 token / 小时数与采样配比；有无安全过滤。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 05 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING</div>
+    <h2>训练配方：三阶段</h2>
+    <p class="sec-intro">学习率、步数、batch、token 量、求解步数、硬件全部未给。下面只列原文写明的目标与手段。</p>
+  </div>
+  <div class="post-flow wide">
+    <div class="card stage">
+      <div class="sid">STAGE 1</div>
+      <h4>独立任务预训练</h4>
+      <ul>
+        <li>统一 Transformer 从语言模型初始化<span class="src">[42,43]</span></li>
+        <li>理解侧：因果音视频编码器与 Transformer 联训，目标是理解指标「接近专用多模态理解模型」、对话能力与同规模轮次式对话模型相当</li>
+        <li>生成侧：同一 Transformer 在因果音视频 latent 上训图像 / 音频 / 视频 / 联合音视频生成</li>
+        <li>理解与生成任务混合</li>
+      </ul>
+      <span class="src">§2.3</span>
+    </div>
+    <div class="card stage">
+      <div class="sid">STAGE 2</div>
+      <h4>端到端交互训练</h4>
+      <ul>
+        <li>双工数据：用户三模态输入与 agent 三模态输出交错在同一条因果流</li>
+        <li>训练格式 = 推理格式：从当前观测更新状态 → 生成同步的文本 / 音频 / 视频 → 干净 latent 写回历史</li>
+        <li>由此学响应时机、主动倾听、打断处理、长上下文一致性</li>
+      </ul>
+      <span class="src">§2.3</span>
+    </div>
+    <div class="card stage">
+      <div class="sid">STAGE 3</div>
+      <h4>低延迟流式蒸馏</h4>
+      <ul>
+        <li>teacher：带 CFG、更多流匹配求解步 → student：吸收 CFG、减少求解步，保住音视频质量</li>
+        <li>rolling distillation：student 在连续单元上 rollout，用<b>自己生成的历史</b>训练</li>
+        <li>self-forcing<span class="src">[17]</span> + 分布匹配<span class="src">[45,46]</span>，在真实 rollout 条件下对齐 teacher 轨迹，缓解训练-测试失配与长时退化</li>
+      </ul>
+      <span class="src">§2.3</span>
+    </div>
+  </div>
+  <div class="card mod wide">
+    <h4>后训练 / RL <span class="tag nd-tag">无</span></h4>
+    <p>原文没有 SFT 之外的偏好对齐或 RL 阶段描述；第三阶段的分布匹配蒸馏是唯一的「对齐 teacher 分布」手段。CFG 尺度、teacher/student 求解步数、蒸馏数据量均 <span class="nd">原文未披露</span>。</p>
+  </div>
+</section>
+
+<!-- ============ 06 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测：只比延迟，且要按「测量边界」读</h2>
+    <p class="sec-intro">表 1 / 表 2 的对比对象数字大多来自厂商博客、产品页或各自论文，并非作者在同一硬件、同一协议下复测；作者自己也强调不要按最小数字排名<span class="src">§3</span>。</p>
+  </div>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 720 96" role="img" aria-label="Wan-Streamer 延迟构成">
+      <text x="0" y="16" class="ch-t">Wan-Streamer 总交互延迟构成</text>
+      <text x="720" y="16" class="ch-src" text-anchor="end">§3 · 表 1</text>
+      <!-- scale: 550 ms -> 640 px ; 1ms = 1.1636 px -->
+      <rect x="0" y="30" width="232.7" height="34" rx="6" class="lat-a"/>
+      <text x="12" y="52" class="lat-t">模型侧 ≈200 ms</text>
+      <rect x="234.7" y="30" width="405.3" height="34" rx="6" class="lat-b"/>
+      <text x="248" y="52" class="lat-t">双向网络预算 350 ms</text>
+      <text x="648" y="52" class="ch-val">≈550 ms</text>
+      <text x="0" y="86" class="ch-ax">模型侧口径：160 ms 用户单元到达 thinker → 对应音视频响应单元在 25 FPS 下解码完成；两卡部署</text>
+    </svg>
+  </div>
+
+  <h3 class="wide">表 1 精选：语音 / 全模态实时系统</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>系统</th><th style="text-align:left">交互形态</th><th>用户可见响应</th><th style="text-align:left">其他报告指标</th><th style="text-align:left">比较边界</th></tr></thead>
+      <tbody>
+        <tr><td>Doubao Realtime Voice</td><td style="text-align:left">语音→语音</td><td>∼1 s 整体</td><td style="text-align:left">∼700 ms 裸模型</td><td style="text-align:left">官方产品数字；无视觉输出</td></tr>
+        <tr><td>Seeduplex</td><td style="text-align:left">语音→语音</td><td>N/R</td><td style="text-align:left">端点 −250 ms，打断 −300 ms（相对旧版 Doubao）</td><td style="text-align:left">相对改进；纯语音</td></tr>
+        <tr><td>GPT-4o / Realtime API</td><td style="text-align:left">语音→语音，音频/视觉输入</td><td>依协议而定</td><td style="text-align:left">232/320 ms 官方音频响应；∼500 ms API TTFB；∼800 ms 目标 voice-to-voice</td><td style="text-align:left">混合了模型、TTFB、端点、网络</td></tr>
+        <tr><td>Hume EVI 3</td><td style="text-align:left">语音→语音</td><td>0.9–1.4 s（web app）</td><td style="text-align:left">模型响应 &lt;300 ms</td><td style="text-align:left">厂商基准；无视觉输出</td></tr>
+        <tr><td>Gemini Live API</td><td style="text-align:left">语音→语音</td><td>1.2–3.6 s（API）</td><td style="text-align:left">N/R</td><td style="text-align:left">厂商基准，非官方拆解</td></tr>
+        <tr><td>Sesame web app</td><td style="text-align:left">语音→语音</td><td>0.8–1.2 s（web app）</td><td style="text-align:left">N/R</td><td style="text-align:left">厂商基准；纯语音</td></tr>
+        <tr><td>Moshi</td><td style="text-align:left">语音→语音</td><td>N/R</td><td style="text-align:left">理论 160 ms；实际 200 ms 模型延迟</td><td style="text-align:left">原生全双工语音；无视觉</td></tr>
+        <tr><td>Qwen3/3.5-Omni</td><td style="text-align:left">音视频文本入，语音/文本出</td><td>N/R</td><td style="text-align:left">首包 234/547 ms；3.5 Flash 235/426 ms，Plus 435/651 ms</td><td style="text-align:left">首包指标；无同步视觉 avatar</td></tr>
+        <tr><td>MiniCPM-o 4.5</td><td style="text-align:left">音视频入，语音/文本出</td><td>N/R</td><td style="text-align:left">首 token 0.58 s；RTF 0.20–0.27</td><td style="text-align:left">首 token / RTF；无视觉 avatar</td></tr>
+        <tr class="hl"><td>Wan-Streamer</td><td style="text-align:left">文本/音频/视频 入&amp;出</td><td>∼550 ms（含 350 ms 网络）</td><td style="text-align:left">∼200 ms 模型侧；25 FPS 视频</td><td style="text-align:left">单一端到端模型</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">记号：<b>N/R</b> = 未公开对齐口径的绝对响应延迟；<b>∼</b> = 约值；高亮行为论文自身（原文阴影行）。数字后的参考文献号已省略，见原文表 1。来源：表 1。</p>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 720 250" class="chart" role="img" aria-label="用户可见响应延迟区间">
+      <text x="0" y="16" class="ch-t">「用户可见响应」一栏的公开数字（秒，轴从 0 起）</text>
+      <text x="720" y="16" class="ch-src" text-anchor="end">表 1</text>
+      <!-- x = 190 + s*125 ; 0..4 s -->
+      <g>
+        <line x1="190" y1="34" x2="190" y2="206" class="grid-l"/>
+        <line x1="315" y1="34" x2="315" y2="206" class="grid-l"/>
+        <line x1="440" y1="34" x2="440" y2="206" class="grid-l"/>
+        <line x1="565" y1="34" x2="565" y2="206" class="grid-l"/>
+        <line x1="690" y1="34" x2="690" y2="206" class="grid-l"/>
+        <text x="190" y="222" class="ch-ax" text-anchor="middle">0</text>
+        <text x="315" y="222" class="ch-ax" text-anchor="middle">1 s</text>
+        <text x="440" y="222" class="ch-ax" text-anchor="middle">2 s</text>
+        <text x="565" y="222" class="ch-ax" text-anchor="middle">3 s</text>
+        <text x="690" y="222" class="ch-ax" text-anchor="middle">4 s</text>
+      </g>
+      <!-- Wan 0.55 -->
+      <text x="0" y="56" class="ch-lbl">Wan-Streamer（含网络）</text>
+      <rect x="190" y="44" width="68.75" height="18" rx="4" class="rng-q"/>
+      <text x="264" y="58" class="ch-val">∼0.55</text>
+      <!-- Sesame 0.8-1.2 -->
+      <text x="0" y="90" class="ch-lbl">Sesame（web app）</text>
+      <rect x="290" y="78" width="50" height="18" rx="4" class="rng"/>
+      <text x="346" y="92" class="ch-val">0.8–1.2</text>
+      <!-- Hume 0.9-1.4 -->
+      <text x="0" y="124" class="ch-lbl">Hume EVI 3（web app）</text>
+      <rect x="302.5" y="112" width="62.5" height="18" rx="4" class="rng"/>
+      <text x="371" y="126" class="ch-val">0.9–1.4</text>
+      <!-- Doubao ~1 -->
+      <text x="0" y="158" class="ch-lbl">Doubao Realtime（整体）</text>
+      <circle cx="315" cy="155" r="6" class="rng"/>
+      <text x="327" y="160" class="ch-val">∼1</text>
+      <!-- Gemini 1.2-3.6 -->
+      <text x="0" y="192" class="ch-lbl">Gemini Live（API）</text>
+      <rect x="340" y="180" width="300" height="18" rx="4" class="rng"/>
+      <text x="646" y="194" class="ch-val">1.2–3.6</text>
+      <text x="0" y="244" class="ch-ax">条带 = 原文给出的区间；Wan-Streamer 条从 0 画到点估计。其余系统为纯语音、厂商自测，口径与 Wan-Streamer 的远程音视频路径不同。</text>
+    </svg>
+  </div>
+
+  <details class="more wide">
+    <summary>表 2：视觉 agent / 流式 avatar / 音视频生成器的运行时<span class="hint">组件级指标，不是对齐的响应延迟</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>系统</th><th style="text-align:left">视觉交互范围</th><th style="text-align:left">报告的运行时</th><th style="text-align:left">与 Wan-Streamer 的主要差别</th></tr></thead>
+          <tbody>
+            <tr class="grp"><td colspan="4">全链路 / 交互式数字人</td></tr>
+            <tr><td>Body of Her</td><td style="text-align:left">端到端人形 agent</td><td style="text-align:left">24 FPS 下 42 ms 内出下一帧</td><td style="text-align:left">初步研究；无部署的信号到信号延迟</td></tr>
+            <tr><td>MIDAS</td><td style="text-align:left">多模态数字人视频合成</td><td style="text-align:left">实时逐帧生成</td><td style="text-align:left">未给绝对响应延迟</td></tr>
+            <tr><td>U-Mind</td><td style="text-align:left">文本/语音/动作/视频交互环</td><td style="text-align:left">声称实时渲染</td><td style="text-align:left">文本优先流水线；延迟拆解未公开</td></tr>
+            <tr><td>X-Streamer</td><td style="text-align:left">从肖像开放式视频聊天</td><td style="text-align:left">两张 A100 上 25 FPS</td><td style="text-align:left">未给绝对响应延迟</td></tr>
+            <tr><td>LPM 1.0</td><td style="text-align:left">在线角色表演引擎</td><td style="text-align:left">低延迟实时因果流式</td><td style="text-align:left">耦合外部 A2A 系统，延迟非 LPM 自身</td></tr>
+            <tr><td>MAViD</td><td style="text-align:left">音视频对话框架</td><td style="text-align:left">无绝对延迟</td><td style="text-align:left">模块化；适合比能力，不适合比延迟</td></tr>
+            <tr><td>M.I.O</td><td style="text-align:left">交互式 omni-avatar</td><td style="text-align:left">讨论了有界延迟设计</td><td style="text-align:left">多模块；无公开信号到信号数字</td></tr>
+            <tr class="grp"><td colspan="4">Avatar 渲染 / 联合音视频生成组件</td></tr>
+            <tr><td>VASA-1</td><td style="text-align:left">音频驱动说话人脸</td><td style="text-align:left">40 FPS，170 ms 前置延迟</td><td style="text-align:left">仅渲染器；无对话推理、无用户视觉感知</td></tr>
+            <tr><td>TalkingMachines</td><td style="text-align:left">FaceTime 式音频驱动视频</td><td style="text-align:left">按 TTBC 实时分块生成</td><td style="text-align:left">依赖外部音频 LLM</td></tr>
+            <tr><td>StreamAvatar</td><td style="text-align:left">流式说/听 avatar</td><td style="text-align:left">FFD 0.33–0.39 s；视频延迟 ∼1.20 s</td><td style="text-align:left">语音驱动渲染器；无统一对话模型</td></tr>
+            <tr><td>Avatar Forcing (Ki et al.)</td><td style="text-align:left">交互式头部 avatar 反应</td><td style="text-align:left">∼500 ms 反应延迟；6.8× 加速</td><td style="text-align:left">对用户音频/动作反应，但不生成对话语音</td></tr>
+            <tr><td>AvatarForcing (Cui et al.)</td><td style="text-align:left">单步流式说话 avatar</td><td style="text-align:left">34 ms/帧；0.51 s 音频到视觉延迟</td><td style="text-align:left">视觉流式指标强，非感知式对话</td></tr>
+            <tr><td>LiveTalk</td><td style="text-align:left">多模态交互 avatar 视频</td><td style="text-align:left">24.82 FPS；首帧 0.33 s</td><td style="text-align:left">用 Qwen3-Omni 做语音推理，视频延迟另算</td></tr>
+            <tr><td>Hallo-Live</td><td style="text-align:left">文本驱动联合音视频 avatar</td><td style="text-align:left">20.38 FPS，0.94 s 延迟</td><td style="text-align:left">文本驱动；不持续感知用户音视频</td></tr>
+            <tr><td>OmniForcing</td><td style="text-align:left">文本到音视频流式生成</td><td style="text-align:left">TTFC ∼0.7 s；∼25 FPS</td><td style="text-align:left">首块生成延迟，非用户响应延迟</td></tr>
+            <tr class="hl"><td>Wan-Streamer</td><td style="text-align:left">感知式对话 + 同步语音与视频</td><td style="text-align:left">25 FPS；∼550 ms 总；∼200 ms 模型侧</td><td style="text-align:left">单一因果 Transformer 联合学习全部行为</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">缩写按原文保留：FFD = 首帧延迟，TTBC、TTFC 为各原论文的首块类指标。来源：表 2。</p>
+    </div>
+  </details>
+
+  <div class="card mod wide">
+    <h4>定性能力（无指标） <span class="tag">§3</span></h4>
+    <ul>
+      <li><b>空闲</b>：不塌缩成静止肖像，保持身份、凝视、姿态、呼吸与细微面部运动。</li>
+      <li><b>倾听</b>：随用户语音与视觉线索产生凝视转移、点头、微表情、姿态变化。</li>
+      <li><b>打断与主动开口</b>：生成时仍消费用户音视频，可停止 / 缩短 / 改向；看到显著视觉事件可主动评论或提问。</li>
+    </ul>
+    <p>上述均为文字描述，未给出用户研究、唇同步分数、打断成功率或任何理解 / 生成基准数字。</p>
+  </div>
+</section>
+
+<!-- ============ 07 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">CUDA graph、编译、kernel 优化属于常规工程，不列入。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>文本 / 音频 / 视频在输入和输出两侧对称出现</h4><p>与「感知音视频但只回语音」的 omni 模型、或「渲染 avatar 但对话靠外部 LLM」的数字人都不同：同一个 Transformer 同时预测 agent 的文本 token 与音视频 latent<span class="src">§1 · 表 1–2</span>。</p><p class="why">可核对：表 1 / 表 2 的「比较边界」列逐个标出了对比系统缺哪一环。</p></div>
+    <div class="card nv"><h4>离散 NTP + 连续流匹配共用一条因果历史，干净 latent 回写</h4><p>音视频共享同一上下文 c_k 联合去噪，去噪结果作为干净上下文进入后续单元，使唇动 / 韵律在解码前就耦合<span class="src">式 1–3</span>。</p><p class="why">相近思路在 diffusion forcing / self-forcing 类视频工作中出现过（原文引 [7,17]），新意在于把语言和双向交互也放进同一序列。</p></div>
+    <div class="card nv"><h4>单模型、双卡的 thinker-performer 拆分</h4><p>不是两个模型级联，而是同一模型按算子拆分：thinker 管编码 / 文本 / KV / 解码，performer 只跑求解器，二者靠 KV 切片与 latent 交换保持同一状态<span class="src">§2.4 · 图 2</span>。</p></div>
+    <div class="card nv"><h4>延迟报告按「测量边界」分列</h4><p>把模型侧、首包、首 token、API TTFB、组件 FPS 分开列，并加「覆盖范围」列，而不是只报一个最小数字<span class="src">表 1–2</span>。</p></div>
+  </div>
+</section>
+
+<!-- ============ 08 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">Wan-Streamer 不是编辑模型，数据部分也几乎没披露；以下从它的训练格式、蒸馏和评测写法里提炼。每条绿底框都是<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">D1</span>最后一段数据要与部署格式一模一样</h4>
+        <p class="paper">论文：第一阶段混合理解与生成任务；第二阶段只用「与推理同一因果格式」的双工交互数据，让响应时机、打断等在推理格式下学到<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型的末段训练数据按线上真实调用格式组织（多轮连续编辑链、带上一轮输出作为输入、真实指令长度分布），而不是只用单轮 (src, instr, tgt) 三元组。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D2</span>在模型自己的输出上继续训练，压住多轮漂移</h4>
+        <p class="paper">论文：rolling distillation 让 student 在连续单元上 rollout，以自己生成的历史为条件，用 self-forcing + 分布匹配对齐 teacher，减少训练-测试失配和长时退化<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>多轮编辑数据里，第 2 轮以后的输入用模型自己第 1 轮的输出（而非干净 GT）构造，并专门统计第 N 轮的身份 / 画质衰减，作为数据配比的调节信号。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">D3</span>「不动的时候」也要有监督</h4>
+        <p class="paper">论文：强调空闲 / 倾听状态下不塌缩成静止肖像，持续保持身份、凝视、呼吸等<span class="src">§3</span>；这类行为来自交互数据，而非规则<span class="src">§3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据里显式放入「指令只改局部、其余必须保真」以及「无需修改」的负样本，让保持区域有直接监督，而不是只靠损失隐式学。</p>
+      </div>
+    </div>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">E1</span>对比表加「测量边界 / 覆盖范围」列</h4>
+        <p class="paper">论文：表 1 单列「比较边界」，表 2 单列「视觉交互范围」与「主要差别」，明确哪些数字是模型侧、首包、API TTFB 或组件 FPS<span class="src">表 1–2 · §3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑横评表固定加一列，写明对手结果是否含 prompt 改写 / VLM 规划、是否用 mask、是 API 还是本地权重、分辨率与种子数；不同口径的分数分组展示，不混排。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E2</span>吞吐与延迟分开报</h4>
+        <p class="paper">论文：明确「吞吐条件（performer 时间 + 通信 &lt; 160 ms）」与「信号到信号响应延迟（≈200 ms）」是两回事<span class="src">§2.4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑服务评测同时记录单张端到端延迟（含编码 / 改写 / 解码）和批量吞吐，并写清起止点；蒸馏前后都测。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">E3</span>蒸馏掉 CFG 后，要单独复测保真类指标</h4>
+        <p class="paper">论文：第三阶段把带 CFG、多步求解的 teacher 蒸进少步 student，宣称「保住音视频质量」，但未给 teacher 与 student 的任何对比数字<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型做 CFG / 步数蒸馏时，把 teacher vs student 的指令遵循、非编辑区保真、身份一致性做成固定回归表——这正是本文缺的那张表。</p>
+      </div>
+    </div>
+
+    <div class="impl-group">Caption / 中间表示</div>
+    <div class="impl-grid">
+      <div class="impl">
+        <h4><span class="ix">C1</span>警惕「文本当隐藏中间层」带来的误差累积</h4>
+        <p class="paper">论文：批评级联系统常把文本作为模块间隐藏表示，造成边界等待、识别与同步误差累积<span class="src">§1</span>；它的 caption / 转写如何获得 <span class="nd">原文未披露</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>若编辑流水线是「VLM 生成 caption / 改写指令 → 生成模型」，单独评估改写那一跳的错误率（漏改、多改、属性错），并保留一组不经改写、直接用原指令的对照。</p>
+      </div>
+      <div class="impl">
+        <h4><span class="ix">C2</span>同一上下文条件化多个耦合输出</h4>
+        <p class="paper">论文：同一干净上下文同时条件化音频与视频的速度预测，使二者作为耦合响应联合优化<span class="src">式 3 · §2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>构造编辑数据时，把「编辑后图像」与「编辑区域描述 / 变化 caption」作为同一样本的配套目标一起产出和校验，避免 caption 与图像各自生成后再对齐导致不一致。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 09 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>零质量指标。</b>理解侧称「接近专用多模态理解模型」、对话「与同规模轮次式模型相当」<span class="src">§2.3</span>，但无任何基准分数；生成质量、唇同步、打断成功率、用户研究均缺。</li>
+    <li class="key"><b>数据完全不透明。</b>只列任务类型<span class="src">§2.2</span>，无来源、规模、清洗、caption 方式、配比；双工交互数据怎么来的是复现的最大缺口。</li>
+    <li><b>无消融。</b>块因果 vs 其他注意力、因果 VAE 的代价、rolling distillation 的增益、thinker-performer 带来的延迟收益都没有对照实验。</li>
+    <li><b>延迟对比不可严格比较。</b>表 1–2 对手数字来自博客 / 产品页 / 各自论文，测量边界不同，作者亦承认<span class="src">§3</span>；Wan-Streamer 的 550 ms 是 200 ms 加上<b>假设</b>的 350 ms 网络预算，不是实测远程用户延迟。</li>
+    <li><b>关键规格缺失。</b>参数量、初始化 LM 的具体型号与尺寸（只引用 Qwen3 / Qwen2.5 报告<span class="src">[42,43]</span>）、GPU 型号、求解步数、CFG 尺度均未披露；延迟数字无法在其他硬件上外推。</li>
+    <li><b>分辨率很低。</b>v0.1 仅在 192p 验证<span class="src">§5</span>；「扩展到更高分辨率是直接的」只是断言，无实验支撑，而分辨率直接影响 performer 能否守住 160 ms。</li>
+    <li><b>开源与许可证未说明。</b>只给项目网站，正文无权重、代码或许可证信息。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th style="text-align:left">内容</th><th style="text-align:left">本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>首页裁图</td><td>摘要区截图（文字，非示意图）；文件 figures/fig0-teaser.jpg，本页未嵌入</td><td>—</td></tr>
+        <tr><td>图 1</td><td>Wan-Streamer 总览：三模态双向进出单一 Transformer，160 ms 流式帧（p.2）</td><td><a href="#arch">03 架构</a></td></tr>
+        <tr><td>图 2</td><td>Thinker-performer 流式推理重叠时序（p.5）</td><td><a href="#arch">03 架构</a></td></tr>
+        <tr><td>式 1–3</td><td>因果分解、流匹配插值、音视频速度回归损失（§2.1）</td><td><a href="#arch">03 架构</a></td></tr>
+        <tr><td>表 1</td><td>语音 / 全模态实时系统响应延迟对比（p.6）</td><td><a href="#eval">06 评测</a></td></tr>
+        <tr><td>表 2</td><td>视觉 agent / 流式 avatar / 音视频生成器运行时对比（p.7）</td><td><a href="#eval">06 评测</a></td></tr>
+        <tr><td>示意图 ×1、图表 ×2</td><td>组件关系示意、延迟构成条、用户可见响应区间图：本页根据正文与表 1 绘制</td><td><a href="#arch">03</a> · <a href="#eval">06</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本页基于 <a href="https://arxiv.org/abs/2606.25041" target="_blank" rel="noopener">Wan Team, Alibaba Group. <i>Wan-Streamer v0.1: End-to-end Real-time Interactive Foundation Models</i>. arXiv:2606.25041</a>（v1 发布于 2026-06-23；本页对照 v3，2026-06-29）。文中数字均来自原文，标「推算」处为本页自行计算；对比系统数字为论文转引的公开报告。论文图片版权归原作者所有，仅用于评论与学习。「迁移建议」为本页观点，不代表论文内容。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

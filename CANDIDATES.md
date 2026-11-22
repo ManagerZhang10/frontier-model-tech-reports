@@ -38,15 +38,15 @@
 | Image | 2026-05 | Qwen | Qwen-Image-2.0 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) | 已发布 |
 | Image | 2026-06 | Qwen | Qwen-Image-2.0-RL | [arXiv:2606.27608](https://arxiv.org/abs/2606.27608) | 已发布 |
 | Image | 2026-05 | Baidu | ERNIE-Image | [arXiv:2605.25347](https://arxiv.org/abs/2605.25347) | 已发布 |
-| Image | 2026-03 | Shanghai AI Lab | InternVL-U | [arXiv:2603.09877](https://arxiv.org/abs/2603.09877) | 待写 |
+| Image | 2026-03 | Shanghai AI Lab | InternVL-U | [arXiv:2603.09877](https://arxiv.org/abs/2603.09877) | 已发布 |
 | Image | 2026-05 | Qwen | Qwen-Image-Bench (eval) | [arXiv:2605.28091](https://arxiv.org/abs/2605.28091) | 待写 |
 | Video | 2025-11 | Tencent Hunyuan | HunyuanVideo 1.5 | [arXiv:2511.18870](https://arxiv.org/abs/2511.18870) | 已发布 |
-| Video | 2025-12 | ByteDance Seed | Seedance 1.5 pro | [arXiv:2512.13507](https://arxiv.org/abs/2512.13507) | 待写 |
+| Video | 2025-12 | ByteDance Seed | Seedance 1.5 pro | [arXiv:2512.13507](https://arxiv.org/abs/2512.13507) | 已发布 |
 | Video | 2025-12 | Kuaishou Kling | Kling-Omni | [arXiv:2512.16776](https://arxiv.org/abs/2512.16776) | 已发布 |
-| Video | 2026-01 | Lightricks | LTX-2 | [arXiv:2601.03233](https://arxiv.org/abs/2601.03233) | 待写 |
+| Video | 2026-01 | Lightricks | LTX-2 | [arXiv:2601.03233](https://arxiv.org/abs/2601.03233) | 已发布 |
 | Video | 2026-04 | ByteDance Seed | Seedance 2.0 | [arXiv:2604.14148](https://arxiv.org/abs/2604.14148) | 已发布 |
 | Video | 2026-06 | NVIDIA | Cosmos 3 | [arXiv:2606.02800](https://arxiv.org/abs/2606.02800) | 待写 |
-| Video | 2026-06 | Alibaba Wan | Wan-Streamer v0.1 | [arXiv:2606.25041](https://arxiv.org/abs/2606.25041) | 待写 |
+| Video | 2026-06 | Alibaba Wan | Wan-Streamer v0.1 | [arXiv:2606.25041](https://arxiv.org/abs/2606.25041) | 已发布 |
 | LLM | 2025-11 | Google DeepMind | Gemini 3 Pro Model Card | [PDF](https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-3-Pro-Model-Card.pdf) | 旧稿待重做 |
 | LLM | 2026-04 | OpenAI | GPT-5.5 System Card | [PDF](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf) | 旧稿待重做 |
 | LLM | 2026-09 | Anthropic | Claude Opus 5.5 System Card | [PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) | 旧稿待重做 |
