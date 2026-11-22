@@ -1,0 +1,37 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig1.jpg",
+    "figure": 1,
+    "page": 3,
+    "caption_en": "Overall performance comparison across T2V, I2V, and R2V tasks. Seedance 2.0 achieves comprehensive",
+    "caption_note": "来源：论文图 1"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 6,
+    "caption_en": "Leaderboards on Arena.AI (Accessed: April 8, 2026, Eastern Time).",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig3.jpg",
+    "figure": 3,
+    "page": 8,
+    "caption_en": "T2V performance comparison across six scenarios.",
+    "caption_note": "来源：论文图 3"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 22,
+    "caption_en": "Visualization of text-to-video (T2V) and image-to-video (I2V) generation.",
+    "caption_note": "来源：论文图 4"
+  }
+]

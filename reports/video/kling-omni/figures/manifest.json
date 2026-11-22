@@ -1,0 +1,37 @@
+[
+  {
+    "file": "fig1.jpg",
+    "figure": 1,
+    "page": 2,
+    "caption_en": "Overview of Kling-Omni, a generalist framework that introduces multimodal visual language as the",
+    "caption_note": "来源：论文图 1"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 5,
+    "caption_en": "Attention maps in Multimodal Super-Resolution. The left panel illustrates the map for even-numbered layers,",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig3.jpg",
+    "figure": 3,
+    "page": 6,
+    "caption_en": "Online training data pipeline. Raw data is distributed across DP/PP groups using an inference scheduler.",
+    "caption_note": "来源：论文图 3"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 7,
+    "caption_en": "Cross-modal and cross-task data distribution in our constructed data system.",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 9,
+    "caption_en": "Data filtering pipeline for video and image samples, illustrating the stages of quality control, temporal",
+    "caption_note": "来源：论文图 6"
+  }
+]

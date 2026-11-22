@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3-VL 技术报告深读 · 前沿模型技术报告</title>
+<meta name="description" content="Qwen3-VL Technical Report（arXiv:2511.21631）中文深读：架构、数据、训练配方、评测、对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>
+  (function () {
+    try { var t = localStorage.getItem("ftr-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<!-- ======================= HERO ======================= -->
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · VLM</div>
+    <h1>Qwen3-VL <span class="sub">Qwen3-VL Technical Report · arXiv:2511.21631</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Qwen Team</b>（训练于阿里云 PAI-Lingjun）</span>
+      <span>发布 <b class="num">2025-11-26</b>（arXiv v1）</span>
+      <span>本文所读 PDF 为 v2</span>
+    </div>
+    <p class="lede">
+      一套从 2B 到 235B-A22B 的开放权重 VLM 家族，原生支持 256K 交错上下文。结构上只有三处小改（Interleaved-MRoPE、DeepStack、文本时间戳），真正下功夫的是数据：几乎全部由上一代 Qwen2.5-VL 来标注、改写和过滤。再加上纯文本的强到弱蒸馏，同尺寸 VL 模型的纯文本成绩反超了第一代 Qwen3。
+    </p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 11V7a5 5 0 0 1 9.9-1"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>开放权重 · 全系列</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg>Apache 2.0</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5-6 6"/></svg>类别：VLM（图像 / 视频 / 文本）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg>Dense 2B / 4B / 8B / 32B</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/></svg>MoE 30B-A3B / 235B-A22B</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg>原生 256K 上下文</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2511.21631" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>论文 arXiv</a>
+      <a href="https://github.com/QwenLM/Qwen3-VL" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg>GitHub</a>
+      <a href="https://huggingface.co/Qwen" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><circle cx="9" cy="10" r=".8" fill="currentColor"/><circle cx="15" cy="10" r=".8" fill="currentColor"/></svg>Hugging Face</a>
+      <a href="https://modelscope.cn/organization/qwen" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 8v8l9 5 9-5V8z"/></svg>ModelScope</a>
+      <a href="https://chat.qwen.ai" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>chat.qwen.ai</a>
+    </div>
+
+    <figure class="fig card hero-fig wide" id="fig0">
+      <div class="img-pad"><img src="figures/fig0-teaser-radars.png" alt="论文首页两组雷达图：左为 Instruct 版、右为 Thinking 版 Qwen3-VL-235B-A22B 与闭源模型在各能力维度上的对比" width="1239" height="580" loading="eager"></div>
+      <figcaption><b>首页雷达图。</b>左右两组分别是 Instruct 和 Thinking 两个版本的 Qwen3-VL 旗舰与闭源模型的对比，具体数字以表 2 为准（见<a href="#eval">评测</a>）。<span class="from">来源：论文首页图</span></figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#index">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">胶囊标签 = 原文出处；橙色胶囊 = 本文推算；<span class="nd">原文未披露</span></div>
+  </nav>
+
+  <main>
+
+<!-- ======================= GLANCE ======================= -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">发布日期</div><div class="stat-num num">2025-11-26</div><div class="stat-sub">arXiv v1。所读 PDF 为 v2：页脚 2025-11-27，首页写 December 1, 2025</div><span class="src">arXiv</span></div>
+    <div class="card stat"><div class="stat-k">旗舰</div><div class="stat-num">235B-A22B</div><div class="stat-sub">MoE，总参 235B，每 token 激活 22B</div><span class="src">§2</span></div>
+    <div class="card stat"><div class="stat-k">尺寸</div><div class="stat-num sm">Dense 2B / 4B / 8B / 32B<br>MoE 30B-A3B / 235B-A22B</div><div class="stat-sub">每档都有 Instruct 和 Thinking 两版</div><span class="src">§1 · §2</span></div>
+    <div class="card stat"><div class="stat-k">视觉编码器</div><div class="stat-num sm">SigLIP2-SO-400M</div><div class="stat-sub">从 SigLIP-2 继续训练；2B/4B 用 SigLIP2-Large（300M）</div><span class="src">§2</span></div>
+    <div class="card stat"><div class="stat-k">上下文</div><div class="stat-num num">256K</div><div class="stat-sub">S3 序列长 262,144；用 YaRN 外推约 1M token 测过</div><span class="src">表 1 · §5.12.3</span></div>
+    <div class="card stat"><div class="stat-k">预训练 token</div><div class="stat-num num">≈ 2.2T</div><div class="stat-sub">67B + ~1T + ~1T + 100B 四段相加</div><span class="src calc">推算 · 表 1</span></div>
+    <div class="card stat"><div class="stat-k">SFT 数据</div><div class="stat-num num">≈ 120 万</div><div class="stat-sub">1/3 纯文本，2/3 图文 / 视频文</div><span class="src">§4.2.1</span></div>
+    <div class="card stat"><div class="stat-k">Reasoning RL</div><div class="stat-num num">≈ 30K</div><div class="stat-sub">条 query；算法 SAPO</div><span class="src">§4.4.1</span></div>
+    <div class="card stat"><div class="stat-k">训练规模</div><div class="stat-num num">≤ 10,000</div><div class="stat-sub">GPU；Megatron-LM，TP/PP/CP/EP + ZeRO-1</div><span class="src">§4.6</span></div>
+    <div class="card stat"><div class="stat-k">许可</div><div class="stat-num">Apache 2.0</div><div class="stat-sub">全系列开放权重</div><span class="src">§6</span></div>
+  </div>
+</section>
+
+<!-- ======================= TL;DR ======================= -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五句话读完</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span>
+      <h3>结构只改三处，只有一处做了消融</h3>
+      <p>三处改动是 Interleaved-MRoPE、DeepStack 和文本时间戳 <code>&lt;3.0 seconds&gt;</code>。只有 DeepStack 有消融：平均分 <b>74.7 → 76.0</b>，而且是在一个内部 15B-A2B 模型上做的。<span class="src">表 12</span></p></div>
+    <div class="card tl"><span class="idx">02</span>
+      <h3>预训练四段，序列长度一路加到 256K</h3>
+      <p>S0 只训 merger，<b>67B</b> token → S1 约 1T、8K → S2 约 1T、32K → S3 <b>100B</b>、262,144。四段相加约 <b>2.2T</b>。<span class="src">表 1</span><span class="src calc">推算</span></p></div>
+    <div class="card tl"><span class="idx">03</span>
+      <h3>数据几乎都由模型来标注</h3>
+      <p>用 Qwen2.5-VL-32B 做<b>以原始配文为条件</b>的 recaption；<b>3000 万</b>条真实场景 OCR 完全没有人工标注；OCR 语种从 10 种扩到 <b>39</b> 种，其中 32 种准确率超过 70%。<span class="src">§3.2.1</span><span class="src">§3.2.3</span><span class="src">图 2</span></p></div>
+    <div class="card tl caveat"><span class="idx">04</span>
+      <h3>加了视觉，文本反而变强，但要看跟谁比</h3>
+      <p>VL-32B-Instruct 的 AIME-25 是 <b>66.2</b>，同尺寸的 Qwen3-32B 只有 20.2。但旗舰 Thinking 版是 <b>89.7</b>，<b>低于</b> Qwen3-235B-Thinking-2507 的 92.3。<span class="src">表 7</span><span class="src">表 6</span></p></div>
+    <div class="card tl"><span class="idx">05</span>
+      <h3>文档、OCR、数学视觉领先，通用推理仍落后</h3>
+      <p>旗舰在表 2 里的最高分：MathVista_mini <b>85.8</b>（T）、OCRBench <b>920</b>（I）、MMLongBench-Doc <b>57.0</b>（I）。MMMU 80.6，低于 GPT-5-high 的 84.2*。<span class="src">表 2</span></p></div>
+  </div>
+</section>
+
+<!-- ======================= ARCH ======================= -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：沿用三件套，改了位置编码、跨层融合和时间表示</h2>
+    <p class="sec-intro">整体仍是 ViT 编码器 → 两层 MLP merger（把 2×2 的视觉特征压成 1 个 token）→ Qwen3 LLM。<span class="src">§2</span></p>
+  </div>
+
+  <figure class="fig card wide" id="fig1">
+    <div class="img-pad"><img src="figures/fig1-architecture.jpg" alt="Qwen3-VL 整体架构图：视觉编码器处理图像和视频，多层视觉特征经 DeepStack 注入 LLM 前几层，视频帧前插入文本时间戳" width="2200" height="1270" loading="lazy"></div>
+    <figcaption><b>整体架构。</b>原生动态分辨率的视觉编码器把图像和视频映射成长度可变的视觉 token；DeepStack 把编码器多个层级的特征注入 LLM 对应的层；位置编码用 Interleaved MRoPE；视频用文本时间戳 token 标注时间。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3>相对 Qwen2.5-VL 的三处结构改动</h3>
+
+    <div class="card mod">
+      <h4>① Interleaved-MRoPE <span class="src">§2.1</span><span class="tag nd-tag">无消融</span></h4>
+      <p><b>问题：</b>Qwen2-VL 的 MRoPE 把 embedding 维度切成 t / h / w 三段，每段分到的旋转频率不同，频谱不均衡。原文说后续研究表明这会拖累长视频理解。</p>
+      <p><b>改法：</b>把 t、h、w 交错排布到各个维度上，让每条轴都同时覆盖低频和高频。这个做法引自 Huang et al., 2025，不是本文首创。</p>
+    </div>
+
+    <div class="card mod" id="arch-deepstack">
+      <h4>② DeepStack：从 ViT 中间层取特征 <span class="src">§2.2</span><span class="tag ok-tag">有消融 · 表 12</span></h4>
+      <p>原版 DeepStack 堆叠的是多尺度输入的 token。Qwen3-VL 改为从 ViT 的<b>三个不同层级</b>取特征，每层经过各自的 merger 投影后，<b>直接加</b>到 LLM <b>前三层</b>对应位置的 hidden state 上。</p>
+    </div>
+  </div>
+
+  <div class="card diagram wide">
+    <svg viewBox="0 0 760 330" role="img" aria-label="DeepStack 示意：ViT 三个层级的特征经各自 merger 加到 LLM 前三层，主 merger 输出的视觉 token 进入输入序列，上下文长度不变">
+      <defs>
+        <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--accent)"/></marker>
+        <marker id="arW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--warm)"/></marker>
+      </defs>
+      <text x="105" y="22" text-anchor="middle" class="dg-t">ViT（视觉编码器）</text>
+      <text x="345" y="22" text-anchor="middle" class="dg-t">merger</text>
+      <text x="580" y="22" text-anchor="middle" class="dg-t">LLM（Qwen3）</text>
+      <!-- ViT layers: y = 268 - 36*i -->
+      <rect x="30" y="268" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="286" text-anchor="middle" class="dg-s">patch 输入（图像 / 视频帧）</text>
+      <rect x="30" y="232" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="250" text-anchor="middle" class="dg-t">层级 a</text>
+      <rect x="30" y="196" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="214" text-anchor="middle" class="dg-s">…</text>
+      <rect x="30" y="160" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="178" text-anchor="middle" class="dg-t">层级 b</text>
+      <rect x="30" y="124" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="142" text-anchor="middle" class="dg-s">…</text>
+      <rect x="30" y="88" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="106" text-anchor="middle" class="dg-t">层级 c</text>
+      <rect x="30" y="52" width="150" height="28" rx="6" class="dg-box dg-vit"/><text x="105" y="70" text-anchor="middle" class="dg-t">ViT 输出</text>
+      <circle cx="180" cy="246" r="4" class="dg-tap"/><circle cx="180" cy="174" r="4" class="dg-tap"/><circle cx="180" cy="102" r="4" class="dg-tap"/>
+      <!-- mergers -->
+      <rect x="280" y="52" width="130" height="28" rx="6" class="dg-box" style="stroke:var(--accent)"/><text x="345" y="70" text-anchor="middle" class="dg-t">主 merger（2×2→1）</text>
+      <rect x="280" y="232" width="130" height="28" rx="6" class="dg-box dg-merger"/><text x="345" y="250" text-anchor="middle" class="dg-t">专用 merger ①</text>
+      <rect x="280" y="196" width="130" height="28" rx="6" class="dg-box dg-merger"/><text x="345" y="214" text-anchor="middle" class="dg-t">专用 merger ②</text>
+      <rect x="280" y="160" width="130" height="28" rx="6" class="dg-box dg-merger"/><text x="345" y="178" text-anchor="middle" class="dg-t">专用 merger ③</text>
+      <path d="M184 246 H276" class="dg-line" marker-end="url(#arW)"/>
+      <path d="M184 174 C230 174 230 210 276 210" class="dg-line" marker-end="url(#arW)"/>
+      <path d="M184 102 C235 102 225 174 276 174" class="dg-line" marker-end="url(#arW)"/>
+      <path d="M180 66 H276" class="dg-line-main" marker-end="url(#arA)"/>
+      <!-- LLM layers -->
+      <rect x="490" y="52" width="180" height="28" rx="6" class="dg-box dg-llm"/><text x="580" y="70" text-anchor="middle" class="dg-t">第 N 层</text>
+      <text x="580" y="108" text-anchor="middle" class="dg-s">⋮</text>
+      <rect x="490" y="160" width="180" height="28" rx="6" class="dg-box dg-llm-hot"/><text x="580" y="178" text-anchor="middle" class="dg-t">第 3 层 hidden state</text>
+      <rect x="490" y="196" width="180" height="28" rx="6" class="dg-box dg-llm-hot"/><text x="580" y="214" text-anchor="middle" class="dg-t">第 2 层 hidden state</text>
+      <rect x="490" y="232" width="180" height="28" rx="6" class="dg-box dg-llm-hot"/><text x="580" y="250" text-anchor="middle" class="dg-t">第 1 层 hidden state</text>
+      <rect x="490" y="268" width="180" height="28" rx="6" class="dg-box"/><text x="580" y="286" text-anchor="middle" class="dg-s">输入：文本 token + 视觉 token</text>
+      <!-- plus nodes -->
+      <path d="M410 246 H436" class="dg-line"/><circle cx="450" cy="246" r="12" class="dg-plus"/><text x="450" y="251" text-anchor="middle" class="dg-plus-t">+</text><path d="M462 246 H486" class="dg-line" marker-end="url(#arW)"/>
+      <path d="M410 210 H436" class="dg-line"/><circle cx="450" cy="210" r="12" class="dg-plus"/><text x="450" y="215" text-anchor="middle" class="dg-plus-t">+</text><path d="M462 210 H486" class="dg-line" marker-end="url(#arW)"/>
+      <path d="M410 174 H436" class="dg-line"/><circle cx="450" cy="174" r="12" class="dg-plus"/><text x="450" y="179" text-anchor="middle" class="dg-plus-t">+</text><path d="M462 174 H486" class="dg-line" marker-end="url(#arA)" style="stroke:var(--warm)"/>
+      <!-- main path to input -->
+      <path d="M410 66 H450 V38 H720 V282 H674" class="dg-line-main" marker-end="url(#arA)"/>
+      <text x="726" y="176" class="dg-s" transform="rotate(90 726 176)" text-anchor="middle">视觉 token 只在输入里占一次位置</text>
+      <text x="380" y="322" text-anchor="middle" class="dg-s">三路 DeepStack 特征按位置加到前三层的 hidden state 上，不新增 token，上下文长度不变</text>
+    </svg>
+    <div class="cap">自绘示意，依据 §2.2 和图 1。原文只说取自 ViT「三个不同层级」，具体是哪三层、和 LLM 第 1/2/3 层如何一一对应，<span class="nd">原文未披露</span>，图中的连线只是示意。</div>
+  </div>
+
+  <div class="prose">
+    <div class="card mod">
+      <h4>DeepStack 消融 <span class="src">表 12</span></h4>
+      <p>设定：内部 15B-A2B LLM，每组预训练 200B token，<b>不做后训练</b>，直接在验证集上测。</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>方法</th><th>AVG</th><th>InfoVQA</th><th>DocVQA</th><th>OCRB</th><th>ChartQA</th><th>AI2D</th><th>MMStar</th><th>MMMU</th><th>TVQA</th></tr></thead>
+          <tbody>
+            <tr><td>Baseline</td><td>74.7</td><td>71.9</td><td>89.5</td><td>81.0</td><td>81.5</td><td>81.8</td><td>55.5</td><td>52.9</td><td class="best">80.6</td></tr>
+            <tr class="hl"><td>+ DeepStack</td><td class="best">76.0</td><td class="best">74.2</td><td class="best">91.1</td><td class="best">83.6</td><td class="best">83.3</td><td class="best">83.2</td><td class="best">57.7</td><td class="best">54.1</td><td>80.5</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">文档、细粒度类任务涨得最多（InfoVQA +2.3、OCRB +2.6）；TVQA 微降 0.1。表中另有 RLWDQA 67.7→68.1、MMBEN 81.0→81.2、MMBCN 78.1→78.5。</p>
+    </div>
+
+    <div class="card mod">
+      <h4>③ 视频时间：从 T-RoPE 改为文本时间戳 <span class="src">§2.3</span><span class="tag nd-tag">无消融</span></h4>
+      <p><b>原文认为 Qwen2.5-VL 的问题：</b>时间位置 id 直接绑定绝对时间，① 长视频的 id 又大又稀疏；② 要学好，必须在各种 fps 上大量均匀采样，造数据成本高。</p>
+      <p><b>改法：</b>给每个视频时间 patch 加一个文本前缀，如 <code>&lt;3.0 seconds&gt;</code>；训练时秒和 HMS（时:分:秒）两种格式混用。代价是上下文“略有增加”（modest），具体增加多少<span class="nd">原文未披露</span>。</p>
+    </div>
+
+    <h3>其他组件变化</h3>
+    <div class="grid2">
+      <div class="card mod" id="arch-vit">
+        <h4>视觉编码器 <span class="src">§2</span><span class="src">表 11</span></h4>
+        <p>从 SigLIP-2 官方权重出发，做动态分辨率继续训练；用 2D-RoPE，并按输入尺寸插值绝对位置编码（参照 CoMP）。</p>
+        <p>和原版 SigLIP-2 对比：CLIP 阶段 ImageNet 系基本持平，内部 OmniBench 从 <b>36.9 → 45.5</b>；接同一个 1.7B Qwen3、训练 1.5T token 后，RealWorldQA <b>58.7 → 66.1</b>，AI2D 74.1 → 76.2，InfoVQA 65.3 → 67.0。</p>
+      </div>
+      <div class="card mod">
+        <h4>Merger <span class="src">§2</span></h4>
+        <p>两层 MLP，把 2×2 的视觉特征压成 1 个视觉 token，对齐到 LLM 的 hidden 维度。另外为 DeepStack 配了几个专用 merger。</p>
+      </div>
+      <div class="card mod">
+        <h4>Loss 归一化 <span class="src">§1</span><span class="src">摘要</span><span class="tag nd-tag">无公式 / 无消融</span></h4>
+        <p>从“按样本算 loss”改为“对每个 token 做平方根归一化”，用来平衡纯文本和多模态数据的贡献。原文只说它能提升多模态、不损文本能力。</p>
+      </div>
+      <div class="card mod">
+        <h4>Grounding 坐标系 <span class="src">§3.2.4</span></h4>
+        <p>从 Qwen2.5-VL 的绝对坐标改为<b>归一化到 [0, 1000]</b>。理由是对分辨率和长宽比的变化更稳，后处理也更简单。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= DATA ======================= -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：上一代模型当标注器、改写器、过滤器和奖励模型</h2>
+    <p class="sec-intro">这一节信息量最大。论文<b>没有给出预训练各数据来源的占比</b>，所以下面只列原文明确写出的规模和流程，不画占比图。</p>
+  </div>
+
+  <div class="wide">
+    <h3 style="margin-top:0">流水线示意</h3>
+    <div class="legend-dots" style="margin:6px 0 10px"><span>原始来源</span><span class="m">模型标注 / 过滤</span><span class="o">产出</span></div>
+    <div class="pipe-head"><span>数据</span><span>来源</span><span>模型处理</span><span>产出</span></div>
+    <div class="pipe" role="list">
+      <div class="pipe-row" role="listitem"><div class="lbl">图像 caption</div>
+        <div class="chip">较新的网页图文对，中英为主 <span class="src">§3.2.1</span></div>
+        <div class="chip m">Qwen2.5-VL-32B（recaption 专用微调）<b>以原配文为条件</b>重写 → 在重写后的文本上做语义去重</div>
+        <div class="chip o">在视觉 embedding 上聚类，找稀疏区域定向补数据 → caption 集（规模<span class="nd">未披露</span>）</div></div>
+      <div class="pipe-row" role="listitem"><div class="lbl">交错图文</div>
+        <div class="chip">中英文网页多模态文档、书籍 <span class="src">§3.2.1</span></div>
+        <div class="chip m">基于 Qwen 的轻量打分器做领域分类、剔除广告和标题党；Qwen2.5-VL-7B 解析书籍</div>
+        <div class="chip o">连续页拼接成最长 256K 的序列，设最低页数和图文比门槛（阈值<span class="nd">未披露</span>）</div></div>
+      <div class="pipe-row" role="listitem"><div class="lbl">真实场景 OCR</div>
+        <div class="chip">内部采集的真实图片 <span class="src">§3.2.3</span></div>
+        <div class="chip m">OCR 专用模型出伪标签 → Qwen2.5-VL 修正，<b>完全没有人工标注</b></div>
+        <div class="chip o"><b>3000 万</b>条；另合成约 3000 万条多语种 OCR，并有 100 万以上真实多语种图片</div></div>
+      <div class="pipe-row" role="listitem"><div class="lbl">文档解析</div>
+        <div class="chip">Common Crawl PDF <b>300 万</b>（10 类 × 30 万）+ 内部文档 <b>400 万</b> <span class="src">§3.2.3</span></div>
+        <div class="chip m">内部版面模型出阅读顺序和区域框 → Qwen2.5-VL-72B 逐区域识别 → 重组</div>
+        <div class="chip o">QwenVL-HTML（元素级框）/ QwenVL-Markdown（只框图和表，表格用 LaTeX）</div></div>
+      <div class="pipe-row" role="listitem"><div class="lbl">Box grounding</div>
+        <div class="chip">COCO、Objects365、OpenImages、RefCOCO/+/g，加上无标注图 <span class="src">§3.2.4</span></div>
+        <div class="chip m">Qwen2.5-VL 抽候选物体 → Grounding DINO 和 Qwen2.5-VL 一起定位 → 质量评估</div>
+        <div class="chip o">过滤掉低置信和错误的框 → 框数据集（规模<span class="nd">未披露</span>）</div></div>
+      <div class="pipe-row" role="listitem"><div class="lbl">函数调用</div>
+        <div class="chip">大量图片 <span class="src">§3.2.9</span></div>
+        <div class="chip m">模型看图生成 query 和函数定义 → 采样调用 → 合成返回值，循环到判定解决，每步过滤格式错误</div>
+        <div class="chip o">多模态函数调用轨迹，<b>不需要真的实现函数</b></div></div>
+    </div>
+  </div>
+
+  <div class="wide">
+    <h3>已披露规模</h3>
+    <p class="tbl-note" style="margin-top:2px">只填原文写出的数字；没写的标「原文未披露」。</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>数据</th><th style="text-align:left">规模</th><th style="text-align:left">出处</th></tr></thead>
+        <tbody>
+          <tr><td>S0 对齐数据（caption / 视觉知识 / OCR）</td><td style="text-align:left">约 67B token</td><td style="text-align:left"><span class="src">§3.1 · 表 1</span></td></tr>
+          <tr><td>图像 caption、交错图文、视频</td><td style="text-align:left"><span class="nd">原文未披露</span></td><td style="text-align:left"><span class="src">§3.2.1 · §3.2.7</span></td></tr>
+          <tr><td>知识实体类别</td><td style="text-align:left">十几个语义大类（more than a dozen）</td><td style="text-align:left"><span class="src">§3.2.2</span></td></tr>
+          <tr class="hl"><td>真实场景 OCR</td><td style="text-align:left">3000 万条，无人工标注</td><td style="text-align:left"><span class="src">§3.2.3</span></td></tr>
+          <tr><td>多语种 OCR</td><td style="text-align:left">新增 29 种语言（共 39 种）；合成约 3000 万 + 真实图 100 万以上</td><td style="text-align:left"><span class="src">§3.2.3</span></td></tr>
+          <tr><td>文档解析</td><td style="text-align:left">CC PDF 300 万（10 类 × 30 万）+ 内部 400 万</td><td style="text-align:left"><span class="src">§3.2.3</span></td></tr>
+          <tr><td>STEM 几何图（代码渲染）</td><td style="text-align:left">点定位 100 万；感知 VQA 200 万；图表 caption 600 万</td><td style="text-align:left"><span class="src">§3.2.8</span></td></tr>
+          <tr><td>K12 / 本科习题</td><td style="text-align:left">6000 万以上</td><td style="text-align:left"><span class="src">§3.2.8</span></td></tr>
+          <tr><td>多模态长 CoT（预训练）</td><td style="text-align:left">1200 万以上</td><td style="text-align:left"><span class="src">§3.2.8</span></td></tr>
+          <tr><td>SFT</td><td style="text-align:left">约 120 万</td><td style="text-align:left"><span class="src">§4.2.1</span></td></tr>
+          <tr><td>Long-CoT 冷启动</td><td style="text-align:left">条数<span class="nd">原文未披露</span>；VL : 纯文本 ≈ 1 : 1</td><td style="text-align:left"><span class="src">§4.2.2</span></td></tr>
+          <tr><td>Reasoning RL query</td><td style="text-align:left">约 3 万</td><td style="text-align:left"><span class="src">§4.4.1</span></td></tr>
+          <tr><td>Thinking with images</td><td style="text-align:left">冷启动约 1 万 → 蒸馏约 12 万条多轮交互</td><td style="text-align:left"><span class="src">§4.5</span></td></tr>
+          <tr><td>预训练各阶段数据配比</td><td style="text-align:left"><span class="nd">原文未披露</span>（只有定性描述）</td><td style="text-align:left"><span class="src">§3.1</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scroll-hint">← 表格可左右滑动 →</div>
+  </div>
+
+  <div class="prose">
+    <h3 id="data-caption">图像 caption：条件式 recaption <span class="src">§3.2.1</span></h3>
+    <ul>
+      <li><b>Recaption 模型</b>：一个专门为 recaption 微调过的 Qwen2.5-VL-32B，<b>输入里带着原始配文</b>。产出的 caption 补充了物体属性、空间布局和上下文语义，语言质量也更好。因为输入带着原文，alt-text 里的专名和知识信息不会丢。</li>
+      <li><b>去重</b>：只在<b>重写后的文本</b>上按语义相似度去重，原文的理由是“不牺牲视觉多样性”。</li>
+      <li><b>补长尾</b>：在<b>视觉 embedding</b> 上做聚类（引用 faiss、CLIMB 等），找出分布稀疏的区域，针对性补数据。</li>
+      <li>数据规模、caption 长度分布、recaption prompt：<span class="nd">原文未披露</span>。</li>
+    </ul>
+
+    <h3 id="data-interleave">交错图文 <span class="src">§3.2.1</span></h3>
+    <ul>
+      <li>用一个基于 Qwen 微调的轻量打分器做细粒度领域分类，再用<b>同一个</b>打分器剔除广告、推广、标题党等类别；剔哪些类别由各领域的验证实验决定。</li>
+      <li>书籍级数据：微调过的 Qwen2.5-VL-7B 做多模态解析，把正文和插图、图表对齐；连续页拼成最长 <b>256K</b> token 的序列，保留原始页序。</li>
+      <li>质控：删掉纯文本段和图文对齐度低的段；超长书籍序列要求达到最低页数和最低图文比。</li>
+    </ul>
+
+    <h3 id="data-knowledge">知识 / 实体 <span class="src">§3.2.2</span></h3>
+    <ul>
+      <li>覆盖十几个语义大类：动物、植物、地标、食物、车辆、电子产品、服饰等。</li>
+      <li><b>按重要性采样</b>：知名度高的实体多采，长尾实体按较小比例保留，以维持覆盖面。具体比例<span class="nd">原文未披露</span>。</li>
+      <li>把稀疏的 alt-text 换成 LLM 生成的丰富描述：主体实体之外，还写视觉属性、周边环境、空间布局，以及与其他物体或人的互动。</li>
+    </ul>
+
+    <h3 id="data-ocr">OCR、文档解析、长文档 <span class="src">§3.2.3</span></h3>
+    <ul>
+      <li><b>双格式标注</b>：QwenVL-HTML 带元素级 bbox；QwenVL-Markdown 只定位图和表，表格用 LaTeX。</li>
+      <li><b>先合成后伪标</b>：先造大规模、标注精确的合成 HTML，再系统地转成 Markdown；真实文档打伪标签后做质量过滤；最后两者混合。</li>
+      <li><b>长文档</b>：① 把单页样本拼成“前面放多张页面图、后面放对应文本”的长解析序列；② 跨页 VQA，平衡题型，并让证据来自图、表、正文等不同元素。</li>
+    </ul>
+  </div>
+
+  <figure class="fig card wide" id="fig2">
+    <div class="img-pad"><img src="figures/fig2-multilingual-ocr.png" alt="柱状图：Qwen3-VL 在自建测试集上 39 种语言的 OCR 准确率，其中 32 种超过 70%" width="1084" height="508" loading="lazy"></div>
+    <figcaption><b>多语种 OCR。</b>在自建测试集上，39 种支持语言中有 32 种准确率超过 70%，原文把 70% 视为“实际可用”的门槛。测试集不公开。<span class="from">来源：论文图 2 · §5.4</span></figcaption>
+  </figure>
+
+  <div class="prose">
+    <h3 id="data-ground">Grounding、计数、空间与 3D <span class="src">§3.2.4–3.2.5</span></h3>
+    <div class="grid2">
+      <div class="card mod"><h4>Point grounding</h4><p>PixMo 的公开点标注、从检测/分割集转换来的数据，以及一条专攻细粒度细节的合成流水线。</p></div>
+      <div class="card mod"><h4>计数</h4><p>从 grounding 数据里挑出高质量子集，做成三种任务：直接计数、基于框计数、基于点计数。</p></div>
+      <div class="card mod"><h4>空间理解</h4><p>三类标注：关系（“笔记本左边的杯子”）、可供性（graspable / pressable / sittable）、需要规划的动作类问题。空间指代一律<b>相对其他物体或场景坐标系</b>，不用绝对坐标；问题由模板和 LLM 生成。</p></div>
+      <div class="card mod"><h4>3D grounding</h4><p>单视角图像 + 指代表达 + JSON 格式的 <b>9-DoF</b> 3D 框。过滤严重遮挡和不准的标签，按 Omni3D 统一到虚拟相机坐标系；另外合成了大量描述性 caption 作为指代表达。</p></div>
+    </div>
+
+    <details class="more" id="data-code">
+      <summary>代码、视频、STEM、Agent <span class="hint">§3.2.6–3.2.9 · 展开</span></summary>
+      <div class="body">
+        <h4>代码 <span class="src">§3.2.6</span></h4>
+        <ul>
+          <li>纯文本代码：复用 Qwen3 和 Qwen3-Coder 的语料。</li>
+          <li>多模态代码：UI 截图转 HTML/CSS、图转可编辑 SVG、视觉编程题、带图的 StackOverflow 问题，以及流程图/图表/LaTeX 公式转代码或标记语言。</li>
+        </ul>
+        <h4 id="data-video">视频 <span class="src">§3.2.7</span></h4>
+        <ul>
+          <li><b>由短到长的 caption 合成</b>：生成与时间戳交错、按故事组织的长描述；再用内部 caption 模型补充“事件级时间摘要 + 片段级视觉细节”。</li>
+          <li>时空 grounding 数据分物体、动作、人物三个层级。</li>
+          <li>按标题、时长、类别标签等元数据平衡来源（教学、电影、第一人称视角等）。</li>
+          <li><b>按长度自适应采样</b>：fps 和最大帧数随各阶段的序列长度上限调整。</li>
+        </ul>
+        <h4 id="data-stem">STEM <span class="src">§3.2.8</span></h4>
+        <ul>
+          <li>用代码渲染几何图：100 万条点定位、200 万条感知 VQA。</li>
+          <li>两阶段 caption：先生成，再做模型校验，两阶段都用专用模型集成，产出 600 万条图表 caption。</li>
+          <li>6000 万以上 K12 和本科习题：清洗（丢掉图片损坏、内容无关、答案不全或错误的题）、中英互译、答案格式统一。</li>
+          <li>1200 万以上长 CoT 样本：用强推理模型的原始 rollout，经规则和模型双重校验，剔除答案模糊或中英混杂的样本，再用拒绝采样只留难题。</li>
+          <li>另外并入 Qwen3 的纯文本推理数据。</li>
+        </ul>
+        <h4 id="data-agent">Agent <span class="src">§3.2.9</span></h4>
+        <ul>
+          <li>GUI 感知：用元数据、解析工具和人工标注构造元素描述、dense caption、dense grounding 等任务。</li>
+          <li>多步轨迹：“自演化轨迹生产框架”加定向人工审核，并设计和增强 CoT 推理过程。</li>
+          <li>搜索：用真实的在线图搜和文搜工具采集多模态事实查询轨迹。</li>
+        </ul>
+      </div>
+    </details>
+
+    <h3 id="data-post">后训练数据 <span class="src">§4.2 · §4.4 · §4.5</span></h3>
+    <div class="ratio">
+      <div class="rlab"><span><b>SFT ≈ 120 万条</b> 的构成</span><span class="src">§4.2.1</span></div>
+      <div class="rbar" role="img" aria-label="SFT 数据：三分之一纯文本，三分之二图文或视频文"><span class="a" style="width:33.333%">纯文本 1/3</span><span class="b" style="width:66.667%">图文 / 视频文 2/3</span></div>
+    </div>
+    <div class="ratio">
+      <div class="rlab"><span><b>Long-CoT 冷启动</b>（条数<span class="nd">未披露</span>）</span><span class="src">§4.2.2</span></div>
+      <div class="rbar" role="img" aria-label="Long-CoT 冷启动：视觉语言与纯文本约 1 比 1"><span class="b" style="width:50%">视觉-语言 ≈ 1</span><span class="a" style="width:50%">纯文本 ≈ 1</span></div>
+    </div>
+
+    <div class="grid2" style="margin-top:14px">
+      <div class="card mod"><h4>SFT 两步过滤 <span class="src">§4.2.1</span></h4>
+        <ul>
+          <li><b>Query</b>：Qwen2.5-VL 剔除无法验证的 query；含糊的指令做最小改写；再评估难度和相关性。</li>
+          <li><b>Response</b>：先用规则去掉重复、不完整、格式错误；再用 Qwen2.5-VL 系的奖励模型，从正确性、完整性、清晰度、有用性几个维度打分，视觉任务额外检查对图像信息的使用。</li>
+        </ul></div>
+      <div class="card mod"><h4>Long-CoT 冷启动过滤 <span class="src">§4.2.2</span></h4>
+        <ul>
+          <li>只留基线模型通过率低或回答更长的题。</li>
+          <li><b>多模态必要性</b>：视觉数学题里，凡是 Qwen3-30B-nothink <b>不看图也能做对</b>的，一律丢掉。</li>
+          <li>去掉结论错误、重复、语言混杂、“猜答案”式的回答。</li>
+        </ul></div>
+      <div class="card mod"><h4>Reasoning RL 数据 <span class="src">§4.4.1</span></h4>
+        <ul>
+          <li>用 235B 的早期 checkpoint 对每题采样 16 次，<b>16 次全错就丢掉</b>。</li>
+          <li>按任务跑预实验，剔除提升空间小的数据源，最终约 <b>3 万</b>条 query。</li>
+          <li>训练每个尺寸时再采样 16 次，过滤通过率 <b>&gt; 90%</b> 的易题。各任务按预设比例混成 batch，比例数值<span class="nd">未披露</span>。</li>
+        </ul></div>
+      <div class="card mod"><h4>Thinking with images <span class="src">§4.5</span></h4>
+        <ul>
+          <li>合成约 <b>1 万</b>条冷启动 grounding 样本（多为简单的两轮 VQA），在 Qwen2.5-VL-32B 上做 SFT 和多轮工具 RL，得到一个视觉 agent。</li>
+          <li>用它蒸馏出约 <b>12 万</b>条多轮交互数据，再给 Qwen3-VL 做冷启动 SFT 和工具 RL。</li>
+        </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= TRAIN ======================= -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · RECIPE</div>
+    <h2>训练配方：四段预训练 + 三段后训练</h2>
+    <p class="sec-intro">学习率、batch size、训练步数等常规超参<span class="nd">原文未披露</span>。在 S0 之前，视觉编码器先单独做了动态分辨率的继续训练。<span class="src">§3.1</span></p>
+  </div>
+
+  <div class="wide" id="pretrain">
+    <h3 style="margin-top:0">预训练 <span class="src">表 1 · §3.1</span></h3>
+    <div class="flow">
+      <div class="card stage"><div class="sid">S0</div><h4>视觉-语言对齐</h4>
+        <dl><dt>训练</dt><dd>仅 merger</dd><dt>Token</dt><dd>67B</dd><dt>序列长</dt><dd>8,192</dd></dl>
+        <div class="tokbar"><i style="width:6.7%"></i></div><div class="tokbar seqbar"><i style="width:3.1%"></i></div>
+        <p class="stat-sub" style="margin:8px 0 0">高质量 caption、视觉知识、OCR</p></div>
+      <div class="card stage"><div class="sid">S1</div><h4>多模态预训练</h4>
+        <dl><dt>训练</dt><dd>全参</dd><dt>Token</dt><dd>~1T</dd><dt>序列长</dt><dd>8,192</dd></dl>
+        <div class="tokbar"><i style="width:100%"></i></div><div class="tokbar seqbar"><i style="width:3.1%"></i></div>
+        <p class="stat-sub" style="margin:8px 0 0">VL 数据 + 纯文本：交错、grounding、VQA、STEM，少量视频</p></div>
+      <div class="card stage"><div class="sid">S2</div><h4>长上下文预训练</h4>
+        <dl><dt>训练</dt><dd>全参</dd><dt>Token</dt><dd>~1T</dd><dt>序列长</dt><dd>32,768</dd></dl>
+        <div class="tokbar"><i style="width:100%"></i></div><div class="tokbar seqbar"><i style="width:12.5%"></i></div>
+        <p class="stat-sub" style="margin:8px 0 0">提高纯文本比例；大幅增加视频和 agent 指令数据</p></div>
+      <div class="card stage"><div class="sid">S3</div><h4>超长上下文适配</h4>
+        <dl><dt>训练</dt><dd>全参</dd><dt>Token</dt><dd>100B</dd><dt>序列长</dt><dd>262,144</dd></dl>
+        <div class="tokbar"><i style="width:10%"></i></div><div class="tokbar seqbar"><i style="width:100%"></i></div>
+        <p class="stat-sub" style="margin:8px 0 0">纯文本 + VL，重点是长视频和长文档</p></div>
+    </div>
+    <div class="bar-legend"><span>token 预算（按表 1 数值等比，“~1T”按 1T 画）</span><span class="s">序列长度（相对 262,144）</span><span>合计 ≈ 2.2T <span class="src calc">推算</span></span></div>
+    <p class="tbl-note">每个阶段的数据配比只有定性描述，比如 S2“提高纯文本比例”。具体百分比<span class="nd">原文未披露</span>。</p>
+
+    <h3>后训练 <span class="src">§4.1–4.5</span></h3>
+    <div class="post-flow">
+      <div class="card stage"><div class="sid">P1 · SFT</div><h4>冷启动监督微调</h4>
+        <ul>
+          <li>Instruct 用标准格式、Thinking 用 CoT 格式，两套数据分开 <span class="src">§4.1</span></li>
+          <li>第 1 个 epoch 用 <b>32K</b>；第 2 个 epoch 用 <b>256K</b>，长输入和 32K 数据交错 <span class="src">§4.2.1</span></li>
+          <li>长输入包括数百页的技术文档、整本教科书、最长 2 小时的视频</li>
+          <li>Thinking 版另有 Long-CoT 冷启动数据 <span class="src">§4.2.2</span></li>
+        </ul></div>
+      <div class="card stage"><div class="sid">P2 · 蒸馏</div><h4>强到弱蒸馏（只用纯文本）</h4>
+        <ul>
+          <li><b>只用纯文本数据</b>微调 LLM 主干 <span class="src">§4.1</span></li>
+          <li>先 off-policy（用教师的回答），再 on-policy（学生自己生成，最小化学生和教师 logits 的 KL）<span class="src">§4.3</span></li>
+          <li>原文称对文本和多模态推理都有明显提升；§4.3 说这一步是为了提升<b>轻量模型</b>，旗舰是否也做了没有单独说明</li>
+        </ul></div>
+      <div class="card stage"><div class="sid">P3 · RL</div><h4>Reasoning RL + General RL + 看图思考</h4>
+        <ul>
+          <li><b>Reasoning RL</b>：数学、代码、逻辑、视觉 grounding、视觉谜题，奖励都能用规则或代码执行器确定性验证；算法 <b>SAPO</b>；不设单独的格式奖励，改用任务定制的格式 prompt；回答语言和提问语言不一致时扣分 <span class="src">§4.4.1</span></li>
+          <li><b>General RL</b>：奖励分指令遵循和偏好对齐两维，规则奖励 + 模型奖励（judge 为 Qwen2.5-VL-72B-Instruct 或 Qwen3）；用反直觉计数、复杂钟表读数纠正 SFT 留下的错误先验；对语言混杂、重复、格式错误这类低频问题，单独建一个专门诱发它们的数据集集中惩罚 <span class="src">§4.4.2</span></li>
+          <li><b>Thinking with images</b>：三种奖励，见下 <span class="src">§4.5</span></li>
+        </ul></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card mod"><h4>Thinking with images 的三种奖励 <span class="src">§4.5</span></h4>
+        <ol>
+          <li><b>答案正确性</b>：由 Qwen3-32B 判定。</li>
+          <li><b>多轮推理质量</b>：由 Qwen2.5-VL-72B 判断模型是否正确理解工具反馈、是否逐步推理得出答案。</li>
+          <li><b>工具调用次数</b>：实际调用次数和专家估计的目标次数对比，目标次数由 Qwen2.5-VL-72B 按任务复杂度离线给出。</li>
+        </ol>
+        <p>加第三项的原因：早期实验里，模型退化成只调用一次工具来骗前两项奖励。</p></div>
+      <div class="card mod"><h4>基础设施 <span class="src">§4.6</span></h4>
+        <ul>
+          <li>阿里云 PAI-Lingjun；Megatron-LM 上组合 TP / PP / CP / EP 和 ZeRO-1 DP，最大到 10,000 张 GPU。</li>
+          <li>推理和评测用 vLLM 或 SGLang。</li>
+        </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= EVAL ======================= -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测：11 个类别，旗舰对比三家闭源</h2>
+    <p class="sec-intro">§5.1–§5.11 共 <b>11 个评测类别</b>。附录 A 开头的概述句省略了部分类别，以正文小节为准。表中带 <b>*</b> 的数字摘自对方的技术报告，带 <b>+</b> 的表示使用了工具。</p>
+  </div>
+
+  <div class="cats wide">
+    <div class="card cat"><b>§5.1</b>General VQA</div>
+    <div class="card cat"><b>§5.2</b>Multimodal Reasoning</div>
+    <div class="card cat"><b>§5.3</b>Alignment &amp; Subjective</div>
+    <div class="card cat"><b>§5.4</b>Text Recognition &amp; Document</div>
+    <div class="card cat"><b>§5.5</b>2D &amp; 3D Grounding</div>
+    <div class="card cat"><b>§5.6</b>Fine-grained Perception</div>
+    <div class="card cat"><b>§5.7</b>Multi-Image</div>
+    <div class="card cat"><b>§5.8</b>Embodied &amp; Spatial</div>
+    <div class="card cat"><b>§5.9</b>Video Understanding</div>
+    <div class="card cat"><b>§5.10</b>Agent</div>
+    <div class="card cat"><b>§5.11</b>Text-Centric Tasks</div>
+  </div>
+
+  <div class="wide" id="eval-flagship">
+    <h3>旗舰 vs 闭源 <span class="src">表 2</span></h3>
+    <p class="tbl-note" style="margin-top:2px">对比对象：Gemini 2.5 Pro（thinking / budget-128）、GPT-5（high / minimal）、Claude Opus 4.1（thinking / non-thinking）。下表精选 20 行，圆点表示本行 8 列中的最优值（OmniDocBench 越低越好）。</p>
+    <div class="tbl-wrap tall">
+      <table>
+        <thead><tr><th>Benchmark</th><th class="q">Qwen3-VL-235B<br>Thinking</th><th class="q">Qwen3-VL-235B<br>Instruct</th><th>Gemini 2.5 Pro<br>thinking</th><th>Gemini 2.5 Pro<br>budget-128</th><th>GPT-5<br>high</th><th>GPT-5<br>minimal</th><th>Claude Opus 4.1<br>thinking</th><th>Claude Opus 4.1<br>non-thinking</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="9">STEM &amp; Puzzle · §5.2</td></tr>
+          <tr><td>MMMU</td><td class="q">80.6</td><td class="q">78.7</td><td>81.7<sup>*</sup></td><td>80.9</td><td class="best">84.2<sup>*</sup></td><td>74.4<sup>*</sup></td><td>78.4</td><td>77.2</td></tr>
+          <tr><td>MMMU-Pro</td><td class="q">69.3</td><td class="q">68.1</td><td>68.8<sup>*</sup></td><td>71.2</td><td class="best">78.4<sup>*</sup></td><td>62.7<sup>*</sup></td><td>64.8</td><td>60.7</td></tr>
+          <tr class="hl"><td>MathVista_mini</td><td class="q best">85.8</td><td class="q">84.9</td><td>82.7<sup>*</sup></td><td>77.7</td><td>81.3</td><td>50.9</td><td>75.5</td><td>74.5</td></tr>
+          <tr><td>MathVision</td><td class="q best">74.6</td><td class="q">66.5</td><td>73.3<sup>*</sup></td><td>66.0</td><td>70.9</td><td>45.8</td><td>64.3</td><td>57.7</td></tr>
+          <tr class="grp"><td colspan="9">General VQA · Alignment · §5.1 / §5.3</td></tr>
+          <tr><td>MMBench-EN</td><td class="q">88.8</td><td class="q">89.3</td><td class="best">90.1<sup>*</sup></td><td>88.4</td><td>83.8</td><td>81.3</td><td>79.4</td><td>83.0</td></tr>
+          <tr><td>RealWorldQA</td><td class="q">81.3</td><td class="q">79.2</td><td>78.0<sup>*</sup></td><td>76.0</td><td class="best">82.8</td><td>77.3</td><td>69.9</td><td>68.5</td></tr>
+          <tr><td>HallusionBench</td><td class="q best">66.7</td><td class="q">63.2</td><td>63.7<sup>*</sup></td><td>60.9</td><td>65.7</td><td>53.7</td><td>60.4</td><td>55.1</td></tr>
+          <tr class="grp"><td colspan="9">文档理解 / OCR · §5.4</td></tr>
+          <tr><td>DocVQA_test</td><td class="q">96.5</td><td class="q best">97.1</td><td>92.6</td><td>94.0</td><td>91.5</td><td>89.6</td><td>92.5</td><td>89.2</td></tr>
+          <tr class="hl"><td>OCRBench</td><td class="q">875</td><td class="q best">920</td><td>866</td><td>872</td><td>810</td><td>787</td><td>764</td><td>750</td></tr>
+          <tr><td>OmniDocBench_en ↓</td><td class="q">0.155</td><td class="q best">0.143</td><td>0.347</td><td>0.206</td><td>0.356</td><td>0.174</td><td>0.194</td><td>-</td></tr>
+          <tr><td>CharXiv (RQ)</td><td class="q">66.1</td><td class="q">62.1</td><td>67.9</td><td>62.9</td><td class="best">81.1<sup>*</sup></td><td>57.8</td><td>63.6</td><td>60.2</td></tr>
+          <tr class="hl"><td>MMLongBench-Doc</td><td class="q">56.2</td><td class="q best">57.0</td><td>55.6</td><td>51.2</td><td>51.5</td><td>42.4</td><td>54.5</td><td>48.1</td></tr>
+          <tr class="grp"><td colspan="9">Grounding · Spatial · Multi-Image · §5.5 / §5.7 / §5.8</td></tr>
+          <tr><td>RefCOCO-avg</td><td class="q best">92.1</td><td class="q">91.9</td><td>74.6<sup>*</sup></td><td>-</td><td>66.8</td><td>-</td><td>-</td><td>-</td></tr>
+          <tr><td>ODinW-13</td><td class="q">43.2</td><td class="q best">48.6</td><td>33.7<sup>*</sup></td><td>34.5</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+          <tr><td>ERQA</td><td class="q">52.5</td><td class="q">51.3</td><td>55.3</td><td>50.3</td><td class="best">65.7<sup>*</sup></td><td>42.0<sup>*</sup></td><td>34.8</td><td>28.0</td></tr>
+          <tr><td>MuirBench</td><td class="q best">80.1</td><td class="q">73.0</td><td>77.2</td><td>74.0</td><td>77.5</td><td>66.5</td><td>-</td><td>-</td></tr>
+          <tr class="grp"><td colspan="9">Video · Perception · Agent · §5.6 / §5.9 / §5.10</td></tr>
+          <tr><td>Video-MME (w/o sub)</td><td class="q">79.0</td><td class="q">79.2</td><td class="best">85.1</td><td>80.6</td><td>84.7</td><td>77.3</td><td>75.6</td><td>73.3</td></tr>
+          <tr><td>MLVU (M-Avg)</td><td class="q">83.8</td><td class="q">84.3</td><td>85.6</td><td>81.2</td><td class="best">86.2</td><td>78.3</td><td>73.5</td><td>71.2</td></tr>
+          <tr><td>V*</td><td class="q">85.9</td><td class="q best">93.7<sup>+</sup></td><td>83.8</td><td>72.7</td><td>72.8</td><td>56.7</td><td>-</td><td>-</td></tr>
+          <tr><td>OSWorld</td><td class="q">38.1</td><td class="q">31.6</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class="best">44.4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scroll-hint">← 表格可左右滑动，表头固定 →</div>
+    <div class="keybox"><span class="k-q">Qwen3-VL 列</span><span class="k-best">本行最优</span><span>* 摘自对方技术报告　+ 使用工具　- 无数据</span></div>
+
+    <p class="prose"><b>怎么读：</b>领先最明显的是 OCR、文档、2D grounding、空间和数学视觉；通用知识推理（MMMU-Pro、CharXiv-RQ）、视频（Video-MME）和 ERQA 仍落后 GPT-5 或 Gemini 2.5 Pro。原文也承认 Gemini 2.5 Pro thinking 在通用 VQA 上整体最好。<span class="src">§5.1</span> 视频对比时各家输入帧数不同（Qwen 最多 2,048 帧，Gemini 512、GPT-5 256、Claude 100），原文自己说不能保证完全公平。<span class="src">§5.9</span></p>
+
+    <h3>精选点位图 <span class="src">表 2 · 表 5–7</span></h3>
+    <div class="chart-legend"><span class="l1">Qwen3-VL-235B Thinking</span><span class="l2">Qwen3-VL-235B Instruct</span><span class="l3">Gemini 2.5 Pro thinking</span><span class="l4">GPT-5 high</span></div>
+    <div class="chart-grid"><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="MathVista_mini，表 2"><text x="0" y="16" class="ch-t">MathVista_mini</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="128.7" height="16" rx="3" class="bar-q"/><text x="257.7" y="48" class="ch-val">85.8</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="127.4" height="16" rx="3" class="bar-qi"/><text x="256.4" y="74" class="ch-val">84.9</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T*</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="124.1" height="16" rx="3" class="bar-o"/><text x="253.1" y="100" class="ch-val">82.7</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="121.9" height="16" rx="3" class="bar-o2"/><text x="250.9" y="126" class="ch-val">81.3</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="OCRBench，表 2"><text x="0" y="16" class="ch-t">OCRBench</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="131.2" height="16" rx="3" class="bar-q"/><text x="260.2" y="48" class="ch-val">875</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="138.0" height="16" rx="3" class="bar-qi"/><text x="267.0" y="74" class="ch-val">920</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="129.9" height="16" rx="3" class="bar-o"/><text x="258.9" y="100" class="ch-val">866</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="121.5" height="16" rx="3" class="bar-o2"/><text x="250.5" y="126" class="ch-val">810</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">1000</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="MMLongBench-Doc，表 2"><text x="0" y="16" class="ch-t">MMLongBench-Doc</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="84.3" height="16" rx="3" class="bar-q"/><text x="213.3" y="48" class="ch-val">56.2</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="85.5" height="16" rx="3" class="bar-qi"/><text x="214.5" y="74" class="ch-val">57.0</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="83.4" height="16" rx="3" class="bar-o"/><text x="212.4" y="100" class="ch-val">55.6</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="77.2" height="16" rx="3" class="bar-o2"/><text x="206.2" y="126" class="ch-val">51.5</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="RealWorldQA，表 2"><text x="0" y="16" class="ch-t">RealWorldQA</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="121.9" height="16" rx="3" class="bar-q"/><text x="250.9" y="48" class="ch-val">81.3</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="118.8" height="16" rx="3" class="bar-qi"/><text x="247.8" y="74" class="ch-val">79.2</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T*</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="117.0" height="16" rx="3" class="bar-o"/><text x="246.0" y="100" class="ch-val">78.0</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="124.2" height="16" rx="3" class="bar-o2"/><text x="253.2" y="126" class="ch-val">82.8</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="MMMU，表 2"><text x="0" y="16" class="ch-t">MMMU</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="120.9" height="16" rx="3" class="bar-q"/><text x="249.9" y="48" class="ch-val">80.6</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="118.1" height="16" rx="3" class="bar-qi"/><text x="247.1" y="74" class="ch-val">78.7</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T*</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="122.6" height="16" rx="3" class="bar-o"/><text x="251.6" y="100" class="ch-val">81.7</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high*</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="126.3" height="16" rx="3" class="bar-o2"/><text x="255.3" y="126" class="ch-val">84.2</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">100</text></svg></div><div class="chart-cell"><svg class="chart" viewBox="0 0 320 166" role="img" aria-label="Video-MME（无字幕），表 2"><text x="0" y="16" class="ch-t">Video-MME（无字幕）</text><text x="320" y="16" text-anchor="end" class="ch-src">表 2</text><text x="116" y="47" text-anchor="end" class="ch-lbl">Qwen3-VL T</text><rect x="124" y="36" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="36" width="118.5" height="16" rx="3" class="bar-q"/><text x="247.5" y="48" class="ch-val">79.0</text><text x="116" y="73" text-anchor="end" class="ch-lbl">Qwen3-VL I</text><rect x="124" y="62" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="62" width="118.8" height="16" rx="3" class="bar-qi"/><text x="247.8" y="74" class="ch-val">79.2</text><text x="116" y="99" text-anchor="end" class="ch-lbl">Gemini 2.5 Pro T</text><rect x="124" y="88" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="88" width="127.6" height="16" rx="3" class="bar-o"/><text x="256.6" y="100" class="ch-val">85.1</text><text x="116" y="125" text-anchor="end" class="ch-lbl">GPT-5 high</text><rect x="124" y="114" width="150" height="16" rx="3" class="bar-bg"/><rect x="124" y="114" width="127.0" height="16" rx="3" class="bar-o2"/><text x="256.1" y="126" class="ch-val">84.7</text><line x1="124" y1="32" x2="124" y2="138" class="axis"/><text x="124" y="152" class="ch-ax">0</text><text x="274" y="152" text-anchor="end" class="ch-ax">100</text></svg></div><div class="chart-cell span2"><svg class="chart" viewBox="0 0 660 218" role="img" aria-label="AIME-25：VL 版 vs 纯文本 Qwen3，表 5 / 6 / 7"><text x="0" y="16" class="ch-t">AIME-25：VL 版 vs 纯文本 Qwen3</text><text x="660" y="16" text-anchor="end" class="ch-src">表 5 / 6 / 7</text><text x="142" y="47" text-anchor="end" class="ch-lbl">VL-235B-Instruct</text><rect x="150" y="36" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="36" width="328.7" height="16" rx="3" class="bar-q"/><text x="483.7" y="48" class="ch-val">74.7</text><text x="142" y="73" text-anchor="end" class="ch-lbl">Qwen3-235B-I-2507</text><rect x="150" y="62" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="62" width="309.3" height="16" rx="3" class="bar-o"/><text x="464.3" y="74" class="ch-val">70.3</text><text x="142" y="99" text-anchor="end" class="ch-lbl">VL-235B-Thinking</text><rect x="150" y="88" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="88" width="394.7" height="16" rx="3" class="bar-q"/><text x="549.7" y="100" class="ch-val">89.7</text><text x="142" y="125" text-anchor="end" class="ch-lbl">Qwen3-235B-T-2507</text><rect x="150" y="114" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="114" width="406.1" height="16" rx="3" class="bar-o"/><text x="561.1" y="126" class="ch-val">92.3</text><text x="142" y="151" text-anchor="end" class="ch-lbl">VL-32B-Instruct</text><rect x="150" y="140" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="140" width="291.3" height="16" rx="3" class="bar-q"/><text x="446.3" y="152" class="ch-val">66.2</text><text x="142" y="177" text-anchor="end" class="ch-lbl">Qwen3-32B-Instruct</text><rect x="150" y="166" width="440" height="16" rx="3" class="bar-bg"/><rect x="150" y="166" width="88.9" height="16" rx="3" class="bar-o"/><text x="243.9" y="178" class="ch-val">20.2</text><line x1="150" y1="32" x2="150" y2="190" class="axis"/><text x="150" y="204" class="ch-ax">0</text><text x="590" y="204" text-anchor="end" class="ch-ax">100</text></svg></div></div>
+    <p class="tbl-note">所有横轴从 0 起（OCRBench 满分 1000，其余 0–100）。* 摘自对方报告。最后一张图把 VL 版（紫）和对应的纯文本 Qwen3（灰）放在一起：对第一代 Qwen3 大幅领先，对 2507 版的 Thinking 则落后。</p>
+
+    <details class="more">
+      <summary>完整表 2：旗舰 235B-A22B vs 闭源，共 66 行 <span class="hint">展开</span></summary>
+      <div class="body">
+        <div class="tbl-wrap tall"><table class="data full"><thead><tr><th>Benchmark</th><th class="q">Qwen3-VL-235B<br>Thinking</th><th class="q">Qwen3-VL-235B<br>Instruct</th><th class="">Gemini 2.5 Pro<br>thinking</th><th class="">Gemini 2.5 Pro<br>budget-128</th><th class="">GPT-5<br>high</th><th class="">GPT-5<br>minimal</th><th class="">Claude Opus 4.1<br>thinking</th><th class="">Claude Opus 4.1<br>non-thinking</th></tr></thead><tbody><tr class="grp"><td colspan="9">STEM & Puzzle</td></tr><tr><td>MMMU</td><td class="q">80.6</td><td class="q">78.7</td><td class="">81.7<sup>*</sup></td><td class="">80.9</td><td class="best">84.2<sup>*</sup></td><td class="">74.4<sup>*</sup></td><td class="">78.4</td><td class="">77.2</td></tr><tr><td>MMMU-Pro</td><td class="q">69.3</td><td class="q">68.1</td><td class="">68.8<sup>*</sup></td><td class="">71.2</td><td class="best">78.4<sup>*</sup></td><td class="">62.7<sup>*</sup></td><td class="">64.8</td><td class="">60.7</td></tr><tr><td>MathVista_mini</td><td class="q best">85.8</td><td class="q">84.9</td><td class="">82.7<sup>*</sup></td><td class="">77.7</td><td class="">81.3</td><td class="">50.9</td><td class="">75.5</td><td class="">74.5</td></tr><tr><td>MathVision</td><td class="q best">74.6</td><td class="q">66.5</td><td class="">73.3<sup>*</sup></td><td class="">66.0</td><td class="">70.9</td><td class="">45.8</td><td class="">64.3</td><td class="">57.7</td></tr><tr><td>MathVisionWP</td><td class="q best">63.8</td><td class="q">57.0</td><td class="">63.2</td><td class="">56.9</td><td class="">62.8</td><td class="">40.1</td><td class="">54.0</td><td class="">46.4</td></tr><tr><td>We-Math</td><td class="q">74.8</td><td class="q">67.5</td><td class="best">80.6</td><td class="">74.5</td><td class="">73.8</td><td class="">51.8</td><td class="">65.2</td><td class="">60.2</td></tr><tr><td>MathVerse_mini</td><td class="q best">85.0</td><td class="q">72.5</td><td class="">82.9</td><td class="">65.9</td><td class="">84.1</td><td class="">43.0</td><td class="">70.6</td><td class="">68.1</td></tr><tr><td>DynaMath</td><td class="q">82.8</td><td class="q">79.4</td><td class="">80.0</td><td class="">78.5</td><td class="best">85.4</td><td class="">74.0</td><td class="">75.1</td><td class="">72.0</td></tr><tr><td>Math-VR</td><td class="q best">66.8</td><td class="q">65.0</td><td class="">64.7<sup>*</sup></td><td class="">54.3</td><td class="">58.1</td><td class="">21.7</td><td class="">54.3</td><td class="">38.0</td></tr><tr><td>ZeroBench</td><td class="q best">4</td><td class="q">2</td><td class="">3</td><td class="">1</td><td class="">2</td><td class="">2</td><td class="">3</td><td class="">1</td></tr><tr><td>VlmsAreBlind</td><td class="q">79.5</td><td class="q">80.4</td><td class="best">86.1</td><td class="">78.5</td><td class="">80.5</td><td class="">53.4</td><td class="">77.8</td><td class="">72.2</td></tr><tr><td>LogicVista</td><td class="q best">72.2</td><td class="q">65.8</td><td class="">72.0</td><td class="">68.7</td><td class="">71.8</td><td class="">46.3</td><td class="">67.3</td><td class="">63.5</td></tr><tr><td>VisuLogic</td><td class="q best">34.4</td><td class="q">29.9</td><td class="">31.6</td><td class="">26.9</td><td class="">28.5</td><td class="">27.2</td><td class="">27.9</td><td class="">27.2</td></tr><tr><td>VisualPuzzles</td><td class="q">57.2</td><td class="q">54.7</td><td class="best">60.9</td><td class="">56.9</td><td class="">57.3</td><td class="">47.9</td><td class="">48.8</td><td class="">47.6</td></tr><tr class="grp"><td colspan="9">General VQA</td></tr><tr><td>MMBench-EN</td><td class="q">88.8</td><td class="q">89.3</td><td class="best">90.1<sup>*</sup></td><td class="">88.4</td><td class="">83.8</td><td class="">81.3</td><td class="">79.4</td><td class="">83.0</td></tr><tr><td>MMBench-CN</td><td class="q">88.6</td><td class="q">88.9</td><td class="best">89.7<sup>*</sup></td><td class="">86.4</td><td class="">83.5</td><td class="">79.9</td><td class="">84.9</td><td class="">74.3</td></tr><tr><td>RealWorldQA</td><td class="q">81.3</td><td class="q">79.2</td><td class="">78.0<sup>*</sup></td><td class="">76.0</td><td class="best">82.8</td><td class="">77.3</td><td class="">69.9</td><td class="">68.5</td></tr><tr><td>MMStar</td><td class="q best">78.7</td><td class="q">78.4</td><td class="">77.5<sup>*</sup></td><td class="">78.5</td><td class="">76.4</td><td class="">65.2</td><td class="">72.1</td><td class="">71.0</td></tr><tr><td>SimpleVQA</td><td class="q">61.3</td><td class="q">63.0</td><td class="">65.4</td><td class="best">66.9</td><td class="">61.8</td><td class="">56.7</td><td class="">56.7</td><td class="">55.7</td></tr><tr class="grp"><td colspan="9">Alignment</td></tr><tr><td>HallusionBench</td><td class="q best">66.7</td><td class="q">63.2</td><td class="">63.7<sup>*</sup></td><td class="">60.9</td><td class="">65.7</td><td class="">53.7</td><td class="">60.4</td><td class="">55.1</td></tr><tr><td>MM-MT-Bench</td><td class="q best">8.5</td><td class="q best">8.5</td><td class="">8.4<sup>*</sup></td><td class="">7.6</td><td class="">7.6</td><td class="">7.5</td><td class="">7.8</td><td class="">7.9</td></tr><tr><td>MIA-Bench</td><td class="q best">92.7</td><td class="q">91.3</td><td class="">92.3</td><td class="">91.3</td><td class="">92.4</td><td class="">92.6</td><td class="">91.2</td><td class="">90.0</td></tr><tr class="grp"><td colspan="9">文档理解 / OCR</td></tr><tr><td>DocVQA_test</td><td class="q">96.5</td><td class="q best">97.1</td><td class="">92.6</td><td class="">94.0</td><td class="">91.5</td><td class="">89.6</td><td class="">92.5</td><td class="">89.2</td></tr><tr><td>InfoVQA_test</td><td class="q best">89.5</td><td class="q">89.2</td><td class="">84.2</td><td class="">82.9</td><td class="">79.0</td><td class="">69.9</td><td class="">69.4</td><td class="">60.9</td></tr><tr><td>AI2D (w. M.)</td><td class="q">89.2</td><td class="q">89.7</td><td class="best">90.9</td><td class="">90.0</td><td class="">89.7</td><td class="">84.1</td><td class="">86.4</td><td class="">84.4</td></tr><tr><td>ChartQA_test</td><td class="q best">90.3</td><td class="q best">90.3</td><td class="">83.3</td><td class="">62.6</td><td class="">59.7</td><td class="">59.1</td><td class="">86.2</td><td class="">83.9</td></tr><tr><td>OCRBench</td><td class="q">875</td><td class="q best">920</td><td class="">866</td><td class="">872</td><td class="">810</td><td class="">787</td><td class="">764</td><td class="">750</td></tr><tr><td>OCRBench_v2 (en)</td><td class="q">66.8</td><td class="q best">67.1</td><td class="">54.3</td><td class="">55.2</td><td class="">53.0</td><td class="">48.2</td><td class="">48.4</td><td class="">47.2</td></tr><tr><td>OCRBench_v2 (zh)</td><td class="q best">63.5</td><td class="q">61.8</td><td class="">48.5</td><td class="">53.1</td><td class="">43.2</td><td class="">37.7</td><td class="">43.7</td><td class="">38.0</td></tr><tr><td>CC-OCR</td><td class="q">81.5</td><td class="q best">82.2</td><td class="">77.2</td><td class="">76.8</td><td class="">68.3</td><td class="">66.1</td><td class="">69.1</td><td class="">66.0</td></tr><tr><td>OmniDocBench_en ↓</td><td class="q">0.155</td><td class="q best">0.143</td><td class="">0.347</td><td class="">0.206</td><td class="">0.356</td><td class="">0.174</td><td class="">0.194</td><td class="">-</td></tr><tr><td>OmniDocBench_zh ↓</td><td class="q best">0.207</td><td class="q best">0.207</td><td class="">0.238</td><td class="">0.249</td><td class="">0.472</td><td class="">0.389</td><td class="">0.293</td><td class="">-</td></tr><tr><td>CharXiv(DQ)</td><td class="q">90.5</td><td class="q">89.4</td><td class="best">94.4</td><td class="">87.8</td><td class="">89.2</td><td class="">79.5</td><td class="">88.5</td><td class="">87.8</td></tr><tr><td>CharXiv(RQ)</td><td class="q">66.1</td><td class="q">62.1</td><td class="">67.9</td><td class="">62.9</td><td class="best">81.1<sup>*</sup></td><td class="">57.8</td><td class="">63.6</td><td class="">60.2</td></tr><tr><td>MMLongBench-Doc</td><td class="q">56.2</td><td class="q best">57.0</td><td class="">55.6</td><td class="">51.2</td><td class="">51.5</td><td class="">42.4</td><td class="">54.5</td><td class="">48.1</td></tr><tr class="grp"><td colspan="9">2D/3D Grounding</td></tr><tr><td>RefCOCO-avg</td><td class="q best">92.1</td><td class="q">91.9</td><td class="">74.6<sup>*</sup></td><td class="">-</td><td class="">66.8</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>CountBench</td><td class="q best">93.7</td><td class="q">93.0</td><td class="">91.0<sup>*</sup></td><td class="">91.0</td><td class="">91.7</td><td class="">87.8</td><td class="">93.1</td><td class="">91.9</td></tr><tr><td>ODinW-13</td><td class="q">43.2</td><td class="q best">48.6</td><td class="">33.7<sup>*</sup></td><td class="">34.5</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>ARKitScenes</td><td class="q">53.7</td><td class="q best">56.9</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>Hypersim</td><td class="q">11.0</td><td class="q best">13.0</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>SUNRGBD</td><td class="q">34.9</td><td class="q best">39.4</td><td class="">29.7</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Embodied / Spatial</td></tr><tr><td>ERQA</td><td class="q">52.5</td><td class="q">51.3</td><td class="">55.3</td><td class="">50.3</td><td class="best">65.7<sup>*</sup></td><td class="">42.0<sup>*</sup></td><td class="">34.8</td><td class="">28.0</td></tr><tr><td>VSI-Bench</td><td class="q">60.0</td><td class="q best">62.7</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>EmbSpatialBench</td><td class="q best">84.3</td><td class="q">83.1</td><td class="">79.1</td><td class="">73.3</td><td class="">82.9</td><td class="">75.1</td><td class="">69.2</td><td class="">66.0</td></tr><tr><td>RefSpatialBench</td><td class="q best">69.9</td><td class="q">65.5</td><td class="">36.5</td><td class="">35.6</td><td class="">23.8</td><td class="">23.1</td><td class="">-</td><td class="">-</td></tr><tr><td>RoboSpatialHome</td><td class="q best">73.9</td><td class="q">69.4</td><td class="">47.5</td><td class="">49.2</td><td class="">53.5</td><td class="">43.6</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Multi-Image</td></tr><tr><td>BLINK</td><td class="q">67.1</td><td class="q">70.7</td><td class="">70.6<sup>*</sup></td><td class="">70.0</td><td class="best">71.0</td><td class="">62.8</td><td class="">64.1</td><td class="">62.9</td></tr><tr><td>MuirBench</td><td class="q best">80.1</td><td class="q">73.0</td><td class="">77.2</td><td class="">74.0</td><td class="">77.5</td><td class="">66.5</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Video</td></tr><tr><td>MVBench</td><td class="q">75.2</td><td class="q best">76.5</td><td class="">69.9</td><td class="">65.8</td><td class="">75.3</td><td class="">64.6</td><td class="">61.4</td><td class="">59.0</td></tr><tr><td>Video-MME (w/o sub)</td><td class="q">79.0</td><td class="q">79.2</td><td class="best">85.1</td><td class="">80.6</td><td class="">84.7</td><td class="">77.3</td><td class="">75.6</td><td class="">73.3</td></tr><tr><td>MLVU (M-Avg)</td><td class="q">83.8</td><td class="q">84.3</td><td class="">85.6</td><td class="">81.2</td><td class="best">86.2</td><td class="">78.3</td><td class="">73.5</td><td class="">71.2</td></tr><tr><td>LVBench</td><td class="q">63.6</td><td class="q">67.7</td><td class="best">73.0</td><td class="">69.0</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>Charades-STA (mIoU)</td><td class="q">63.5</td><td class="q best">64.8</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>VideoMMMU</td><td class="q">80.0</td><td class="q">74.7</td><td class="">83.6<sup>*</sup></td><td class="">79.4</td><td class="best">84.6<sup>*</sup></td><td class="">61.6<sup>*</sup></td><td class="">76.2</td><td class="">70.1</td></tr><tr><td>MMVU</td><td class="q">71.1</td><td class="q">68.1</td><td class="best">74.9</td><td class="">72.2</td><td class="">73.0</td><td class="">68.1</td><td class="">66.4</td><td class="">61.4</td></tr><tr class="grp"><td colspan="9">Perception with Tool</td></tr><tr><td>V*</td><td class="q">85.9</td><td class="q best">93.7<sup>+</sup></td><td class="">83.8</td><td class="">72.7</td><td class="">72.8</td><td class="">56.7</td><td class="">-</td><td class="">-</td></tr><tr><td>HRBench-4K</td><td class="q">84.3</td><td class="q">85.4<sup>+</sup></td><td class="best">87.3</td><td class="">84.8</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>HRBench-8K</td><td class="q">76.6</td><td class="q">82.4<sup>+</sup></td><td class="best">85.4</td><td class="">80.1</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Multi-Modal Coding</td></tr><tr><td>Design2Code</td><td class="q best">93.4</td><td class="q">92.0</td><td class="">89.2</td><td class="">90.3</td><td class="">92.5</td><td class="">88.9</td><td class="">88.5</td><td class="">85.3</td></tr><tr><td>ChartMimic</td><td class="q">78.4</td><td class="q">80.5</td><td class="">83.9</td><td class="">79.9</td><td class="">62.1</td><td class="">41.4</td><td class="best">85.2</td><td class="">82.9</td></tr><tr><td>UniSVG</td><td class="q">65.8</td><td class="q">69.8</td><td class="">70.0</td><td class="">67.9</td><td class="">71.7</td><td class="best">74.5</td><td class="">73.0</td><td class="">72.5</td></tr><tr class="grp"><td colspan="9">Multi-Modal Agent</td></tr><tr><td>ScreenSpot Pro</td><td class="q">61.8</td><td class="q best">62.0</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorldG</td><td class="q best">68.3</td><td class="q">66.7</td><td class="">45.2</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>AndroidWorld</td><td class="q">62.0</td><td class="q best">63.7</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorld</td><td class="q">38.1</td><td class="q">31.6</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="best">44.4</td></tr><tr><td>WindowsAA</td><td class="q best">32.1</td><td class="q">28.9</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr></tbody></table></div>
+        <p class="tbl-note">数值从原文表 2 逐行抽取。圆点为本行 8 列中的最优值，与原文的加粗/下划线规则（按推理/非推理分组）不同。</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="wide" id="eval-mid">
+    <h3>中小尺寸 <span class="src">表 3</span><span class="src">表 4</span></h3>
+    <p class="tbl-note" style="margin-top:2px">表 3 对比 Gemini 2.5 Flash 和 GPT-5 mini，表 4 对比 GPT-5 nano。下表各取同样 7 行。</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th class="q">32B<br>Thinking</th><th class="q">32B<br>Instruct</th><th class="q">30B-A3B<br>Thinking</th><th class="q">30B-A3B<br>Instruct</th><th>Gemini 2.5 Flash<br>thinking</th><th>GPT-5 mini<br>high</th><th class="q">8B<br>Thinking</th><th class="q">8B<br>Instruct</th><th class="q">4B<br>Instruct</th><th>GPT-5 nano<br>high</th></tr></thead>
+        <tbody>
+          <tr><td>MMMU</td><td class="q">78.1</td><td class="q">76.0</td><td class="q">76.0</td><td class="q">74.2</td><td>77.7</td><td>79.0</td><td class="q">74.1</td><td class="q">69.6</td><td class="q">67.4</td><td>75.8</td></tr>
+          <tr><td>MathVista_mini</td><td class="q">85.9</td><td class="q">83.8</td><td class="q">81.9</td><td class="q">80.1</td><td>79.4</td><td>79.1</td><td class="q">81.4</td><td class="q">77.2</td><td class="q">73.7</td><td>71.5</td></tr>
+          <tr class="hl"><td>RealWorldQA</td><td class="q flag">78.4</td><td class="q">79.0</td><td class="q">77.4</td><td class="q">73.7</td><td>76.0</td><td>79.0</td><td class="q">73.5</td><td class="q">71.5</td><td class="q">70.9</td><td>71.8</td></tr>
+          <tr><td>OCRBench</td><td class="q">855</td><td class="q">895</td><td class="q">839</td><td class="q">903</td><td>853</td><td>821</td><td class="q">819</td><td class="q">896</td><td class="q">881</td><td>753</td></tr>
+          <tr><td>MMLongBench-Doc</td><td class="q">54.6</td><td class="q">55.4</td><td class="q">47.4</td><td class="q">47.1</td><td>49.0</td><td>50.3</td><td class="q">48.0</td><td class="q">47.9</td><td class="q">43.5</td><td>31.8</td></tr>
+          <tr><td>Video-MME (w/o sub)</td><td class="q">77.3</td><td class="q">76.6</td><td class="q">73.3</td><td class="q">74.5</td><td>79.6</td><td>78.9</td><td class="q">71.8</td><td class="q">71.4</td><td class="q">69.3</td><td>66.2</td></tr>
+          <tr><td>OSWorld</td><td class="q">41.0</td><td class="q">32.6</td><td class="q">30.6</td><td class="q">30.3</td><td>-</td><td>-</td><td class="q">33.9</td><td class="q">33.9</td><td class="q">26.2</td><td>-</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scroll-hint">← 表格可左右滑动 →</div>
+    <p class="tbl-note">左 6 列来自表 3，右 4 列来自表 4。橙框：§5.1 正文写 32B-Thinking 的 RealWorldQA 是 79.4，表 3 是 78.4（见<a href="#limits">局限 1</a>）。8B-Instruct 的 OCRBench（896）高于 32B-Instruct（895）。</p>
+
+    <details class="more">
+      <summary>完整表 3：30B-A3B / 32B vs Gemini 2.5 Flash / GPT-5 mini <span class="hint">展开</span></summary>
+      <div class="body"><div class="tbl-wrap tall"><table class="data full"><thead><tr><th>Benchmark</th><th class="q">30B-A3B<br>Thinking</th><th class="q">30B-A3B<br>Instruct</th><th class="q">32B<br>Thinking</th><th class="q">32B<br>Instruct</th><th class="">Gemini 2.5 Flash<br>thinking</th><th class="">Gemini 2.5 Flash<br>non-thinking</th><th class="">GPT-5 mini<br>high</th><th class="">GPT-5 mini<br>minimal</th></tr></thead><tbody><tr class="grp"><td colspan="9">STEM & Puzzle</td></tr><tr><td>MMMU</td><td class="q">76.0</td><td class="q">74.2</td><td class="q">78.1</td><td class="q">76.0</td><td class="">77.7</td><td class="">76.3</td><td class="best">79.0</td><td class="">67.9</td></tr><tr><td>MMMU-Pro</td><td class="q">63.0</td><td class="q">60.4</td><td class="q best">68.1</td><td class="q">65.3</td><td class="">67.2</td><td class="">65.9</td><td class="">67.3</td><td class="">53.7</td></tr><tr><td>MathVista_mini</td><td class="q">81.9</td><td class="q">80.1</td><td class="q best">85.9</td><td class="q">83.8</td><td class="">79.4</td><td class="">75.3</td><td class="">79.1</td><td class="">59.6</td></tr><tr><td>MathVision</td><td class="q">65.7</td><td class="q">60.2</td><td class="q">70.2</td><td class="q">63.4</td><td class="">64.3</td><td class="">60.7</td><td class="best">71.9</td><td class="">46.6</td></tr><tr><td>MathVisionWP</td><td class="q best">58.9</td><td class="q">52.3</td><td class="q">58.6</td><td class="q">54.6</td><td class="">53.6</td><td class="">49.0</td><td class="">56.6</td><td class="">42.8</td></tr><tr><td>We-Math</td><td class="q">70.0</td><td class="q">56.9</td><td class="q best">71.6</td><td class="q">63.3</td><td class="">53.9</td><td class="">60.3</td><td class="">70.2</td><td class="">51.4</td></tr><tr><td>MathVerse_mini</td><td class="q">79.6</td><td class="q">70.2</td><td class="q best">82.6</td><td class="q">76.8</td><td class="">77.7</td><td class="">75.9</td><td class="">78.8</td><td class="">36.5</td></tr><tr><td>DynaMath</td><td class="q">80.1</td><td class="q">73.4</td><td class="q best">82.0</td><td class="q">76.7</td><td class="">75.9</td><td class="">69.7</td><td class="">81.4</td><td class="">71.3</td></tr><tr><td>Math-VR</td><td class="q">61.7</td><td class="q">61.3</td><td class="q best">62.3</td><td class="q">59.8</td><td class="">58.8</td><td class="">54.7</td><td class="">58.2</td><td class="">26.4</td></tr><tr><td>ZeroBench</td><td class="q">0</td><td class="q">0</td><td class="q">2</td><td class="q">1</td><td class="">1</td><td class="best">3</td><td class="best">3</td><td class="">2</td></tr><tr><td>VlmsAreBlind</td><td class="q">72.5</td><td class="q">67.5</td><td class="q">85.1</td><td class="q best">87.0</td><td class="">77.5</td><td class="">75.9</td><td class="">75.8</td><td class="">62.0</td></tr><tr><td>LogicVista</td><td class="q">65.8</td><td class="q">53.5</td><td class="q">70.9</td><td class="q">62.2</td><td class="">67.3</td><td class="">60.0</td><td class="best">71.4</td><td class="">50.8</td></tr><tr><td>VisuLogic</td><td class="q">26.6</td><td class="q">23.0</td><td class="q best">32.4</td><td class="q">29.7</td><td class="">31.0</td><td class="">23.3</td><td class="">27.2</td><td class="">27.6</td></tr><tr><td>VisualPuzzles</td><td class="q">52.0</td><td class="q">46.2</td><td class="q">54.7</td><td class="q">53.2</td><td class="">41.4</td><td class="">45.0</td><td class="best">59.3</td><td class="">48.2</td></tr><tr class="grp"><td colspan="9">General VQA</td></tr><tr><td>MMBench-EN</td><td class="q">87.0</td><td class="q">86.1</td><td class="q best">89.5</td><td class="q">87.6</td><td class="">87.1</td><td class="">86.6</td><td class="">86.6</td><td class="">78.5</td></tr><tr><td>MMBench-CN</td><td class="q">85.9</td><td class="q">85.3</td><td class="q best">89.4</td><td class="q">87.7</td><td class="">87.3</td><td class="">86.0</td><td class="">84.0</td><td class="">76.3</td></tr><tr><td>RealWorldQA</td><td class="q">77.4</td><td class="q">73.7</td><td class="q">78.4</td><td class="q best">79.0</td><td class="">76.0</td><td class="">75.7</td><td class="best">79.0</td><td class="">73.3</td></tr><tr><td>MMStar</td><td class="q">75.5</td><td class="q">72.1</td><td class="q best">79.4</td><td class="q">77.7</td><td class="">76.5</td><td class="">75.8</td><td class="">74.1</td><td class="">61.3</td></tr><tr><td>SimpleVQA</td><td class="q">54.3</td><td class="q">52.7</td><td class="q">55.4</td><td class="q">56.9</td><td class="best">63.2</td><td class="">59.2</td><td class="">56.8</td><td class="">50.3</td></tr><tr class="grp"><td colspan="9">Alignment</td></tr><tr><td>HallusionBench</td><td class="q">66.0</td><td class="q">61.5</td><td class="q best">67.4</td><td class="q">63.8</td><td class="">63.5</td><td class="">59.1</td><td class="">63.2</td><td class="">55.9</td></tr><tr><td>MM-MT-Bench</td><td class="q">7.9</td><td class="q">8.0</td><td class="q">8.3</td><td class="q best">8.4</td><td class="">8.1</td><td class="">8.0</td><td class="">7.7</td><td class="">7.4</td></tr><tr><td>MIA-Bench</td><td class="q">91.6</td><td class="q">91.2</td><td class="q best">92.3</td><td class="q">91.8</td><td class="">91.1</td><td class="">90.6</td><td class="">92.0</td><td class="best">92.3</td></tr><tr class="grp"><td colspan="9">文档理解 / OCR</td></tr><tr><td>DocVQA_test</td><td class="q">95.5</td><td class="q">95.0</td><td class="q">96.1</td><td class="q best">96.9</td><td class="">92.8</td><td class="">93.0</td><td class="">90.5</td><td class="">90.6</td></tr><tr><td>InfoVQA_test</td><td class="q">85.6</td><td class="q">81.8</td><td class="q best">89.2</td><td class="q">87.0</td><td class="">82.5</td><td class="">81.7</td><td class="">77.6</td><td class="">72.8</td></tr><tr><td>AI2D (w. M.)</td><td class="q">86.9</td><td class="q">85.0</td><td class="q">88.9</td><td class="q best">89.5</td><td class="">88.7</td><td class="">87.7</td><td class="">88.2</td><td class="">82.9</td></tr><tr><td>ChartQA_test</td><td class="q best">89.4</td><td class="q">86.8</td><td class="q">89.0</td><td class="q">88.5</td><td class="">60.6</td><td class="">69.0</td><td class="">57.5</td><td class="">57.8</td></tr><tr><td>OCRBench</td><td class="q">839</td><td class="q best">903</td><td class="q">855</td><td class="q">895</td><td class="">853</td><td class="">864</td><td class="">821</td><td class="">807</td></tr><tr><td>OCRBench_v2 (en)</td><td class="q">62.6</td><td class="q">63.2</td><td class="q best">68.4</td><td class="q">67.4</td><td class="">52.2</td><td class="">50.6</td><td class="">52.6</td><td class="">45.7</td></tr><tr><td>OCRBench_v2 (zh)</td><td class="q">60.4</td><td class="q">57.8</td><td class="q best">62.1</td><td class="q">59.2</td><td class="">43.8</td><td class="">43.9</td><td class="">45.1</td><td class="">41.0</td></tr><tr><td>CC-OCR</td><td class="q">77.8</td><td class="q best">80.7</td><td class="q">79.6</td><td class="q">80.3</td><td class="">75.4</td><td class="">74.8</td><td class="">70.8</td><td class="">61.6</td></tr><tr><td>OmniDocBench_en ↓</td><td class="q">0.165</td><td class="q">0.183</td><td class="q best">0.148</td><td class="q">0.151</td><td class="">0.265</td><td class="">0.228</td><td class="">0.181</td><td class="">0.260</td></tr><tr><td>OmniDocBench_zh ↓</td><td class="q best">0.233</td><td class="q">0.253</td><td class="q">0.236</td><td class="q">0.239</td><td class="">0.245</td><td class="">0.305</td><td class="">0.316</td><td class="">0.425</td></tr><tr><td>CharXiv(DQ)</td><td class="q">86.9</td><td class="q">85.5</td><td class="q">90.2</td><td class="q best">90.5</td><td class="">90.1</td><td class="">85.5</td><td class="">89.4</td><td class="">78.6</td></tr><tr><td>CharXiv(RQ)</td><td class="q">56.6</td><td class="q">48.9</td><td class="q">65.2</td><td class="q">62.8</td><td class="">61.7</td><td class="">60.1</td><td class="best">68.6</td><td class="">48.9</td></tr><tr><td>MMLongBench-Doc</td><td class="q">47.4</td><td class="q">47.1</td><td class="q">54.6</td><td class="q best">55.4</td><td class="">49.0</td><td class="">44.6</td><td class="">50.3</td><td class="">39.6</td></tr><tr class="grp"><td colspan="9">2D/3D Grounding</td></tr><tr><td>RefCOCO-avg</td><td class="q">89.3</td><td class="q">89.7</td><td class="q">91.1</td><td class="q best">91.9</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>CountBench</td><td class="q">90.0</td><td class="q">89.8</td><td class="q">94.1</td><td class="q best">94.9</td><td class="">86.0</td><td class="">83.7</td><td class="">91.0</td><td class="">84.1</td></tr><tr><td>ODinW-13</td><td class="q">42.3</td><td class="q best">47.5</td><td class="q">41.8</td><td class="q">46.6</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>ARKitScenes</td><td class="q">55.6</td><td class="q best">56.1</td><td class="q">46.1</td><td class="q">55.6</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>Hypersim</td><td class="q">11.4</td><td class="q">12.5</td><td class="q">12.5</td><td class="q best">14.0</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>SUNRGBD</td><td class="q">34.6</td><td class="q best">38.1</td><td class="q">33.9</td><td class="q">37.0</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Embodied / Spatial</td></tr><tr><td>ERQA</td><td class="q">45.3</td><td class="q">43.0</td><td class="q">52.3</td><td class="q">48.8</td><td class="">-</td><td class="">-</td><td class="best">54.0</td><td class="">45.8</td></tr><tr><td>VSI-Bench</td><td class="q">56.1</td><td class="q best">63.2</td><td class="q">61.2</td><td class="q">61.5</td><td class="">-</td><td class="">-</td><td class="">31.5</td><td class="">30.5</td></tr><tr><td>EmbSpatialBench</td><td class="q">80.6</td><td class="q">76.4</td><td class="q best">82.7</td><td class="q">81.5</td><td class="">-</td><td class="">-</td><td class="">80.7</td><td class="">72.1</td></tr><tr><td>RefSpatialBench</td><td class="q">54.2</td><td class="q">53.1</td><td class="q best">67.2</td><td class="q">61.4</td><td class="">-</td><td class="">-</td><td class="">9.0</td><td class="">4.0</td></tr><tr><td>RoboSpatialHome</td><td class="q">65.5</td><td class="q">62.9</td><td class="q best">74.2</td><td class="q">64.6</td><td class="">-</td><td class="">-</td><td class="">54.3</td><td class="">44.6</td></tr><tr class="grp"><td colspan="9">Multi-Image</td></tr><tr><td>BLINK</td><td class="q">65.4</td><td class="q">67.7</td><td class="q best">68.5</td><td class="q">67.3</td><td class="">68.1</td><td class="">66.8</td><td class="">-</td><td class="">56.7</td></tr><tr><td>MuirBench</td><td class="q">77.6</td><td class="q">62.9</td><td class="q best">80.3</td><td class="q">72.8</td><td class="">72.7</td><td class="">67.5</td><td class="">-</td><td class="">57.5</td></tr><tr class="grp"><td colspan="9">Video</td></tr><tr><td>MVBench</td><td class="q">72.0</td><td class="q">72.3</td><td class="q best">73.2</td><td class="q">72.8</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>Video-MME (w/o sub)</td><td class="q">73.3</td><td class="q">74.5</td><td class="q">77.3</td><td class="q">76.6</td><td class="best">79.6</td><td class="">75.6</td><td class="">78.9</td><td class="">71.0</td></tr><tr><td>MLVU (M-Avg)</td><td class="q">78.9</td><td class="q">81.3</td><td class="q">82.3</td><td class="q">82.1</td><td class="">82.1</td><td class="">77.8</td><td class="best">83.3</td><td class="">71.7</td></tr><tr><td>LVBench</td><td class="q">59.2</td><td class="q">62.5</td><td class="q">62.6</td><td class="q">63.8</td><td class="best">64.5</td><td class="">62.2</td><td class="">-</td><td class="">-</td></tr><tr><td>Charades-STA (mIoU)</td><td class="q">62.7</td><td class="q best">63.5</td><td class="q">62.8</td><td class="q">61.2</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>VideoMMMU</td><td class="q">75.0</td><td class="q">68.7</td><td class="q">79.0</td><td class="q">71.9</td><td class="">73.9</td><td class="">65.2</td><td class="best">82.5<sup>*</sup></td><td class="">56.7</td></tr><tr><td>MMVU</td><td class="q">66.1</td><td class="q">59.8</td><td class="q">67.9</td><td class="q">66.8</td><td class="best">69.8</td><td class="">68.2</td><td class="best">69.8</td><td class="">64.8</td></tr><tr class="grp"><td colspan="9">Perception with Tool</td></tr><tr><td>V*</td><td class="q">81.2</td><td class="q">89.5<sup>+</sup></td><td class="q">84.8</td><td class="q best">91.1<sup>+</sup></td><td class="">-</td><td class="">-</td><td class="">78.6</td><td class="">63.9</td></tr><tr><td>HRBench-4K</td><td class="q">77.8</td><td class="q">82.5<sup>+</sup></td><td class="q">82.1</td><td class="q best">84.6<sup>+</sup></td><td class="">-</td><td class="">-</td><td class="">78.6</td><td class="">66.3</td></tr><tr><td>HRBench-8K</td><td class="q">71.3</td><td class="q">79.3<sup>+</sup></td><td class="q">74.8</td><td class="q best">81.6<sup>+</sup></td><td class="">-</td><td class="">-</td><td class="">74.4</td><td class="">60.9</td></tr><tr class="grp"><td colspan="9">Multi-Modal Agent</td></tr><tr><td>ScreenSpot Pro</td><td class="q">57.3</td><td class="q best">60.5</td><td class="q">57.1</td><td class="q">57.9</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorldG</td><td class="q">59.6</td><td class="q">61.0</td><td class="q">64.0</td><td class="q best">65.1</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>AndroidWorld</td><td class="q">55.0</td><td class="q">54.3</td><td class="q best">63.7</td><td class="q">57.3</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorld</td><td class="q">30.6</td><td class="q">30.3</td><td class="q best">41.0</td><td class="q">32.6</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr><tr><td>WindowsAA</td><td class="q">24.2</td><td class="q">24.9</td><td class="q best">42.9</td><td class="q">30.9</td><td class="">-</td><td class="">-</td><td class="">-</td><td class="">-</td></tr></tbody></table></div></div>
+    </details>
+    <details class="more">
+      <summary>完整表 4：2B / 4B / 8B vs GPT-5 nano <span class="hint">展开</span></summary>
+      <div class="body"><div class="tbl-wrap tall"><table class="data full"><thead><tr><th>Benchmark</th><th class="q">2B<br>Thinking</th><th class="q">2B<br>Instruct</th><th class="q">4B<br>Thinking</th><th class="q">4B<br>Instruct</th><th class="q">8B<br>Thinking</th><th class="q">8B<br>Instruct</th><th class="">GPT-5 nano<br>high</th><th class="">GPT-5 nano<br>minimal</th></tr></thead><tbody><tr class="grp"><td colspan="9">STEM & Puzzle</td></tr><tr><td>MMMU</td><td class="q">61.4</td><td class="q">53.4</td><td class="q">70.8</td><td class="q">67.4</td><td class="q">74.1</td><td class="q">69.6</td><td class="best">75.8</td><td class="">57.6</td></tr><tr><td>MMMU-Pro</td><td class="q">42.5</td><td class="q">36.5</td><td class="q">57.0</td><td class="q">53.2</td><td class="q best">60.4</td><td class="q">55.9</td><td class="">57.2</td><td class="">36.5</td></tr><tr><td>MathVista_mini</td><td class="q">73.6</td><td class="q">61.3</td><td class="q">79.5</td><td class="q">73.7</td><td class="q best">81.4</td><td class="q">77.2</td><td class="">71.5</td><td class="">40.9</td></tr><tr><td>MathVision</td><td class="q">45.9</td><td class="q">31.6</td><td class="q">60.0</td><td class="q">51.6</td><td class="q best">62.7</td><td class="q">53.9</td><td class="">62.2</td><td class="">33.2</td></tr><tr><td>MathVisionWP</td><td class="q">35.5</td><td class="q">30.9</td><td class="q">48.7</td><td class="q">44.4</td><td class="q best">53.3</td><td class="q">45.4</td><td class="">49.3</td><td class="">28.3</td></tr><tr><td>MathVerse_mini</td><td class="q">66.9</td><td class="q">52.1</td><td class="q">75.2</td><td class="q">46.8</td><td class="q best">77.7</td><td class="q">62.1</td><td class="">74.2</td><td class="">27.0</td></tr><tr><td>DynaMath</td><td class="q">66.7</td><td class="q">54.2</td><td class="q">74.4</td><td class="q">65.3</td><td class="q">73.2</td><td class="q">67.7</td><td class="best">78.0</td><td class="">62.0</td></tr><tr><td>Math-VR</td><td class="q">37.7</td><td class="q">20.7</td><td class="q">58.1</td><td class="q">52.3</td><td class="q best">59.0</td><td class="q">53.4</td><td class="">49.7</td><td class="">25.0</td></tr><tr><td>ZeroBench</td><td class="q">0</td><td class="q">0</td><td class="q">0</td><td class="q">0</td><td class="q best">2</td><td class="q">1</td><td class="">1</td><td class="">1</td></tr><tr><td>VlmsAreBlind</td><td class="q">50.0</td><td class="q">56.0</td><td class="q">68.6</td><td class="q">71.9</td><td class="q">69.1</td><td class="q best">74.0</td><td class="">66.7</td><td class="">40.2</td></tr><tr><td>LogicVista</td><td class="q">50.0</td><td class="q">35.8</td><td class="q">61.1</td><td class="q">53.2</td><td class="q best">65.1</td><td class="q">55.3</td><td class="">59.7</td><td class="">40.5</td></tr><tr><td>VisuLogic</td><td class="q">25.4</td><td class="q">11.5</td><td class="q best">30.2</td><td class="q">19.0</td><td class="q">27.5</td><td class="q">22.5</td><td class="">24.5</td><td class="">24.0</td></tr><tr><td>VisualPuzzles</td><td class="q">37.4</td><td class="q">34.3</td><td class="q">48.9</td><td class="q">43.7</td><td class="q best">51.7</td><td class="q">47.9</td><td class="">43.5</td><td class="">31.3</td></tr><tr class="grp"><td colspan="9">General VQA</td></tr><tr><td>MMBench-EN</td><td class="q">79.9</td><td class="q">78.4</td><td class="q">84.6</td><td class="q">83.9</td><td class="q best">85.3</td><td class="q">84.5</td><td class="">78.4</td><td class="">50.8</td></tr><tr><td>MMBench-CN</td><td class="q">78.8</td><td class="q">75.9</td><td class="q">83.8</td><td class="q">83.5</td><td class="q best">85.5</td><td class="q">84.7</td><td class="">77.6</td><td class="">48.5</td></tr><tr><td>RealWorldQA</td><td class="q">69.5</td><td class="q">63.9</td><td class="q">73.2</td><td class="q">70.9</td><td class="q best">73.5</td><td class="q">71.5</td><td class="">71.8</td><td class="">60.7</td></tr><tr><td>MMStar</td><td class="q">68.1</td><td class="q">58.3</td><td class="q">73.2</td><td class="q">69.8</td><td class="q best">75.3</td><td class="q">70.9</td><td class="">68.6</td><td class="">41.3</td></tr><tr><td>SimpleVQA</td><td class="q">43.6</td><td class="q">40.7</td><td class="q">48.8</td><td class="q">48.0</td><td class="q">49.6</td><td class="q best">50.2</td><td class="">46.0</td><td class="">39.0</td></tr><tr class="grp"><td colspan="9">Alignment</td></tr><tr><td>HallusionBench</td><td class="q">54.9</td><td class="q">51.4</td><td class="q">64.1</td><td class="q">57.6</td><td class="q best">65.4</td><td class="q">61.1</td><td class="">58.4</td><td class="">39.3</td></tr><tr><td>MM-MT-Bench</td><td class="q">6.9</td><td class="q">5.9</td><td class="q">7.7</td><td class="q">7.5</td><td class="q best">8.0</td><td class="q">7.7</td><td class="">6.6</td><td class="">6.2</td></tr><tr><td>MIA-Bench</td><td class="q">85.6</td><td class="q">83.6</td><td class="q">91.0</td><td class="q">89.7</td><td class="q best">91.5</td><td class="q">91.1</td><td class="">89.9</td><td class="">89.6</td></tr><tr class="grp"><td colspan="9">文档理解 / OCR</td></tr><tr><td>DocVQA_test</td><td class="q">92.9</td><td class="q">93.3</td><td class="q">94.2</td><td class="q">95.3</td><td class="q">95.3</td><td class="q best">96.1</td><td class="">88.2</td><td class="">78.3</td></tr><tr><td>InfoVQA_test</td><td class="q">77.1</td><td class="q">72.4</td><td class="q">83.0</td><td class="q">80.3</td><td class="q best">86.0</td><td class="q">83.1</td><td class="">68.6</td><td class="">49.2</td></tr><tr><td>AI2D (w. M.)</td><td class="q">80.4</td><td class="q">76.9</td><td class="q">84.9</td><td class="q">84.1</td><td class="q">84.9</td><td class="q best">85.7</td><td class="">81.9</td><td class="">65.7</td></tr><tr><td>ChartQA_test</td><td class="q">86.6</td><td class="q">79.1</td><td class="q">88.8</td><td class="q">84.6</td><td class="q">88.6</td><td class="q best">89.6</td><td class="">52.1</td><td class="">48.6</td></tr><tr><td>OCRBench</td><td class="q">792</td><td class="q">858</td><td class="q">808</td><td class="q">881</td><td class="q">819</td><td class="q best">896</td><td class="">753</td><td class="">701</td></tr><tr><td>OCRBench_v2 (en)</td><td class="q">56.4</td><td class="q">56.3</td><td class="q">61.8</td><td class="q">63.7</td><td class="q">63.9</td><td class="q best">65.4</td><td class="">48.1</td><td class="">37.9</td></tr><tr><td>OCRBench_v2 (zh)</td><td class="q">51.9</td><td class="q">53.0</td><td class="q">55.8</td><td class="q">57.6</td><td class="q">59.2</td><td class="q best">61.2</td><td class="">33.6</td><td class="">27.3</td></tr><tr><td>CC-OCR</td><td class="q">68.3</td><td class="q">72.8</td><td class="q">73.8</td><td class="q">76.2</td><td class="q">76.3</td><td class="q best">79.9</td><td class="">58.9</td><td class="">52.9</td></tr><tr><td>OmniDocBench_en ↓</td><td class="q">0.370</td><td class="q">0.292</td><td class="q">0.234</td><td class="q">0.244</td><td class="q">0.209</td><td class="q best">0.170</td><td class="">0.401</td><td class="">0.454</td></tr><tr><td>OmniDocBench_zh ↓</td><td class="q">0.447</td><td class="q">0.348</td><td class="q">0.297</td><td class="q">0.285</td><td class="q best">0.253</td><td class="q">0.264</td><td class="">0.518</td><td class="">0.568</td></tr><tr><td>CharXiv(DQ)</td><td class="q">70.1</td><td class="q">62.3</td><td class="q">83.9</td><td class="q">76.2</td><td class="q best">85.9</td><td class="q">83.0</td><td class="">82.0</td><td class="">64.4</td></tr><tr><td>CharXiv(RQ)</td><td class="q">37.1</td><td class="q">26.8</td><td class="q">50.3</td><td class="q">39.7</td><td class="q best">53.0</td><td class="q">46.4</td><td class="">50.1</td><td class="">31.7</td></tr><tr><td>MMLongBench-Doc</td><td class="q">33.8</td><td class="q">31.6</td><td class="q">44.4</td><td class="q">43.5</td><td class="q best">48.0</td><td class="q">47.9</td><td class="">31.8</td><td class="">22.1</td></tr><tr class="grp"><td colspan="9">2D/3D Grounding</td></tr><tr><td>RefCOCO-avg</td><td class="q">84.8</td><td class="q">85.6</td><td class="q">88.2</td><td class="q">89.0</td><td class="q">88.2</td><td class="q best">89.1</td><td class="">-</td><td class="">-</td></tr><tr><td>CountBench</td><td class="q">84.1</td><td class="q">88.4</td><td class="q">89.4</td><td class="q">84.9</td><td class="q best">91.5</td><td class="q">80.5</td><td class="">80.0</td><td class="">62.9</td></tr><tr><td>ODinW-13</td><td class="q">36.0</td><td class="q">43.4</td><td class="q">39.4</td><td class="q best">48.2</td><td class="q">39.8</td><td class="q">44.7</td><td class="">-</td><td class="">-</td></tr><tr><td>ARKitScenes</td><td class="q">47.7</td><td class="q">56.2</td><td class="q">46.3</td><td class="q">56.6</td><td class="q">46.6</td><td class="q best">56.8</td><td class="">-</td><td class="">-</td></tr><tr><td>Hypersim</td><td class="q">11.2</td><td class="q">12.0</td><td class="q">11.9</td><td class="q">12.2</td><td class="q">12.0</td><td class="q best">12.7</td><td class="">-</td><td class="">-</td></tr><tr><td>SUNRGBD</td><td class="q">28.6</td><td class="q">33.8</td><td class="q">28.0</td><td class="q">34.7</td><td class="q">30.4</td><td class="q best">36.2</td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Embodied / Spatial</td></tr><tr><td>ERQA</td><td class="q">41.8</td><td class="q">28.3</td><td class="q best">47.3</td><td class="q">41.3</td><td class="q">46.8</td><td class="q">45.8</td><td class="">45.8</td><td class="">37.8</td></tr><tr><td>VSI-Bench</td><td class="q">48.0</td><td class="q">53.9</td><td class="q">55.2</td><td class="q">59.3</td><td class="q">56.6</td><td class="q best">59.4</td><td class="">15.4</td><td class="">27.0</td></tr><tr><td>EmbSpatialBench</td><td class="q">75.9</td><td class="q">69.2</td><td class="q">80.7</td><td class="q">79.6</td><td class="q best">81.1</td><td class="q">78.5</td><td class="">74.2</td><td class="">50.7</td></tr><tr><td>RefSpatialBench</td><td class="q">28.9</td><td class="q">30.3</td><td class="q">45.3</td><td class="q">46.6</td><td class="q">44.6</td><td class="q best">54.2</td><td class="">12.6</td><td class="">2.5</td></tr><tr><td>RoboSpatialHome</td><td class="q">45.3</td><td class="q">49.1</td><td class="q">63.2</td><td class="q">61.7</td><td class="q">62.0</td><td class="q best">66.9</td><td class="">46.1</td><td class="">44.8</td></tr><tr class="grp"><td colspan="9">Multi-Image</td></tr><tr><td>BLINK</td><td class="q">57.2</td><td class="q">53.8</td><td class="q">63.4</td><td class="q">65.8</td><td class="q">64.7</td><td class="q best">69.1</td><td class="">58.3</td><td class="">42.2</td></tr><tr><td>MuirBench</td><td class="q">68.1</td><td class="q">47.4</td><td class="q">75.0</td><td class="q">63.8</td><td class="q best">76.8</td><td class="q">64.4</td><td class="">65.7</td><td class="">45.7</td></tr><tr class="grp"><td colspan="9">Video</td></tr><tr><td>MVBench</td><td class="q">64.5</td><td class="q">61.7</td><td class="q best">69.3</td><td class="q">68.9</td><td class="q">69.0</td><td class="q">68.7</td><td class="">-</td><td class="">-</td></tr><tr><td>Video-MME (w/o sub)</td><td class="q">62.1</td><td class="q">61.9</td><td class="q">68.9</td><td class="q">69.3</td><td class="q best">71.8</td><td class="q">71.4</td><td class="">66.2</td><td class="">49.4</td></tr><tr><td>MLVU (M-Avg)</td><td class="q">69.2</td><td class="q">68.3</td><td class="q">75.7</td><td class="q">75.3</td><td class="q">75.1</td><td class="q best">78.1</td><td class="">69.2</td><td class="">52.6</td></tr><tr><td>LVBench</td><td class="q">47.6</td><td class="q">47.4</td><td class="q">53.5</td><td class="q">56.2</td><td class="q">55.8</td><td class="q best">58.0</td><td class="">-</td><td class="">-</td></tr><tr><td>Charades-STA (mIoU)</td><td class="q">56.9</td><td class="q">54.5</td><td class="q">59.0</td><td class="q">55.5</td><td class="q best">59.9</td><td class="q">56.0</td><td class="">-</td><td class="">-</td></tr><tr><td>VideoMMMU</td><td class="q">54.1</td><td class="q">41.9</td><td class="q">69.4</td><td class="q">56.2</td><td class="q best">72.8</td><td class="q">65.3</td><td class="">63.0</td><td class="">40.2</td></tr><tr><td>MMVU</td><td class="q">48.9</td><td class="q">41.7</td><td class="q">58.6</td><td class="q">50.5</td><td class="q">62.0</td><td class="q">58.7</td><td class="best">63.1</td><td class="">51.0</td></tr><tr class="grp"><td colspan="9">Perception with Tool</td></tr><tr><td>V*</td><td class="q">69.1</td><td class="q">75.9<sup>+</sup></td><td class="q">74.9</td><td class="q">88.0<sup>+</sup></td><td class="q">77.5</td><td class="q best">90.1<sup>+</sup></td><td class="">-</td><td class="">-</td></tr><tr><td>HRBench-4K</td><td class="q">69.4</td><td class="q">72.6<sup>+</sup></td><td class="q">73.5</td><td class="q">81.3<sup>+</sup></td><td class="q">72.4</td><td class="q best">82.3<sup>+</sup></td><td class="">-</td><td class="">-</td></tr><tr><td>HRBench-8K</td><td class="q">62.6</td><td class="q">68.9<sup>+</sup></td><td class="q">67.1</td><td class="q">74.4<sup>+</sup></td><td class="q">68.1</td><td class="q best">78.0<sup>+</sup></td><td class="">-</td><td class="">-</td></tr><tr class="grp"><td colspan="9">Multi-Modal Agent</td></tr><tr><td>ScreenSpot Pro</td><td class="q">32.2</td><td class="q">48.5</td><td class="q">49.2</td><td class="q best">59.5</td><td class="q">46.6</td><td class="q">54.6</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorldG</td><td class="q">41.8</td><td class="q">46.1</td><td class="q">53.9</td><td class="q best">58.2</td><td class="q">56.7</td><td class="q best">58.2</td><td class="">-</td><td class="">-</td></tr><tr><td>AndroidWorld</td><td class="q">46.1</td><td class="q">36.4</td><td class="q best">52.0</td><td class="q">45.3</td><td class="q">50.0</td><td class="q">47.6</td><td class="">-</td><td class="">-</td></tr><tr><td>OSWorld</td><td class="q">19.0</td><td class="q">17.0</td><td class="q">31.4</td><td class="q">26.2</td><td class="q best">33.9</td><td class="q best">33.9</td><td class="">-</td><td class="">-</td></tr><tr><td>WindowsAA</td><td class="q">-</td><td class="q">-</td><td class="q best">35.5</td><td class="q">23.4</td><td class="q">24.1</td><td class="q">28.8</td><td class="">-</td><td class="">-</td></tr></tbody></table></div></div>
+    </details>
+  </div>
+
+  <div class="wide" id="eval-text">
+    <h3>纯文本：VL 版 vs 同尺寸纯文本 Qwen3 <span class="src">表 5–10</span></h3>
+    <p class="tbl-note" style="margin-top:2px">每格是“VL 版 / 纯文本对照”。绿色表示 VL 版更高，橙色表示更低。</p>
+    <div class="tbl-wrap">
+      <table class="pairs">
+        <thead><tr><th>对比（出处）</th><th>AIME-25</th><th>HMMT-25</th><th>LiveCodeBench v6</th><th>GPQA</th><th>MMLU-Pro</th><th>Arena-Hard V2</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="7">对比 2507 版</td></tr>
+          <tr><td>VL-235B-I vs Qwen3-235B-I-2507 <span class="src">表 5</span></td><td class="win"><span class="a">74.7</span> / <span class="b">70.3</span></td><td class="win"><span class="a">57.4</span> / <span class="b">55.4</span></td><td class="win"><span class="a">54.3</span> / <span class="b">51.8</span></td><td class="lose"><span class="a">74.3</span> / <span class="b">77.5</span></td><td class="lose"><span class="a">81.8</span> / <span class="b">83.0</span></td><td class="lose"><span class="a">77.4</span> / <span class="b">79.2</span></td></tr>
+          <tr class="hl"><td>VL-235B-T vs Qwen3-235B-T-2507 <span class="src">表 6</span></td><td class="lose"><span class="a">89.7</span> / <span class="b">92.3</span></td><td class="lose"><span class="a">77.4</span> / <span class="b">83.9</span></td><td class="lose"><span class="a">70.1</span> / <span class="b">74.1</span></td><td class="lose"><span class="a">77.1</span> / <span class="b">81.1</span></td><td class="lose"><span class="a">83.8</span> / <span class="b">84.4</span></td><td class="lose"><span class="a">74.8</span> / <span class="b">79.7</span></td></tr>
+          <tr><td>VL-30B-A3B-I vs Qwen3-30B-A3B-I-2507 <span class="src">表 7</span></td><td class="win"><span class="a">69.3</span> / <span class="b">61.3</span></td><td class="win"><span class="a">50.6</span> / <span class="b">43.0</span></td><td class="lose"><span class="a">42.6</span> / <span class="b">43.2</span></td><td><span class="a">70.4</span> / <span class="b">70.4</span></td><td class="lose"><span class="a">77.8</span> / <span class="b">78.4</span></td><td class="lose"><span class="a">58.5</span> / <span class="b">69.0</span></td></tr>
+          <tr><td>VL-4B-T vs Qwen3-4B-T-2507 <span class="src">表 10</span></td><td class="lose"><span class="a">74.5</span> / <span class="b">81.3</span></td><td class="lose"><span class="a">53.1</span> / <span class="b">55.5</span></td><td class="lose"><span class="a">51.3</span> / <span class="b">55.2</span></td><td class="lose"><span class="a">64.1</span> / <span class="b">65.8</span></td><td class="lose"><span class="a">73.6</span> / <span class="b">74.0</span></td><td class="win"><span class="a">36.8</span> / <span class="b">34.9</span></td></tr>
+          <tr class="grp"><td colspan="7">对比第一代 Qwen3（非 2507）</td></tr>
+          <tr><td>VL-32B-I vs Qwen3-32B-I <span class="src">表 7</span></td><td class="win"><span class="a">66.2</span> / <span class="b">20.2</span></td><td class="win"><span class="a">46.1</span> / <span class="b">10.9</span></td><td class="win"><span class="a">43.8</span> / <span class="b">29.1</span></td><td class="win"><span class="a">68.9</span> / <span class="b">54.6</span></td><td class="win"><span class="a">78.6</span> / <span class="b">71.9</span></td><td class="win"><span class="a">64.7</span> / <span class="b">37.4</span></td></tr>
+          <tr><td>VL-32B-T vs Qwen3-32B-T <span class="src">表 8</span></td><td class="win"><span class="a">83.7</span> / <span class="b">72.9</span></td><td class="win"><span class="a">64.6</span> / <span class="b">51.8</span></td><td class="win"><span class="a">65.6</span> / <span class="b">60.6</span></td><td class="win"><span class="a">73.1</span> / <span class="b">68.4</span></td><td class="win"><span class="a">82.1</span> / <span class="b">79.1</span></td><td class="win"><span class="a">60.5</span> / <span class="b">50.3</span></td></tr>
+          <tr><td>VL-8B-I vs Qwen3-8B-I <span class="src">表 9</span></td><td class="win"><span class="a">45.9</span> / <span class="b">20.9</span></td><td class="win"><span class="a">32.5</span> / <span class="b">11.8</span></td><td class="win"><span class="a">39.3</span> / <span class="b">25.5</span></td><td class="win"><span class="a">61.9</span> / <span class="b">39.3</span></td><td class="win"><span class="a">71.6</span> / <span class="b">63.4</span></td><td class="win"><span class="a">46.3</span> / <span class="b">15.5</span></td></tr>
+          <tr><td>VL-8B-T vs Qwen3-8B-T <span class="src">表 10</span></td><td class="win"><span class="a">80.3</span> / <span class="b">67.3</span></td><td class="win"><span class="a">60.6</span> / <span class="b">43.2</span></td><td class="win"><span class="a">58.6</span> / <span class="b">51.0</span></td><td class="win"><span class="a">69.9</span> / <span class="b">62.0</span></td><td class="win"><span class="a">77.3</span> / <span class="b">74.6</span></td><td class="win"><span class="a">51.1</span> / <span class="b">29.1</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="scroll-hint">← 表格可左右滑动 →</div>
+    <p class="prose"><b>结论要加限定：</b>“加了视觉后文本更强”在<b>对比第一代 Qwen3</b> 时全面成立，对比 Instruct-2507 时互有胜负（数学、代码赢，知识类输）；<b>Thinking 旗舰在表 6 的多数文本项上都低于 Qwen3-235B-A22B-Thinking-2507</b>。</p>
+
+    <details class="more">
+      <summary>纯文本评测的采样设置 <span class="hint">§5.11 · 展开</span></summary>
+      <div class="body prose">
+        <ul>
+          <li>Instruct（235B-A22B / 32B / 30B-A3B）：temperature 0.7，top-p 0.8，top-k 20，presence penalty 1.5。</li>
+          <li>Instruct（8B / 4B / 2B）：temperature 1.0，top-p 1.0，top-k 40，presence penalty 2.0。</li>
+          <li>Thinking（MoE）：temperature 0.6，top-p 0.95，top-k 20。Thinking（dense）：temperature 1.0，top-p 0.95，top-k 20，presence penalty 1.5。</li>
+          <li>最大输出 32,768 token；Thinking 版在 AIME-25、HMMT-25、LiveCodeBench v6 上放宽到 81,920。</li>
+          <li>Arena-Hard v2 由 GPT-4.1 判胜率，Creative Writing v3 由 Claude 3.7 Sonnet 打分。</li>
+        </ul>
+      </div>
+    </details>
+  </div>
+
+  <div class="wide" id="eval-niah">
+    <h3>长上下文：视频大海捞针 <span class="src">§5.12.3</span></h3>
+    <figure class="fig card" id="fig3">
+      <div class="img-pad"><img src="figures/fig3-niah.png" alt="热力图：Qwen3-VL-235B-A22B-Instruct 在不同视频时长和针插入深度下的大海捞针准确率，0 到 30 分钟为训练长度内，40 到 120 分钟为外推" width="1577" height="545" loading="lazy"></div>
+      <figcaption><b>视频大海捞针（Qwen3-VL-235B-A22B-Instruct）。</b>按 1 FPS 均匀采样，动态调整帧分辨率以保持视觉 token 预算不变。30 分钟（对应 256K）以内准确率 100%；用 YaRN 外推到约 1M token（约 2 小时视频）时为 99.5%。测试集为自建。<span class="from">来源：论文图 3 · §5.12.3</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ======================= NOVEL ======================= -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">只列可以核对、并且相对前代或主流做法确实有变化的点。Interleaved-MRoPE 是引用的已有方法，不算在内。</p>
+  </div>
+  <div class="novel prose">
+    <div class="card nv"><h4>DeepStack 的输入从“多尺度图像”换成“ViT 中间层”<span class="src">§2.2</span><span class="src">表 12</span></h4>
+      <p>三层 ViT 特征经各自的 merger 加到 LLM 前三层，不增加 token。这是唯一有消融支撑的结构改动：平均 +1.3，InfoVQA +2.3。</p></div>
+    <div class="card nv"><h4>放弃按绝对时间对齐的 MRoPE，改用文本时间戳 <span class="src">§2.3</span></h4>
+      <p>用 <code>&lt;t seconds&gt;</code> 和 HMS 两种格式混合训练。这是一个明确的取舍：多花一点上下文，换掉对“多 fps 均匀采样”训练数据的依赖。</p></div>
+    <div class="card nv"><h4>专门留一个 256K 的预训练阶段，并造了相应的数据 <span class="src">表 1</span><span class="src">§3.2.1</span><span class="src">§3.2.3</span></h4>
+      <p>S3 用 100B token、262,144 序列长；配套构造了 256K 的书籍交错序列和多页文档解析序列。SFT 第 2 个 epoch 也在 256K 上训练。</p></div>
+    <div class="card nv"><h4>用纯文本蒸馏给 VL 模型补文本能力 <span class="src">§4.3</span><span class="src">表 7–10</span></h4>
+      <p>强到弱蒸馏只用纯文本、只调 LLM 主干，再配合按 token 的平方根归一化 loss。中小尺寸 VL 模型因此在 AIME、LiveCodeBench 上明显超过第一代 Qwen3。</p>
+      <p class="why">注意：蒸馏和 loss 改动都没有单独消融，无法区分增益来自哪一步。</p></div>
+    <div class="card nv"><h4>在 RL 阶段专门纠正先验、防奖励作弊 <span class="src">§4.4.2</span><span class="src">§4.5</span></h4>
+      <p>用反直觉计数、钟表读数这类可验证任务纠正 SFT 留下的错误先验；把低频的坏行为单独建集集中惩罚；在看图思考的 RL 里加工具调用次数奖励，防止模型只调一次工具来骗奖励。</p></div>
+  </div>
+</section>
+
+<!-- ======================= IMPLICATIONS ======================= -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据、评测和 caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">每条先说论文怎么做（带出处），再给一个能直接落到编辑基座数据流水线上的做法。后者是本文的迁移建议，<b>不是论文内容</b>。</p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>条件式 recaption，不要只看图重写 <span class="src">§3.2.1</span></h4>
+        <p class="paper">recaption 模型的输入是“图 + 原始配文”，所以 alt-text 里的专名和知识不会丢。</p>
+        <p class="do"><b>做法：</b>重写编辑指令时，把<b>原图、结果图和原始指令</b>一起交给 captioner，要求保留原指令里的实体、文字内容和数值，只补充位置、属性和不该改的区域。抽检时对比重写前后的专名有没有丢。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>去重和补长尾放在不同空间里做 <span class="src">§3.2.1</span></h4>
+        <p class="paper">只在重写后的文本上做语义去重；在视觉 embedding 上聚类，找稀疏区域补数据。</p>
+        <p class="do"><b>做法：</b>编辑对先按<b>规范化后的指令文本</b>去重，去掉“换个说法的同一种编辑”；再对（原图, 结果图）的视觉 embedding 或差分 embedding 聚类，找出样本稀少的编辑类型和场景，定向合成补齐。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>实体按重要性采样，头部多、长尾保底 <span class="src">§3.2.2</span></h4>
+        <p class="paper">知名度高的实体多采，长尾实体按较小比例保留以维持覆盖面。</p>
+        <p class="do"><b>做法：</b>编辑数据按“编辑类型 × 主体类别”统计频次，头部组合限量、长尾组合设下限，不要让人像美颜或换背景这类高频任务吃掉全部配额。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>坐标归一化，空间描述用相对关系 <span class="src">§3.2.4</span><span class="src">§3.2.5</span></h4>
+        <p class="paper">框坐标统一到 [0, 1000]；空间指代都相对其他物体或场景来写，不用绝对坐标。</p>
+        <p class="do"><b>做法：</b>编辑区域的 bbox 或点统一存成 [0, 1000] 归一化坐标，这样换分辨率、裁剪、改长宽比后标注仍然可用；指令里的位置描述优先用“杯子左边的书”这类相对说法。</p></div>
+    </div>
+
+    <div class="impl-group">标注与合成</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>OCR 用“专用模型伪标 + VLM 修正”，不做人工标注 <span class="src">§3.2.3</span></h4>
+        <p class="paper">3000 万条真实场景 OCR 按 coarse-to-fine 流程完全由模型标注。</p>
+        <p class="do"><b>做法：</b>文字编辑任务（换字、翻译招牌）的原图文字先用 OCR 模型出框和内容，再用 VLM 修正，作为 GT；评测时对结果图跑同一套 OCR，用字符准确率自动判分，人工只抽检。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>先造标注精确的合成数据，再转成多种格式 <span class="src">§3.2.3</span></h4>
+        <p class="paper">先合成 HTML（元素级框），再系统转成 Markdown；真实文档打伪标签后过滤，两者混合。</p>
+        <p class="do"><b>做法：</b>用渲染或合成管线造“编辑区域和 mask 完全已知”的样本，同一份标注同时导出自然语言指令、结构化 JSON 指令、mask 三种格式；真实图走伪标加质量过滤，最后两类混合。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>检测器和 VLM 一起定位，再过质量关 <span class="src">§3.2.4</span></h4>
+        <p class="paper">Qwen2.5-VL 抽候选物体 → Grounding DINO 和 Qwen2.5-VL 一起定位 → 过滤低置信框。</p>
+        <p class="do"><b>做法：</b>做“局部编辑”样本时，编辑目标由 VLM 提出，开放词表检测器定框，两者不一致的样本直接丢掉，比只信一方干净。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>造“反直觉、可验证”的题来纠正先验 <span class="src">§4.4.2</span></h4>
+        <p class="paper">用反直觉计数、复杂钟表读数这类可验证任务，纠正 SFT 留下的错误先验。</p>
+        <p class="do"><b>做法：</b>为编辑模型造“把时钟改到 3:47”“桌上放正好 5 个苹果”“只改左手”这类结果可以被检测器或计数器自动验证的指令，专门压测模型的惯性输出。</p></div>
+    </div>
+
+    <div class="impl-group">过滤与 RL</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">F1</span>多模态必要性过滤 <span class="src">§4.2.2</span></h4>
+        <p class="paper">纯文本模型不看图就能做对的视觉数学题，一律丢掉。</p>
+        <p class="do"><b>做法：</b>做编辑评测的 VQA 判分题时，先让 judge <b>不看结果图</b>答一遍，答对的题说明能从指令文本里猜出来，没有区分度，应删除或改写。训练数据同理：不看原图也能写出结果描述的样本，说明指令和图像基本无关。</p></div>
+      <div class="impl"><h4><span class="ix">F2</span>RL 数据两头过滤 <span class="src">§4.4.1</span></h4>
+        <p class="paper">16 次采样全错的题丢掉（多半是脏数据），目标模型通过率超过 90% 的也丢掉（太简单）。</p>
+        <p class="do"><b>做法：</b>编辑 RL 或偏好数据，先用当前模型每条采样 N 次、用 reward 打分，去掉全部失败的（多半是指令本身有问题）和几乎全部成功的，只留中间难度的指令。</p></div>
+      <div class="impl"><h4><span class="ix">F3</span>低频坏行为单独建集 <span class="src">§4.4.2</span></h4>
+        <p class="paper">语言混杂、重复这类问题出现频率低，在通用 RL 里样本效率太低，所以专门挑出能诱发它们的 prompt 集中惩罚。</p>
+        <p class="do"><b>做法：</b>把身份漂移、非编辑区域被改、文字乱码这类低频但致命的失败，从线上 bad case 里收集成专门的触发集，单独做 RL 或 DPO，不要指望通用数据能把它们压下去。</p></div>
+      <div class="impl"><h4><span class="ix">F4</span>用模型当 judge 时，加一项防作弊奖励 <span class="src">§4.5</span></h4>
+        <p class="paper">模型学会只调用一次工具来骗前两项奖励，于是加了工具调用次数奖励来约束。</p>
+        <p class="do"><b>做法：</b>VLM 当 reward 时，要警惕“几乎不改图也能拿高分”这类走捷径的行为：除了指令遵循分，再加一项改动幅度与指令是否匹配的约束（例如编辑区域内外的像素或感知差异），并定期看高分样本。</p></div>
+    </div>
+
+    <div class="impl-group">评测</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>公开所有评测 prompt，并区分模式 <span class="src">附录 B</span><span class="src">B.8</span></h4>
+        <p class="paper">附录 B 给出了每个基准的 prompt；视频题对 Instruct 和 Thinking 用不同模板（Thinking 版要求先分析关键时间点）。</p>
+        <p class="do"><b>做法：</b>编辑评测的 judge prompt、打分细则、采样参数一起版本化发布；对比不同模型时 judge prompt 必须一致，换版本时重跑基线。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>写清评测协议里会改变结果的设定 <span class="src">§5.5</span><span class="src">§5.9</span></h4>
+        <p class="paper">ODinW 把全部类别一次放进 prompt、置信度固定 1.0；3D 用 mAP@0.15；VideoMMMU 改用模型判分，因为规则判分不准；视频帧数上限在报告里写明。</p>
+        <p class="do"><b>做法：</b>编辑评测报告里写明输入分辨率、生成步数和 seed、judge 模型版本，以及哪些项用规则判、哪些用模型判。对方用的设定不同，就像原文那样在表下注明“不完全可比”。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>警惕“换模式又加工具”的双变量对比 <span class="src">§5.6</span><span class="src">表 2</span></h4>
+        <p class="paper">带工具的分数都在 Instruct 列，不带工具的在 Thinking 列，“工具带来约 5 分”同时混了两个变量。</p>
+        <p class="do"><b>做法：</b>做消融时（比如加 prompt 改写器、加 inpainting 后处理），保证每次只改一个变量，并在表上标清楚。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= LIMITS ======================= -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · CAVEATS</div>
+    <h2>局限与存疑</h2>
+    <p class="sec-intro">都能在原文里核对。</p>
+  </div>
+  <ol class="limits prose">
+    <li class="key"><b>正文与表 3 数字矛盾（RealWorldQA）。</b>§5.1 写 32B-Thinking 的 RealWorldQA 是 <b>79.4</b>，表 3 是 <b>78.4</b>。同段又说 32B-Instruct 以 79.0“甚至超过 Thinking 版”，如果按 79.4 就自相矛盾。按表 3，这一行最高的 79.0 是 32B-Instruct 和 GPT-5 mini high 并列，所以“32B-Thinking 拿到 RealWorldQA 最高分”的说法也不成立。同段 MMBench 写的是 89.5/89.5，表 3 的 MMBench-CN 是 89.4。<span class="src">§5.1</span><span class="src">表 3</span></li>
+    <li><b>关键设计缺少消融。</b>Interleaved-MRoPE、文本时间戳、平方根归一化 loss、S0 只训 merger、纯文本蒸馏，都只有定性论述。唯一的结构消融（DeepStack）用的是内部 15B-A2B、200B token、不做后训练，能否外推到最终模型并不清楚。<span class="src">表 12</span></li>
+    <li><b>数据配比和规模披露不完整。</b>各预训练阶段只有总 token 数，没有各来源占比；caption、交错图文、视频数据的规模都没给；“~1T”本身也是约数。<span class="src">表 1</span><span class="src">§3.2</span></li>
+    <li><b>视频对比的帧数不可比。</b>Qwen3-VL 每个视频最多 2,048 帧（视频 token 不超过 224K），Gemini 2.5 Pro、GPT-5、Claude Opus 4.1 分别只有 512、256、100 帧。原文也承认无法保证完全公平。<span class="src">§5.9</span></li>
+    <li><b>“工具带来约 5 分”混了两个变量。</b>表 2–4 中带 + 的数字都在 Instruct 列，不带工具的在 Thinking 列。另外 §5.6 正文写 HRBench-4K / 8K 是 85.3 / 82.3，表 2 是 85.4+ / 82.4+，相差 0.1。<span class="src">§5.6</span><span class="src">表 2</span></li>
+    <li><b>“文本超过纯文本基座”要加限定。</b>Thinking 旗舰在 AIME-25（89.7 vs 92.3）、LiveCodeBench v6（70.1 vs 74.1）、GPQA（77.1 vs 81.1）等项上都低于 Qwen3-235B-A22B-Thinking-2507。大幅增益主要来自和第一代 Qwen3 的对比，而 VL 版额外做了纯文本蒸馏，增益未必来自多模态训练本身。<span class="src">表 6</span><span class="src">§4.3</span></li>
+    <li><b>多项结论依赖不公开的内部测试集。</b>OmniBench、多语种 OCR 测试集、视频大海捞针都无法复现。<span class="src">表 11</span><span class="src">图 2</span><span class="src">图 3</span></li>
+    <li><b>没有讨论数据污染。</b>预训练引入了 6000 万以上 K12 和本科习题，和 MathVista、MathVerse 等基准的题源相近，原文没有任何去污染说明。<span class="src">§3.2.8</span></li>
+    <li><b>文字小错。</b>§2 写“three dense variants (2B/4B/8B/32B)”，实际是四个（§1 写的是 four）；§5.1 把 8B 称为“the largest model”，指的是小模型组里最大的。<span class="src">§2</span><span class="src">§5.1</span></li>
+    <li><b>GUI agent 缺少同口径对照。</b>OSWorld、AndroidWorld 的闭源列基本都是“-”。表 2 中唯一的闭源 OSWorld 数字是 Claude Opus 4.1 non-thinking 的 44.4，高于旗舰的 38.1；§5.10 称 32B“超过当前基础 VLM”，缺少可比数据支撑。<span class="src">表 2</span><span class="src">§5.10</span></li>
+  </ol>
+</section>
+
+<!-- ======================= INDEX ======================= -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th style="text-align:left">看点</th><th style="text-align:left">跳转</th></tr></thead>
+      <tbody>
+        <tr><td>首页图</td><td>Instruct / Thinking 两组雷达对比，数字以表 2 为准</td><td><a href="#fig0">首页图</a></td></tr>
+        <tr><td>图 1</td><td>整体架构：DeepStack 多层注入、Interleaved-MRoPE、文本时间戳</td><td><a href="#fig1">架构</a></td></tr>
+        <tr><td>图 2</td><td>39 种语言 OCR 准确率，32 种超过 70%（自建测试集）</td><td><a href="#fig2">数据 · OCR</a></td></tr>
+        <tr><td>图 3</td><td>视频大海捞针：256K 以内 100%，外推到约 1M 为 99.5%</td><td><a href="#fig3">评测 · 长上下文</a></td></tr>
+        <tr><td>表 1</td><td>四段预训练的训练模块、token 预算、序列长度，是复现配方的骨架</td><td><a href="#pretrain">训练配方</a></td></tr>
+        <tr><td>表 2</td><td>235B 旗舰 vs Gemini 2.5 Pro / GPT-5 / Claude Opus 4.1，66 行</td><td><a href="#eval-flagship">评测 · 旗舰</a></td></tr>
+        <tr><td>表 3</td><td>32B / 30B-A3B vs Gemini 2.5 Flash / GPT-5 mini；RealWorldQA 与正文不一致</td><td><a href="#eval-mid">评测 · 中小尺寸</a></td></tr>
+        <tr><td>表 4</td><td>2B / 4B / 8B vs GPT-5 nano；8B-Instruct 的 OCRBench 为 896</td><td><a href="#eval-mid">评测 · 中小尺寸</a></td></tr>
+        <tr><td>表 5</td><td>旗舰 Instruct 的纯文本能力，对比 Qwen3-235B-I-2507、DeepSeek V3 0324、Claude Opus 4</td><td><a href="#eval-text">评测 · 纯文本</a></td></tr>
+        <tr><td>表 6</td><td>旗舰 Thinking 的纯文本能力，多项低于 Qwen3-235B-T-2507</td><td><a href="#eval-text">评测 · 纯文本</a></td></tr>
+        <tr><td>表 7 / 8</td><td>32B、30B-A3B 对比同尺寸纯文本 Qwen3（Instruct / Thinking）</td><td><a href="#eval-text">评测 · 纯文本</a></td></tr>
+        <tr><td>表 9 / 10</td><td>2B / 4B / 8B 对比 Qwen3-1.7B / 4B / 8B 和 4B-2507</td><td><a href="#eval-text">评测 · 纯文本</a></td></tr>
+        <tr><td>表 11</td><td>Qwen3-ViT vs SigLIP-2：CLIP 阶段和接 1.7B LLM 后的下游表现</td><td><a href="#arch-vit">架构 · 视觉编码器</a></td></tr>
+        <tr><td>表 12</td><td>DeepStack 消融（15B-A2B、200B token）：平均 +1.3，文档类涨得最多</td><td><a href="#arch-deepstack">架构 · DeepStack</a></td></tr>
+        <tr><td>附录 B</td><td>全部评测 prompt 模板；B.8 中视频题的 Instruct 和 Thinking 模板不同</td><td><a href="#impl">启示 · E1</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    <p style="margin:0 0 6px"><b style="color:var(--ink)">基于 arXiv:2511.21631（Qwen3-VL Technical Report）的中文深读。</b>数字均来自原文，并就近标注表号、图号或章节号；标“推算”的是本文计算的。论文图片版权归原作者所有。</p>
+    <p style="margin:0">发布日期按 arXiv v1（2025-11-26）记；所读 PDF 为 v2。属系列「<a href="../../../index.html">前沿模型技术报告</a>」。</p>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+
+</body>
+</html>

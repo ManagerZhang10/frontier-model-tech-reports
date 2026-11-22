@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seedance 2.0 中文深读 · 四模态输入的音视频联合生成，与一份几乎只有评测的技术报告 | 前沿模型技术报告</title>
+<meta name="description" content="Seedance 2.0（ByteDance Seed, arXiv 2604.14148）中文深读：已披露的能力边界、SeedVideoBench 2.0 评测协议、T2V/I2V/R2V 全部结果、不领先的细分项，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: io diagram, lineage, disclosure table, 2x2 charts */
+.io .dg-in { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.io .dg-core { fill: color-mix(in srgb, var(--accent) 10%, var(--card)); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 7 4; }
+.io .dg-out { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 45%, var(--line)); stroke-width: 1.2; }
+.io .dg-fast { fill: var(--card); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.io .dg-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.io .dg-nd { fill: var(--warn); font: 600 11.5px var(--f-mono); }
+.io .dg-big { fill: var(--accent-ink); font: 700 15px var(--f-head); }
+.lineage { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 6px; }
+.lineage .stage p { font-size: .86rem; line-height: 1.55; margin: .3rem 0 0; color: var(--ink-2); }
+.lineage .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+.lineage .stage.now { border-top: 3px solid var(--accent); }
+.disc td { white-space: normal; text-align: left; vertical-align: top; }
+.disc td:first-child { white-space: nowrap; font-weight: 700; }
+.disc td.st { white-space: nowrap; }
+.ok-pill { display: inline-block; font: 600 .72rem/1.6 var(--f-mono); padding: 0 .55em; border-radius: 6px; background: var(--good-soft); color: var(--good); }
+.nd-pill { display: inline-block; font: 600 .72rem/1.6 var(--f-mono); padding: 0 .55em; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }
+.part-pill { display: inline-block; font: 600 .72rem/1.6 var(--f-mono); padding: 0 .55em; border-radius: 6px; background: var(--accent-soft); color: var(--accent-ink); }
+.chart-grid.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.train3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.train3 .stage { border-top: 3px solid var(--line); }
+.train3 .stage.lit { border-top-color: var(--warm); }
+.train3 .stage p { font-size: .88rem; margin: .3rem 0 0; color: var(--ink-2); }
+.tax { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 12px 0; }
+.tax .mod { margin: 0; }
+.tax .mod ul { font-size: .88rem; padding-left: 1.1em; }
+.quote-p { font-size: .9rem; color: var(--ink-2); background: var(--bg-accent); border-radius: 10px; padding: 10px 14px; margin: 8px 0; border-left: 3px solid var(--warm); }
+@media (max-width: 960px) {
+  .lineage, .train3 { grid-template-columns: 1fr; }
+  .lineage .stage::after { display: none; }
+}
+@media (max-width: 640px) {
+  .chart-grid.g2 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视频生成</div>
+    <h1>Seedance 2.0<span class="sub">Advancing Video Generation for World Complexity</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>ByteDance Seed</b></span>
+      <span>发布 <b>2026-04-15</b>（arXiv v1）</span>
+      <span>arXiv <b>2604.14148</b></span>
+      <span>国内上线 <b>2026 年 2 月初</b><span class="src">§1</span></span>
+      <span>本页依据 <b>v1</b> 全文</span>
+    </div>
+    <p class="lede">一个支持<b>文本 / 图像 / 音频 / 视频四种输入</b>的原生音视频联合生成模型，把参考生成、视频编辑、续写与延展收进同一个模型<span class="src">§1</span>。报告<b>没有披露架构、参数、数据和训练</b>，正文几乎全是基于自建 SeedVideoBench 2.0 的评测：T2V、I2V、R2V 汇总维度全部第一<span class="src">表 1 · 表 9 · 表 24</span>。对编辑方向最有用的是它的<b>评测协议</b>：任务遵循、参考对齐、非编辑区保持分开打分，并按 ≥3 / ≥4 / =5 三档报比例。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>闭源 · 豆包 / 即梦 / 火山引擎调用</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="m17 10 5-3v10l-5-3z"/></svg>视频生成 · 音视频联合</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>4–15 s · 480p / 720p</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>另有 Seedance 2.0 Fast</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2604.14148" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2604.14148</a>
+      <a href="https://seed.bytedance.com/seedance2_0" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>官方页面</a>
+      <a href="https://www.volcengine.com/experience/ark?mode=vision&amp;modelId=doubao-seedance-2-0-260128&amp;tab=GenVideo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>火山引擎体验</a>
+    </div>
+    <figure class="fig card wide hero-fig">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="Seedance 2.0 文生视频示例：双人花样滑冰与竹林武侠对决的分镜帧" loading="eager"></div>
+      <figcaption><b>T2V 生成示例</b>：上行为竞技双人花滑（含失误—调整—托举—同步跳跃的叙事），下行为竹林武侠对决。裁图只含原图前两行 T2V，第三行 I2V 示例未裁入。<span class="from">来源：论文图 4</span></figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v1；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">输入模态</span><span class="stat-num">4 种</span><span class="stat-sub">文本、图像、音频、视频</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">参考素材上限（开放平台）</span><span class="stat-num sm">3 视频 · 9 图 · 3 音频</span><span class="stat-sub">原文写「current open platform supports up to」</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">输出</span><span class="stat-num sm">4–15 s · 480p / 720p</span><span class="stat-sub">直接生成音视频；双声道、多轨音频</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">Arena T2V</span><span class="stat-num">#1 · 1450</span><span class="stat-sub">±15，领先第 2 名 79 分；榜单标 Preliminary，2,702 票</span><span class="src">图 2a</span></div>
+    <div class="card stat"><span class="stat-k">Arena I2V</span><span class="stat-num">#1 · 1449</span><span class="stat-sub">±11，领先第 2 名 29 分；Preliminary，6,998 票</span><span class="src">图 2b</span></div>
+    <div class="card stat"><span class="stat-k">T2V 六维均分提升</span><span class="stat-num">+0.86</span><span class="stat-sub">相对 Seedance 1.5；运动质量单项 +1.36</span><span class="src">§2.3.1</span></div>
+    <div class="card stat"><span class="stat-k">R2V 任务覆盖</span><span class="stat-num">20 / 22</span><span class="stat-sub">其中 7 项对手均不支持</span><span class="src">表 25</span></div>
+    <div class="card stat"><span class="stat-k">参数 / 架构</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只写「unified, highly efficient, and large-scale architecture」</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">训练数据 / 配方</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">全文没有数据、训练章节</span><span class="src">全文</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 · 2026-04-15</span><span class="stat-sub">API 模型 id <code>doubao-seedance-2-0-260128</code></span><span class="src">§1</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>一个模型，四种输入，参考 + 编辑 + 续写</h3><p>文本 / 图像 / 音频 / 视频输入，支持主体、运动、风格、特效参考，视频编辑、续写与延展，以及它们的组合<span class="src">§1</span>。R2V 任务支持 20/22，对手最多 13/22<span class="src">表 25</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>T2V：六个维度全部第一</h3><p>运动 3.75、视频指令遵循 3.43、美学 3.67、音频质量 3.63、音画同步 3.75、音频指令遵循 3.56<span class="src">表 1</span>；各维度可用率（≥3 分）均 &gt;83%，满意率（≥4 分）均 &gt;51%<span class="src">表 2</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>音频是拉开差距的地方</h3><p>T2V 音频质量满意率 62.05%，对手全部 &lt;10%<span class="src">表 2</span>；I2V 音频三项 3.61 / 3.54 / 3.70，第二名 Seedance 1.5 Pro 落后 0.54–0.60<span class="src">表 9</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">04</span><h3>不是全线第一</h3><p>视频延展任务遵循 1.93，Veo 3.1 为 2.78<span class="src">表 28</span>；视频编辑任务遵循 2.20 低于 Kling O1 2.29<span class="src">表 28</span>；运动参考的首帧保持 2.71，Kling 3 Omni 4.31<span class="src">表 27</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>这是一份评测报告，不是方法报告</h3><p>架构、参数、训练数据、caption、训练阶段、RL 均未披露；所有分数来自内部 SeedVideoBench 2.0，样本量、评审人数未给出<span class="src">§2.2</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：原文只给了输入输出</h2>
+  <p class="sec-intro">论文没有架构图，也没有模块、参数或连接方式。下面这段首页引言就是原文对架构的全部描述。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="论文首页引言段落：Seedance 2.0 采用统一、高效、大规模的多模态音视频联合生成架构，支持四种输入模态" loading="lazy"></div>
+    <figcaption><b>首页引言段落</b>：「native multi-modal audio-video generation model」「unified, highly efficient, and large-scale architecture for multi-modal audio-video joint generation」，支持文本、图像、音频、视频四种输入。原文无架构图。<span class="from">来源：论文首页图（§1）</span></figcaption>
+  </figure>
+
+  <div class="card diagram wide io">
+    <svg viewBox="0 0 900 300" role="img" aria-label="Seedance 2.0 输入输出示意：四种输入进入统一音视频联合生成模型，输出 4 到 15 秒视频与双声道多轨音频">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+      <rect class="dg-in" x="20" y="22" width="200" height="50" rx="10"/><text class="dg-t" x="36" y="44">文本 prompt</text><text class="dg-s" x="36" y="62">可含文字分镜脚本</text>
+      <rect class="dg-in" x="20" y="86" width="200" height="50" rx="10"/><text class="dg-t" x="36" y="108">图像</text><text class="dg-s" x="36" y="126">≤ 9 张</text>
+      <rect class="dg-in" x="20" y="150" width="200" height="50" rx="10"/><text class="dg-t" x="36" y="172">视频</text><text class="dg-s" x="36" y="190">≤ 3 段</text>
+      <rect class="dg-in" x="20" y="214" width="200" height="50" rx="10"/><text class="dg-t" x="36" y="236">音频</text><text class="dg-s" x="36" y="254">≤ 3 段</text>
+      <path class="dg-arrow" d="M224 47 C 270 47, 270 143, 300 143" marker-end="url(#ah)"/>
+      <path class="dg-arrow" d="M224 111 C 260 111, 270 143, 300 143" marker-end="url(#ah)"/>
+      <path class="dg-arrow" d="M224 175 C 260 175, 270 143, 300 143" marker-end="url(#ah)"/>
+      <path class="dg-arrow" d="M224 239 C 270 239, 270 143, 300 143" marker-end="url(#ah)"/>
+      <rect class="dg-core" x="304" y="62" width="300" height="162" rx="16"/>
+      <text class="dg-big" x="454" y="104" text-anchor="middle">Seedance 2.0</text>
+      <text class="dg-t" x="454" y="128" text-anchor="middle">统一的多模态音视频联合生成</text>
+      <text class="dg-s" x="454" y="150" text-anchor="middle">参考 · 编辑 · 续写 / 延展 · 组合任务</text>
+      <text class="dg-nd" x="454" y="184" text-anchor="middle">内部结构 / 参数 / 编码器：原文未披露</text>
+      <rect class="dg-fast" x="354" y="244" width="200" height="40" rx="10"/>
+      <text class="dg-t" x="454" y="262" text-anchor="middle">Seedance 2.0 Fast</text>
+      <text class="dg-s" x="454" y="277" text-anchor="middle">低延迟加速版 · 做法未披露</text>
+      <path class="dg-arrow" d="M608 143 C 640 143, 650 92, 680 92" marker-end="url(#ah)"/>
+      <path class="dg-arrow" d="M608 143 C 640 143, 650 196, 680 196" marker-end="url(#ah)"/>
+      <rect class="dg-out" x="684" y="62" width="200" height="60" rx="10"/><text class="dg-t" x="700" y="86">视频</text><text class="dg-s" x="700" y="106">4–15 s · 480p / 720p</text>
+      <rect class="dg-out" x="684" y="164" width="200" height="66" rx="10"/><text class="dg-t" x="700" y="186">音频（与视频同时生成）</text><text class="dg-s" x="700" y="204">双声道；背景音 / 环境音效 /</text><text class="dg-s" x="700" y="220">角色旁白多轨</text>
+    </svg>
+    <div class="cap">示意。只画原文 §1 明确写到的输入、上限与输出；中间框为黑盒，不代表任何真实模块或连接方式。</div>
+  </div>
+
+  <h3 class="prose">相对前代：原文给出的变化</h3>
+  <div class="lineage wide">
+    <div class="card stage"><div class="sid">1.0</div><h4>Seedance 1.0</h4><p>视频生成基础模型<span class="src">[6]</span>。</p></div>
+    <div class="card stage"><div class="sid">1.5 Pro</div><h4>Seedance 1.5 Pro</h4><p>音视频同步生成<span class="src">§1 · [16]</span>。</p></div>
+    <div class="card stage now"><div class="sid">2.0</div><h4>Seedance 2.0</h4><p>统一的多模态音视频联合生成框架；四种输入；新增视频编辑与续写；升级音频模块并加入双声道（binaural）<span class="src">§1</span>。</p></div>
+  </div>
+  <div class="prose">
+    <ul>
+      <li>原文称 Seedance 系列「一直围绕统一架构构建」<span class="src">§1</span>，但没说 2.0 的骨干是否沿用 1.5 Pro，也没有消融。</li>
+      <li>音频：「upgraded audio generation module integrated with binaural audio technology」，支持背景音、环境音效、角色旁白多轨同时输出<span class="src">§1</span>。模块结构未披露。</li>
+      <li>文本侧可直接参考「text-based storyboards」，模型能自主规划分镜<span class="src">§1</span>。实现方式未披露。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：训练侧零披露，评测侧给了任务体系</h2>
+  <p class="sec-intro">全文没有数据章节。下面先列清「披露了什么」，再把唯一成体系的数据构建（SeedVideoBench 2.0 的评测集）拆开。</p></div>
+
+  <div class="tbl-wrap wide"><table class="disc">
+    <thead><tr><th>维度</th><th>原文怎么说</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">训练数据</td></tr>
+      <tr><td>来源</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>规模（视频 / 图像 / 音频条数、时长）</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>清洗与过滤</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>合成数据</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>caption / 标注方式</td><td>未提及；只说模型可参考文字分镜<span class="src">§1</span></td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>编辑 / 参考 / 续写三元组怎么造</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr><td>配比</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+      <tr class="grp"><td colspan="3">评测数据（SeedVideoBench 2.0）</td></tr>
+      <tr><td>专项数据集</td><td>覆盖 subject、motion、scene、style、audio；「样本分布经过调整，在小评测预算下尽量减小方差」<span class="src">§2.2.1</span></td><td class="st"><span class="part-pill">部分披露</span></td></tr>
+      <tr><td>T2V 细分类</td><td>视频 30 类（表 3–5 行数），音频 17 类（表 6–8 行数）；另按 6 个场景出雷达图<span class="src">表 3–8 · 图 3</span></td><td class="st"><span class="ok-pill">已披露</span></td></tr>
+      <tr><td>I2V 细分类</td><td>视觉 24 个子类（表 11–18），音频 22 个子类（表 19–23）<span class="src calc">推算</span></td><td class="st"><span class="ok-pill">已披露</span></td></tr>
+      <tr><td>R2V 任务</td><td>22 种输入组合，表中列出 20 种<span class="src">表 25</span></td><td class="st"><span class="ok-pill">已披露</span></td></tr>
+      <tr><td>每类样本量、评审人数、评审一致性</td><td>未提及</td><td class="st"><span class="nd-pill">原文未披露</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">I2V 子类数为本页按表头逐个计数：表 11 (2) + 12 (3) + 13 (3) + 14 (4) + 15 (3) + 16 (4) + 17 (3) + 18 (2) = 24；表 19 (4) + 20 (6) + 21 (4) + 22 (5) + 23 (3) = 22。</p>
+
+  <h3 class="prose">评测集怎么搭：多模态任务四组 + 两类一致性</h3>
+  <div class="tax wide">
+    <div class="card mod"><h4>参考任务<span class="tag">Reference</span></h4><ul><li>主体参考</li><li>运动参考</li><li>视觉特效参考</li><li>风格参考</li></ul><span class="src">§2.2.1</span></div>
+    <div class="card mod"><h4>编辑任务<span class="tag">Editing</span></h4><ul><li>主体编辑</li><li>风格编辑</li><li>场景编辑</li><li>音频内容编辑</li></ul><span class="src">§2.2.1</span></div>
+    <div class="card mod"><h4>延展任务<span class="tag">Extension</span></h4><ul><li>剧情续写</li><li>无缝延展，时间轴向前、向后都测</li></ul><span class="src">§2.2.1</span></div>
+    <div class="card mod"><h4>组合任务<span class="tag">Combination</span></h4><ul><li>按真实工作流配对，如「用参考图替换视频主体」= 参考 + 编辑</li></ul><span class="src">§2.2.1</span></div>
+  </div>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>参考对齐<span class="tag ok-tag">Reference Alignment</span></h4><p>生成内容与参考输入有多像（外观、声音、运动、风格）<span class="src">§2.2.1</span>。</p></div>
+    <div class="card mod"><h4>编辑一致性<span class="tag ok-tag">Editing Consistency</span></h4><p>编辑时非编辑区域保住了多少<span class="src">§2.2.1</span>。和「任务遵循」分开打分。</p></div>
+  </div>
+
+  <h3 class="prose">T2V 的 30 个细分类（表 3–5 共用）</h3>
+  <details class="more wide"><summary>展开 30 类 + 音频 17 类<span class="hint">表 3–8 行名</span></summary><div class="body">
+    <p><b>视频 30 类：</b>Holidays / Festivals · Consumer Visual Effects · Counter-Reality Instructions · Cinematic Visual Effects · Same-Type Interaction · Cross-Type Interaction · Group Coordinated Motion · Advanced Camera Movement · Special Camera Shots · Editing Rhythm · Combined Shot Instructions · Physical Feedback · Physical Phenomena · Natural Phenomena · Text Overlay · Short Text · Creative Text · Long Script · Abstract Challenges · Multi-Entity Feature Match · Knowledge Assessment · Compound Multi-Instructions · Surreal Motion · Intense Sports Motion · Fine Hand Motion · Anthropomorphic Motion · Emotion &amp; Expression · Visual Style · Lighting &amp; Color Tone · Framing / Composition<span class="src">表 3</span></p>
+    <p><b>音频 17 类：</b>Chinese Dialect / Accent · Chinese Multi-Person Dialogue · Chinese Variety Show Voice · Chinese Opera · English · Minority Languages · Singing / Rap · Spatial Scene · Off-Screen Voice · Non-Verbal Voice · Voice + Action Interaction · Object Interaction Sound · Animal Sound · Ambient / Background Sound · Special Effects (ASMR, etc.) · Instruments &amp; Audio · Dual-Channel Audio<span class="src">表 6</span></p>
+    <p><b>6 个场景：</b>Ad、Fiction、PGC、Consumer Effects、Social、Basic<span class="src">图 3</span></p>
+  </div></details>
+
+  <div class="card mod wide"><h4>唯一一条「数据回流」<span class="tag nd-tag">细节未披露</span></h4>
+    <p>真实度研究：评审尝试把 Seedance 2.0 生成结果和真实视频区分开，结果回馈到美学调优流程<span class="src">§2.2.1</span>。识别率、样本数、怎么回馈都没给。</p></div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：原文未披露</h2>
+  <p class="sec-intro">没有预训练阶段、分辨率/时长课程、后训练、RL、蒸馏的任何描述，也没有超参。以下只列原文能对上的线索。</p></div>
+  <div class="train3 wide">
+    <div class="card stage"><div class="sid">PRE</div><h4>预训练</h4><p><span class="nd">原文未披露</span>：阶段数、数据、分辨率与时长课程、算力均无。</p></div>
+    <div class="card stage"><div class="sid">POST</div><h4>后训练 / RL</h4><p><span class="nd">原文未披露</span>。引言把 RewardDance<span class="src">[21]</span>、DanceGRPO<span class="src">[22]</span> 列为团队「other key components」，但没说 2.0 是否、如何使用。</p></div>
+    <div class="card stage lit"><div class="sid">TUNE</div><h4>美学调优 + Fast 版</h4><p>真实度研究结果回馈美学调优<span class="src">§2.2.1</span>；另提供加速变体 Seedance 2.0 Fast，用于低延迟场景<span class="src">§1</span>。两者做法均未披露。</p></div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">两套来源：公开的 Arena 人类偏好榜（图 2），其余全部来自内部 SeedVideoBench 2.0（表 1–28）。T2V/I2V 对比商用闭源模型，R2V 对比带参考/编辑能力的模型。</p></div>
+
+  <h3 class="prose">6.1 协议：SeedVideoBench 2.0 改了什么</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>两条主线变化<span class="tag">§2.2.1</span></h4><ul>
+      <li>新增多模态任务评测：正式定义「多模态任务遵循」和「生成一致性」，同时在多模态设定下继续测 prompt 遵循与运动质量。</li>
+      <li>分客观 / 主观两轨：运动稳定性等走自动管线，美学等走专家盲评。表中哪些维度属于哪一轨未标注。</li></ul></div>
+    <div class="card mod"><h4>叙事质量（新增）<span class="tag">§2.2.1</span></h4><ul>
+      <li>镜头语言：冗余机位、越轴（180° 规则）、景别不匹配、节奏不均</li>
+      <li>情节设计：给模糊或简短 prompt，能否写出连贯且有意思的剧情</li>
+      <li>风格美学：光线、构图、调色，及人物 / 服装 / 道具 / 布景是否协调</li></ul></div>
+    <div class="card mod"><h4>量表与三档比例<span class="tag">表 1 · 表 2 · 表 24</span></h4><ul>
+      <li>T2V / I2V 各维度 1–5 分；R2V 的多模态任务遵循和 prompt 遵循 1–3 分，其余 1–5 分。</li>
+      <li>可用率 = ≥3 分占比；满意率 = ≥4 分；惊喜率 = 5 分。</li></ul></div>
+    <div class="card mod"><h4>评审来源<span class="tag">§2.1 · §2.2</span></h4><ul>
+      <li>与媒体行业专家共建基准；引入广告与游戏制作背景的专家做主观评分，侧重叙事与美学。</li>
+      <li>人数、每条样本评几人、一致性：<span class="nd">原文未披露</span></li></ul></div>
+  </div>
+
+  <h3 class="prose">6.2 Arena 公开榜</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="Arena.AI 文生视频和图生视频排行榜截图，dreamina-seedance-2.0-720p 均排第一" loading="lazy"></div>
+    <figcaption><b>Arena.AI T2V（上）与 I2V（下）排行榜</b>，访问时间 2026-04-08（美东）。绿框为 dreamina-seedance-2.0-720p，分数旁标 Preliminary。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>榜单</th><th>Seedance 2.0 分数</th><th>票数</th><th>第 2 名</th><th>第 2 名分数 / 票数</th><th>领先</th></tr></thead>
+    <tbody>
+      <tr><td>T2V</td><td class="q best">1450 ±15</td><td>2,702</td><td>veo-3.1-audio-1080p</td><td>1371 ±16 / 5,878</td><td>79</td></tr>
+      <tr><td>I2V</td><td class="q best">1449 ±11</td><td>6,998</td><td>grok-imagine-video-720p</td><td>1420 ±8 / 220,941</td><td>29</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">分数、票数读自图 2；领先分差见 §2.2.2。原文强调以 720p 胜过 1080p 对手<span class="src">§2.2.2</span>。</p>
+
+  <h3 class="prose">6.3 T2V（对比 Kling 2.6 / Kling 3.0 / Sora2 Pro / Veo3.1 / Seedance 1.5）</h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>模型</th><th>运动</th><th>视频指令遵循</th><th>美学</th><th>音频质量</th><th>音画同步</th><th>音频指令遵循</th></tr></thead>
+    <tbody>
+      <tr><td>Kling 2.6</td><td>2.72</td><td>2.39</td><td>3.21</td><td>2.46</td><td>2.67</td><td>2.00</td></tr>
+      <tr><td>Kling 3.0</td><td>3.10</td><td>2.78</td><td>3.36</td><td>2.74</td><td>2.78</td><td>2.54</td></tr>
+      <tr><td>Sora2 Pro</td><td>2.69</td><td>2.81</td><td>2.82</td><td>2.76</td><td>2.65</td><td>2.92</td></tr>
+      <tr><td>Veo3.1</td><td>2.73</td><td>2.59</td><td>2.88</td><td>2.62</td><td>2.54</td><td>2.24</td></tr>
+      <tr><td>Seedance 1.5</td><td>2.39</td><td>2.59</td><td>3.19</td><td>2.88</td><td>2.91</td><td>2.69</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">3.75</td><td class="best">3.43</td><td class="best">3.67</td><td class="best">3.63</td><td class="best">3.75</td><td class="best">3.56</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">表 1，1–5 分。原文：相对 Seedance 1.5 平均 +0.86，运动 +1.36；运动与音画同步领先第二名至少 0.65<span class="src">§2.3.1</span>。</p>
+
+  <div class="wide">
+    <div class="chart-grid g2">
+<div class="chart-cell"><svg class="chart" viewBox="0 0 340 200" role="img" aria-label="T2V Motion Quality">
+<text class="ch-t" x="0" y="14">T2V 运动质量（1–5 分）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 1</text>
+<line x1="118.0" y1="28" x2="118.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="180" text-anchor="middle">0</text>
+<line x1="153.6" y1="28" x2="153.6" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="153.6" y="180" text-anchor="middle">1</text>
+<line x1="189.2" y1="28" x2="189.2" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="189.2" y="180" text-anchor="middle">2</text>
+<line x1="224.8" y1="28" x2="224.8" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="224.8" y="180" text-anchor="middle">3</text>
+<line x1="260.4" y1="28" x2="260.4" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="260.4" y="180" text-anchor="middle">4</text>
+<line x1="296.0" y1="28" x2="296.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="180" text-anchor="middle">5</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Seedance 2.0</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="133.5" height="14" rx="3"/>
+<text class="ch-val" x="255.5" y="45">3.75</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Kling 3.0</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o2" x="118" y="56" width="110.4" height="14" rx="3"/>
+<text class="ch-val" x="232.4" y="67">3.10</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Veo3.1</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="97.2" height="14" rx="3"/>
+<text class="ch-val" x="219.2" y="89">2.73</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Kling 2.6</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="96.8" height="14" rx="3"/>
+<text class="ch-val" x="218.8" y="111">2.72</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Sora2 Pro</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="95.8" height="14" rx="3"/>
+<text class="ch-val" x="217.8" y="133">2.69</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">Seedance 1.5</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="85.1" height="14" rx="3"/>
+<text class="ch-val" x="207.1" y="155">2.39</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="166"/>
+</svg>
+<div class="tbl-note">轴从 0 起；量表最低 1 分。</div>
+</div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 340 200" role="img" aria-label="T2V Audio Quality satisfaction rate">
+<text class="ch-t" x="0" y="14">T2V 音频质量满意率（≥4 分）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 2</text>
+<line x1="118.0" y1="28" x2="118.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="180" text-anchor="middle">0</text>
+<line x1="162.5" y1="28" x2="162.5" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="162.5" y="180" text-anchor="middle">25</text>
+<line x1="207.0" y1="28" x2="207.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="207.0" y="180" text-anchor="middle">50</text>
+<line x1="251.5" y1="28" x2="251.5" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="251.5" y="180" text-anchor="middle">75</text>
+<line x1="296.0" y1="28" x2="296.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="180" text-anchor="middle">100</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Seedance 2.0</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="110.4" height="14" rx="3"/>
+<text class="ch-val" x="232.4" y="45">62.05%</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Sora2 Pro</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o2" x="118" y="56" width="17.5" height="14" rx="3"/>
+<text class="ch-val" x="139.5" y="67">9.81%</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Kling 3.0</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="17.1" height="14" rx="3"/>
+<text class="ch-val" x="139.1" y="89">9.59%</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Seedance 1.5</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="9.5" height="14" rx="3"/>
+<text class="ch-val" x="131.5" y="111">5.36%</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Veo3.1</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="7.3" height="14" rx="3"/>
+<text class="ch-val" x="129.3" y="133">4.10%</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">Kling 2.6</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="4.9" height="14" rx="3"/>
+<text class="ch-val" x="126.9" y="155">2.75%</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="166"/>
+</svg>
+<div class="tbl-note">轴 0–100%。</div>
+</div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 340 200" role="img" aria-label="I2V Motion Quality">
+<text class="ch-t" x="0" y="14">I2V 运动质量（1–5 分）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 9</text>
+<line x1="118.0" y1="28" x2="118.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="180" text-anchor="middle">0</text>
+<line x1="153.6" y1="28" x2="153.6" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="153.6" y="180" text-anchor="middle">1</text>
+<line x1="189.2" y1="28" x2="189.2" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="189.2" y="180" text-anchor="middle">2</text>
+<line x1="224.8" y1="28" x2="224.8" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="224.8" y="180" text-anchor="middle">3</text>
+<line x1="260.4" y1="28" x2="260.4" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="260.4" y="180" text-anchor="middle">4</text>
+<line x1="296.0" y1="28" x2="296.0" y2="166" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="180" text-anchor="middle">5</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Seedance 2.0</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="119.3" height="14" rx="3"/>
+<text class="ch-val" x="241.3" y="45">3.35</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Kling 3.0</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o2" x="118" y="56" width="99.7" height="14" rx="3"/>
+<text class="ch-val" x="221.7" y="67">2.80</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Veo3.1</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="94.3" height="14" rx="3"/>
+<text class="ch-val" x="216.3" y="89">2.65</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Seedance 1.5 Pro</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="90.1" height="14" rx="3"/>
+<text class="ch-val" x="212.1" y="111">2.53</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Kling 2.6</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="89.7" height="14" rx="3"/>
+<text class="ch-val" x="211.7" y="133">2.52</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">Wan 2.6</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="82.6" height="14" rx="3"/>
+<text class="ch-val" x="204.6" y="155">2.32</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="166"/>
+</svg>
+<div class="tbl-note">轴从 0 起。</div>
+</div>
+<div class="chart-cell"><svg class="chart" viewBox="0 0 340 156" role="img" aria-label="R2V Reference Alignment">
+<text class="ch-t" x="0" y="14">R2V 参考对齐（1–5 分）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 24</text>
+<line x1="118.0" y1="28" x2="118.0" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="136" text-anchor="middle">0</text>
+<line x1="153.6" y1="28" x2="153.6" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="153.6" y="136" text-anchor="middle">1</text>
+<line x1="189.2" y1="28" x2="189.2" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="189.2" y="136" text-anchor="middle">2</text>
+<line x1="224.8" y1="28" x2="224.8" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="224.8" y="136" text-anchor="middle">3</text>
+<line x1="260.4" y1="28" x2="260.4" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="260.4" y="136" text-anchor="middle">4</text>
+<line x1="296.0" y1="28" x2="296.0" y2="122" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="136" text-anchor="middle">5</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Seedance 2.0</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="107.9" height="14" rx="3"/>
+<text class="ch-val" x="229.9" y="45">3.03</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Kling 3.0*</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o2" x="118" y="56" width="84.4" height="14" rx="3"/>
+<text class="ch-val" x="206.4" y="67">2.37</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Kling O1</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="82.6" height="14" rx="3"/>
+<text class="ch-val" x="204.6" y="89">2.32</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Vidu Q2 Pro</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="63.7" height="14" rx="3"/>
+<text class="ch-val" x="185.7" y="111">1.79</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="122"/>
+</svg>
+<div class="tbl-note">* 表 24 写 Kling 3.0，正文同段写 Kling 3 Omni，引用同为 [12]。</div>
+</div>
+    </div>
+    <div class="chart-legend"><span class="l1">Seedance 2.0</span><span class="l4">该项第二名</span><span class="l3">其他对比模型</span></div>
+  </div>
+
+  <details class="more wide"><summary>表 2 · T2V 可用率 / 满意率 / 惊喜率全表<span class="hint">18 行</span></summary><div class="body">
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>模型</th><th>运动</th><th>视频指令</th><th>美学</th><th>音频质量</th><th>音画同步</th><th>音频指令</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="7">可用率（≥3 分）</td></tr>
+      <tr><td>Kling 2.6</td><td>70.55%</td><td>41.72%</td><td>90.80%</td><td>45.98%</td><td>58.04%</td><td>29.02%</td></tr>
+      <tr><td>Kling 3.0</td><td>82.82%</td><td>58.90%</td><td>91.10%</td><td>66.52%</td><td>66.96%</td><td>54.02%</td></tr>
+      <tr><td>Sora2 Pro</td><td>65.08%</td><td>62.54%</td><td>63.17%</td><td>66.82%</td><td>59.35%</td><td>63.08%</td></tr>
+      <tr><td>Veo3.1</td><td>67.13%</td><td>53.63%</td><td>74.39%</td><td>60.51%</td><td>54.36%</td><td>37.44%</td></tr>
+      <tr><td>Seedance 1.5</td><td>46.93%</td><td>54.29%</td><td class="best">96.93%</td><td>82.59%</td><td>69.64%</td><td>56.70%</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">97.55%</td><td class="best">84.97%</td><td>96.32%</td><td class="best">93.75%</td><td class="best">93.30%</td><td class="best">83.93%</td></tr>
+      <tr class="grp"><td colspan="7">满意率（≥4 分）</td></tr>
+      <tr><td>Kling 2.6</td><td>3.99%</td><td>9.20%</td><td>29.75%</td><td>2.75%</td><td>18.75%</td><td>8.04%</td></tr>
+      <tr><td>Kling 3.0</td><td>28.22%</td><td>21.47%</td><td>43.56%</td><td>9.59%</td><td>15.18%</td><td>17.86%</td></tr>
+      <tr><td>Sora2 Pro</td><td>6.98%</td><td>22.54%</td><td>20.00%</td><td>9.81%</td><td>19.16%</td><td>31.78%</td></tr>
+      <tr><td>Veo3.1</td><td>6.57%</td><td>12.11%</td><td>13.84%</td><td>4.10%</td><td>13.33%</td><td>14.87%</td></tr>
+      <tr><td>Seedance 1.5</td><td>1.23%</td><td>12.27%</td><td>21.78%</td><td>5.36%</td><td>25.45%</td><td>25.45%</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">67.18%</td><td class="best">51.23%</td><td class="best">61.66%</td><td class="best">62.05%</td><td class="best">68.30%</td><td class="best">57.94%</td></tr>
+      <tr class="grp"><td colspan="7">惊喜率（=5 分）</td></tr>
+      <tr><td>Kling 2.6</td><td>0.00%</td><td>0.31%</td><td>1.53%</td><td>0.00%</td><td>1.34%</td><td>0.45%</td></tr>
+      <tr><td>Kling 3.0</td><td>0.61%</td><td>2.76%</td><td>1.53%</td><td>0.00%</td><td>1.34%</td><td>2.23%</td></tr>
+      <tr><td>Sora2 Pro</td><td>0.00%</td><td>2.86%</td><td>0.63%</td><td>0.00%</td><td>0.47%</td><td>11.68%</td></tr>
+      <tr><td>Veo3.1</td><td>0.00%</td><td>0.69%</td><td>0.35%</td><td>0.00%</td><td>0.00%</td><td>0.51%</td></tr>
+      <tr><td>Seedance 1.5</td><td>0.00%</td><td>0.31%</td><td>0.00%</td><td>0.00%</td><td>1.79%</td><td>1.79%</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">10.43%</td><td class="best">8.28%</td><td class="best">9.20%</td><td class="best">6.70%</td><td class="best">13.84%</td><td class="best">26.92%</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note">美学可用率 Seedance 1.5（96.93%）略高于 2.0（96.32%），是表 2 唯一 2.0 不领先的格子。</p>
+  </div></details>
+
+  <h4 class="prose">按场景（图 3，仅标注了 Seedance 2.0 的数值）</h4>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="T2V 六场景雷达图中的 Ad 与 Fiction 两张，红色外圈为最高值" loading="lazy"></div>
+    <figcaption><b>T2V 六场景雷达图</b>（裁图仅含 Ad、Fiction 两张的上半部分）。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>场景</th><th>运动</th><th>视频遵循</th><th>美学</th><th>音频质量</th><th>音画同步</th><th>音频遵循</th></tr></thead>
+    <tbody>
+      <tr><td>Ad</td><td>3.71</td><td>3.50</td><td>3.58</td><td>3.56</td><td>3.44</td><td>3.10</td></tr>
+      <tr><td>Fiction</td><td>3.67</td><td>3.53</td><td>3.87</td><td>3.54</td><td>3.15</td><td>3.15</td></tr>
+      <tr><td>PGC</td><td class="best">3.97</td><td>3.34</td><td class="best">4.13</td><td class="best">3.75</td><td class="best">3.84</td><td>3.53</td></tr>
+      <tr><td>Consumer Effects</td><td>3.46</td><td>3.46</td><td class="flag">2.89</td><td class="flag">3.08</td><td>3.58</td><td>3.42</td></tr>
+      <tr><td>Social</td><td>3.55</td><td>3.32</td><td>3.32</td><td>3.67</td><td>3.70</td><td class="best">3.77</td></tr>
+      <tr><td>Basic</td><td>3.78</td><td>3.47</td><td>3.73</td><td>3.63</td><td>3.83</td><td>3.63</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">数值读自图 3 的标注（只标了 Seedance 2.0），对手的场景分原文未给。圆点 = 该列最高；框 = 本页标出的低点。Consumer Effects 美学 2.89 与表 5「Consumer Visual Effects」美学 2.79 不领先相互印证。</p>
+
+  <h4 class="prose">T2V 细分表要点（表 3–8）</h4>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>运动 · 表 3</h4><p>30 类中 29 类第一，第 30 类（群体协同运动 3.29）与 Kling 3.0 并列；区间 3.29–4.43<span class="src">§2.3.2</span>。1.5 的短板物理反馈 1.69 → 3.46、自然现象 2.00 → 3.78、剧烈运动 2.00 → 3.79<span class="src">表 3</span>。</p></div>
+    <div class="card mod"><h4>视频指令遵循 · 表 4</h4><p>27/30 第一，区间 2.71–4.29。文字类涨幅最大：创意文字 1.86 → 3.43、短文本 2.00 → 3.57、文字叠加 2.15 → 3.31<span class="src">§2.3.3</span>。Sora 2 Pro 在抽象挑战（4.17 vs 3.86）、构图（3.50 vs 3.13）领先。</p></div>
+    <div class="card mod"><h4>美学 · 表 5</h4><p>28/30 第一或并列，区间 2.79–4.14；不领先的是消费级特效（1.5：3.00 vs 2.79）与超现实运动（Kling 3.0：3.86 vs 3.57）<span class="src">§2.3.4</span>。</p></div>
+    <div class="card mod"><h4>音频三表 · 表 6–8</h4><p>音频质量 17/17 第一（2.82–4.17）；音画同步、音频指令遵循各 16/17 第一 + 1 项并列。中文方言是所有模型的短板：音频遵循 6 个模型中 5 个低于 2.0，Seedance 2.0 也只有 2.91<span class="src">§2.3.7 · 表 8</span>。</p></div>
+  </div>
+
+  <h3 class="prose">6.4 I2V（对比 Wan 2.6 / Kling 2.6 / Veo3.1 / Seedance 1.5 Pro / Kling 3.0）</h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>模型</th><th>运动</th><th>视频指令遵循</th><th>图像保持</th><th>音频质量与表现力</th><th>音画同步</th><th>音频指令遵循</th></tr></thead>
+    <tbody>
+      <tr><td>Wan 2.6</td><td>2.32</td><td>2.74</td><td>2.61</td><td>2.20</td><td>2.18</td><td>2.55</td></tr>
+      <tr><td>Kling 2.6</td><td>2.52</td><td>2.55</td><td>2.98</td><td>2.21</td><td>2.27</td><td>2.21</td></tr>
+      <tr><td>Veo3.1</td><td>2.65</td><td>2.87</td><td>2.69</td><td>2.68</td><td>2.69</td><td>2.79</td></tr>
+      <tr><td>Seedance 1.5 Pro</td><td>2.53</td><td>2.77</td><td>2.92</td><td>3.07</td><td>2.95</td><td>3.10</td></tr>
+      <tr><td>Kling 3.0</td><td>2.80</td><td>2.78</td><td>3.18</td><td>2.89</td><td>2.83</td><td>2.85</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">3.35</td><td class="best">3.46</td><td class="best">3.31</td><td class="best">3.61</td><td class="best">3.54</td><td class="best">3.70</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">表 9，1–5 分。图像保持差距最小（Kling 3.0 落后 0.13），运动差距 0.55<span class="src">§2.4.1</span>。可用率：Seedance 2.0 六项均 &gt;87%；满意率：运动 43.88% vs Kling 3.0 12.00%，图像保持 38.85% vs 27.27%，音频指令遵循 63.52% vs 1.5 Pro 37.77%<span class="src">表 10</span>。</p>
+
+  <details class="more wide"><summary>表 10 · I2V 可用率 / 满意率全表<span class="hint">12 行</span></summary><div class="body">
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>模型</th><th>运动</th><th>视频指令</th><th>图像保持</th><th>音频质量</th><th>音画同步</th><th>音频指令</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="7">可用率（≥3 分）</td></tr>
+      <tr><td>Wan 2.6</td><td>32.71%</td><td>59.02%</td><td>59.77%</td><td>27.03%</td><td>25.68%</td><td>51.80%</td></tr>
+      <tr><td>Kling 2.6</td><td>48.72%</td><td>48.72%</td><td>80.59%</td><td>27.19%</td><td>31.14%</td><td>30.26%</td></tr>
+      <tr><td>Veo3.1</td><td>59.69%</td><td>65.50%</td><td>67.05%</td><td>60.75%</td><td>59.35%</td><td>56.54%</td></tr>
+      <tr><td>Seedance 1.5 Pro</td><td>51.44%</td><td>58.99%</td><td>80.58%</td><td>93.99%</td><td>80.26%</td><td>70.39%</td></tr>
+      <tr><td>Kling 3.0</td><td>68.00%</td><td>60.00%</td><td>90.55%</td><td>77.39%</td><td>68.70%</td><td>66.52%</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">87.05%</td><td class="best">88.85%</td><td class="best">91.37%</td><td class="best">97.42%</td><td class="best">91.85%</td><td class="best">92.27%</td></tr>
+      <tr class="grp"><td colspan="7">满意率（≥4 分）</td></tr>
+      <tr><td>Wan 2.6</td><td>2.63%</td><td>16.54%</td><td>7.52%</td><td>0.45%</td><td>1.80%</td><td>9.91%</td></tr>
+      <tr><td>Kling 2.6</td><td>5.86%</td><td>9.52%</td><td>19.05%</td><td>1.32%</td><td>2.19%</td><td>5.70%</td></tr>
+      <tr><td>Veo3.1</td><td>7.36%</td><td>20.54%</td><td>6.20%</td><td>7.48%</td><td>10.28%</td><td>24.30%</td></tr>
+      <tr><td>Seedance 1.5 Pro</td><td>3.60%</td><td>18.71%</td><td>12.59%</td><td>13.30%</td><td>15.45%</td><td>37.77%</td></tr>
+      <tr><td>Kling 3.0</td><td>12.00%</td><td>18.91%</td><td>27.27%</td><td>12.61%</td><td>15.22%</td><td>20.87%</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">43.88%</td><td class="best">47.48%</td><td class="best">38.85%</td><td class="best">57.08%</td><td class="best">54.94%</td><td class="best">63.52%</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note">I2V 表 10 没有惊喜率（=5 分）一档。</p>
+  </div></details>
+
+  <h4 class="prose">I2V 细分表要点（表 11–23；MQ 运动质量、IP 图像保持、VPF 视频指令遵循、AQ 音频质量、AVS 音画同步、APF 音频指令遵循）</h4>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>复合指令最突出 · 表 12</h4><p>复合多指令 MQ 4.00 / VPF 3.75；Seedance 1.5 Pro 为 2.13 / 2.25，Kling 3.0 MQ 2.88<span class="src">§2.4.2</span>。「程度副词」子类最接近：3.20 / 3.40 / 3.40 vs 1.5 Pro 2.80 / 3.00 / 3.07。</p></div>
+    <div class="card mod"><h4>镜头仍是共同难点 · 表 13</h4><p>高级运镜子类没有任何模型任一指标超过 3.14；Seedance 2.0 与 Kling 3.0 的 MQ 并列 2.71<span class="src">§2.4.2</span>。</p></div>
+    <div class="card mod"><h4>动作与表情 · 表 14</h4><p>打斗特效 MQ 3.63，Kling 3.0 与 1.5 Pro 均为 2.25（差 1.38）；微表情 MQ 2.88 → 3.63<span class="src">§2.4.2</span>。</p></div>
+    <div class="card mod"><h4>群体与物理 · 表 15 · 表 17</h4><p>群体运动 3.00 / 3.00 / 2.88，多数对手约 2.5；物理规律三子类 MQ 2.87–3.33，Kling 3.0 在自然现象 IP 上反超（3.56 vs 3.44）<span class="src">§2.4.2</span>。</p></div>
+    <div class="card mod"><h4>中文语音 · 表 19</h4><p>中文对话 AQ 3.92 / APF 4.08；戏曲 APF 只有 2.50，所有模型在戏曲指令遵循上都弱<span class="src">§2.4.3</span>。</p></div>
+    <div class="card mod"><h4>非中文语音与音效 · 表 20–23</h4><p>6 种非中文语言 AQ 均 ≥3.50，英文 APF 4.20<span class="src">表 20</span>；音效五子类 AVS 全第一，背景音 AQ 被 1.5 Pro 反超（3.30 vs 3.20）<span class="src">表 22</span>。</p></div>
+  </div>
+
+  <h3 class="prose">6.5 R2V（对比 Vidu Q2 Pro / Kling O1 / Kling 3.0 · Kling 3 Omni）</h3>
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>模型</th><th>多模态任务遵循<br>(1–3)</th><th>编辑一致性<br>(1–5)</th><th>参考对齐<br>(1–5)</th><th>运动质量<br>(1–5)</th><th>Prompt 遵循<br>(1–3)</th></tr></thead>
+    <tbody>
+      <tr><td>Vidu Q2 Pro</td><td>2.13</td><td>2.29</td><td>1.79</td><td>2.38</td><td>2.08</td></tr>
+      <tr><td>Kling O1</td><td>2.30</td><td>2.89</td><td>2.32</td><td>2.30</td><td>1.95</td></tr>
+      <tr><td>Kling 3.0<sup>*</sup></td><td>2.32</td><td>3.37</td><td>2.37</td><td>2.36</td><td>1.95</td></tr>
+      <tr class="hl"><td>Seedance 2.0</td><td class="best">2.50</td><td class="best">3.54</td><td class="best">3.03</td><td class="best">3.24</td><td class="best">2.52</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">表 24。<sup>*</sup> 表中行名为 Kling 3.0，正文同段写作 Kling 3 Omni，引用均为 [12]。两种量表混用，不能跨列平均。差距最小在编辑一致性（0.17），最大在运动质量（0.86–0.94）与参考对齐（0.66–1.24）<span class="src">§2.5.1</span>。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>任务覆盖 · 表 25<span class="tag">✓ 支持 · ✗ 不支持</span></h4>
+      <dl class="kv"><dt>Seedance 2.0</dt><dd>20 / 22</dd><dt>Vidu Q2 Pro</dt><dd>13 / 22</dd><dt>Kling O1</dt><dd>10 / 22</dd><dt>Kling 3 Omni</dt><dd>9 / 22</dd></dl>
+      <p>两项所有模型都不支持：主体音视频 + 音频参考、视频音频编辑。仅 Seedance 2.0 支持的 7 项：视觉特效 / 创意参考 3 种 + 续写 / 延展 4 种<span class="src">§2.5.1</span>。</p></div>
+    <div class="card mod"><h4>动态 vs 首帧保持<span class="tag nd-tag">取舍</span></h4>
+      <p>运动参考任务里 Kling 3 Omni 首帧保持 4.31、Seedance 2.0 2.71。原文解释：Kling 3 Omni 几乎不改首帧但后续运动弱，Seedance 2.0 动态更强、首帧保真更低<span class="src">表 27 · §2.5.1</span>。</p></div>
+  </div>
+
+  <div class="tbl-wrap wide"><table class="pairs">
+    <thead><tr><th>R2V 子任务</th><th>任务遵循 (1–3)<small>Seedance 2.0 / 该项最佳对手</small></th><th>参考对齐 (1–5)</th><th>其他</th></tr></thead>
+    <tbody>
+      <tr><td>主体参考 · 图像</td><td class="win"><span class="a">2.80</span> <span class="b">/ Kling O1 2.71</span></td><td class="win"><span class="a">3.18</span> <span class="b">/ Kling O1 2.71</span></td><td>—</td></tr>
+      <tr><td>主体参考 · 视频</td><td class="win"><span class="a">2.95</span> <span class="b">/ Kling 3 Omni 2.67</span></td><td class="win"><span class="a">3.35</span> <span class="b">/ Kling 3 Omni 2.50</span></td><td>—</td></tr>
+      <tr><td>主体参考 · First Video</td><td class="lose"><span class="a">2.89</span> <span class="b">/ Sora 2 3.00</span></td><td><span class="a">3.27</span> <span class="b">/ Sora 2 3.27（并列）</span></td><td>—</td></tr>
+      <tr><td>主体参考 · 图像 + 音频</td><td class="win"><span class="a">2.29</span> <span class="b">/ Kling 3 Omni 2.11</span></td><td class="win"><span class="a">2.37</span> <span class="b">/ Kling 3 Omni 2.05</span></td><td>—</td></tr>
+      <tr><td>运动参考</td><td class="win"><span class="a">2.60</span> <span class="b">/ Kling 3 Omni 2.20</span></td><td class="win"><span class="a">2.64</span> <span class="b">/ Kling 3 Omni 1.97</span></td><td class="lose">首帧保持 <span class="a">2.71</span> <span class="b">/ Kling 3 Omni 4.31</span></td></tr>
+      <tr><td>风格参考</td><td class="win"><span class="a">2.57</span> <span class="b">/ Vidu Q2 Pro 2.15</span></td><td class="win"><span class="a">2.37</span> <span class="b">/ Vidu Q2 Pro 1.85</span></td><td>—</td></tr>
+      <tr><td>视频编辑</td><td class="lose"><span class="a">2.20</span> <span class="b">/ Kling O1 2.29</span></td><td class="win"><span class="a">3.79</span> <span class="b">/ Kling O1 3.03</span></td><td class="win">编辑一致性 <span class="a">3.75</span> <span class="b">/ Kling 3 Omni 3.09</span></td></tr>
+      <tr><td>视频续写</td><td><span class="a">2.88</span> <span class="b">/ 无对手</span></td><td><span class="a">3.18</span> <span class="b">/ 无对手</span></td><td>—</td></tr>
+      <tr><td>视频延展</td><td class="lose"><span class="a">1.93</span> <span class="b">/ Veo 3.1 2.78</span></td><td class="lose"><span class="a">3.28</span> <span class="b">/ Veo 3.1 3.44</span></td><td>Veo 3.1 只能延展自己生成的视频</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">来源：表 26–28。「—」在原表中表示不支持；本表「—」表示该子任务无此列。3 分占比：主体图像参考 80%（≥2 分 100%），主体视频参考 95%，风格参考 60%，延展 31.82%（Veo 3.1 为 88.89%）<span class="src">§2.5.1</span>。</p>
+
+  <h3 class="prose">6.6 Seedance 2.0 没有领先的格子</h3>
+  <p class="prose">原文称「every task 全维度第一」<span class="src">§2.1 · 图 1</span>，这在汇总表（表 1、9、24）上成立。逐格核对细分表，落后的地方如下（并列未计入）：</p>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>表</th><th>子项 · 指标</th><th>Seedance 2.0</th><th>领先者</th></tr></thead>
+    <tbody>
+      <tr><td>表 2</td><td>T2V 美学可用率</td><td>96.32%</td><td>Seedance 1.5 96.93%</td></tr>
+      <tr><td>表 4</td><td>抽象挑战 / 构图 / 拟人运动 · VPF</td><td>3.86 / 3.13 / 2.86</td><td>Sora2 Pro 4.17 / Sora2 Pro 3.50 / Veo3.1 3.00</td></tr>
+      <tr><td>表 5</td><td>消费级特效 / 超现实运动 · 美学</td><td>2.79 / 3.57</td><td>Seedance 1.5 3.00 / Kling 3.0 3.86</td></tr>
+      <tr><td>表 11</td><td>UGC 创意 / 人像 · VPF</td><td>3.53</td><td>Veo 3.1 3.87</td></tr>
+      <tr><td>表 13</td><td>高难镜头与特殊技法 · VPF</td><td>3.00</td><td>Kling 2.6 3.38</td></tr>
+      <tr><td>表 16</td><td>设计类指令 · VPF</td><td>2.87</td><td>Veo 3.1 2.93</td></tr>
+      <tr><td>表 17</td><td>自然现象 IP / 专业物理现象 IP / 日常物理反馈 IP</td><td>3.44 / 3.36 / 3.07</td><td>Kling 3.0 3.56 / Kling 2.6 3.50 / Kling 3.0 3.13</td></tr>
+      <tr><td>表 18</td><td>多族裔 / 肤色 · IP</td><td>3.33</td><td>Kling 3.0 3.43</td></tr>
+      <tr><td>表 20</td><td>日语 / 韩语 / 葡语 · APF</td><td>3.13 / 3.38 / 3.63</td><td>Seedance 1.5 Pro 3.63 / 3.50 / 4.00</td></tr>
+      <tr><td>表 22</td><td>背景 / 环境音 · AQ</td><td>3.20</td><td>Seedance 1.5 Pro 3.30</td></tr>
+      <tr><td>表 26–28</td><td>First Video 任务遵循、首帧保持、视频编辑任务遵循、延展两项</td><td>见上表</td><td>Sora 2 / Kling 3 Omni / Kling O1 / Veo 3.1</td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide">本页逐格比对结果；原文正文对其中大部分有提及，表 13、16、17（专业物理现象 Kling 2.6、日常物理反馈 Kling 3.0）几项正文未点明是落后。</p>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">方法层面无法核对（未披露），下面只列能在原文表格或明确陈述中对上的新点。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>四模态输入 + 音视频同出，放在一个模型里</h4><p>文本、≤9 图、≤3 视频、≤3 音频同时作为条件，输出带双声道音频的 4–15 s 视频<span class="src">§1</span>。前代 1.5 Pro 是音视频同步生成，2.0 扩到多模态参考与编辑<span class="src">§1</span>。</p><p class="why">可核对：表 25 的任务支持矩阵。</p></div>
+    <div class="card nv"><h4>续写 / 延展与特效参考是独有能力</h4><p>7 种任务没有对手支持；延展可接受任意上传视频并叠加主体参考图，而 Veo 3.1 只能延展自己生成的视频<span class="src">表 25 · §2.5.1</span>。但延展质量最弱（任务遵循 1.93）<span class="src">表 28</span>。</p><p class="why">可核对：表 25、表 28。</p></div>
+    <div class="card nv"><h4>音频成为主要差异点</h4><p>T2V 音频质量满意率 62.05%，对手均 &lt;10%；只有 Seedance 2.0 有音频质量惊喜率（6.70%）<span class="src">表 2</span>。双声道单列成一个评测子类<span class="src">表 6–8 · 表 23</span>。</p><p class="why">可核对：表 2、表 6–8。</p></div>
+    <div class="card nv"><h4>评测协议升级：SeedVideoBench 2.0</h4><p>正式定义多模态任务遵循与两类一致性（参考对齐、编辑一致性）；新增叙事质量三子维度；主客观分轨；外加「能否与真实视频区分」的真实度研究<span class="src">§2.2.1</span>。</p><p class="why">可核对：§2.2.1 与表 24–28 的指标结构；评测集本身不公开。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPL -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">这篇没给训练数据和 caption 细节，可借鉴的几乎都在评测协议。每条先写论文怎么做（带出处），再写一条可迁移做法。<b>「迁移」都是本页的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>执行了没有 / 像不像参考 / 别处动没动，三件事分开打分</h4>
+        <p class="paper">论文：R2V 把「多模态任务遵循」（1–3）、「参考对齐」（1–5）、「编辑一致性 = 非编辑区保持」（1–5）拆成独立维度<span class="src">§2.2.1 · 表 24</span>；视频编辑上任务遵循落后 Kling O1，但一致性领先，拆开才看得出来<span class="src">表 28</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>图像编辑评测至少报三列：指令执行、参考对齐（有参考图时）、非编辑区保持。不要合成一个总分；排名按列分别给。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>保持分高可能是「没改」</h4>
+        <p class="paper">论文：运动参考任务中 Kling 3 Omni 首帧保持 4.31，但原文说它几乎不改首帧、后续运动弱<span class="src">表 27 · §2.5.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>保持类指标必须和执行类指标配对看；在评测里单独统计「输出≈输入」的 no-op 比例（像素差或感知距离低于阈值且指令未执行），并把 no-op 样本的保持分排除或单列。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>均分之外报 ≥3 / ≥4 / =5 三档比例</h4>
+        <p class="paper">论文：可用率（≥3）、满意率（≥4）、惊喜率（=5）分档报告<span class="src">表 2 · 表 10</span>；美学均分差距不大时，满意率 61.66% vs 对手最高 43.56% 拉开了差距<span class="src">表 2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑人评报「可交付率」（≥3）与「满意率」（≥4），版本迭代看满意率变化；可交付率主要用来卡回归。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>指令遵循用 3 档，并报满分占比</h4>
+        <p class="paper">论文：任务遵循 1–3 分，并同时报「2 分率」「3 分率」，如主体图像参考 2.80 = 100% ≥2 分、80% 3 分<span class="src">§2.5.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑指令遵循用「未执行 / 部分执行 / 完全执行」三档，比 5 档更好对齐标注员；多操作指令按操作逐条打三档，再报「全部操作完全执行」的样本占比。</p></div>
+      <div class="impl"><h4><span class="ix">E5</span>细分类 × 维度的矩阵，而不是一个总分</h4>
+        <p class="paper">论文：I2V 每个子类同时报 MQ / IP / VPF，T2V 30 类各报三张表<span class="src">表 3–5 · 表 11–18</span>；短板因此可定位，如镜头类所有模型 &lt;3.2<span class="src">§2.4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑基准按操作类型（增 / 删 / 换 / 属性 / 文字 / 风格 / 视角…）× 三列指标出矩阵；新版本发布时只报总分会掩盖某一类退化。</p></div>
+      <div class="impl"><h4><span class="ix">E6</span>小预算下按方差设计抽样，并公布每格 n</h4>
+        <p class="paper">论文：评测集「样本分布调整以在小评测预算下最小化方差」<span class="src">§2.2.1</span>；但没公布每格样本量。表 3 许多分值是 1/7、1/13、1/14 的整数倍（4.43≈31/7、3.92≈51/13），每格可能只有 7–14 条<span class="src calc">推算</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每个细分格至少 30 条再下结论；格子小就合并上报，并给 bootstrap 置信区间。表里同时列 n。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>组合任务按真实工作流配对</h4>
+        <p class="paper">论文：组合任务如「用参考图替换视频主体」（参考 + 编辑），评测集里单独成组<span class="src">§2.2.1</span>；图像 + 音频联合参考两家都只有 2.29 / 2.11，原文称联合条件仍是难题<span class="src">表 26 · §2.5.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑训练/评测集里专门造「参考图 + 编辑指令」「多操作」组合样本，按组合类型单独统计；组合样本不能只由单任务样本拼接出指令，要重新标注目标。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>用「真假可辨度」做真实感信号</h4>
+        <p class="paper">论文：评审尝试区分生成视频与真实视频，结果回馈美学调优<span class="src">§2.2.1</span>（细节未披露）。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>修图结果与真实照片混排做二选一盲测，记录被识破率，按操作类型拆分；识破率高的类别优先补数据或做数据过滤（剔除带同类伪影的训练目标图）。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>评审换成「行业生产者」</h4>
+        <p class="paper">论文：广告与游戏制作背景的专家做主观评分，侧重叙事和美学；主观项盲评<span class="src">§2.2 · §2.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑美学 / 可交付判断请修图师或电商美工打分，与普通标注员的分数对比一致性；指令执行与保持仍可由普通标注员完成。</p></div>
+    </div>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>把「程度副词」「反现实」「知识」做成独立指令类别</h4>
+        <p class="paper">论文：I2V 有「Degree Adverbs」子类（Seedance 2.0 3.20 / 3.40 / 3.40）<span class="src">表 12</span>；T2V 有 Counter-Reality Instructions、Knowledge Assessment 等类<span class="src">表 3–5</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 caption 里系统地生成程度变体（「略微 / 明显 / 大幅」提亮、变瘦），同一源图配多档，评测时检查输出强度是否单调；反现实与需要常识的编辑指令单独成桶。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>文字内容在 prompt 里原样加引号</h4>
+        <p class="paper">论文：图 4 的示例 prompt 把要说的台词和要出现的字幕原样写进引号（如「Stay with me」、「宜口可乐，不可不尝！」）<span class="src">图 4</span>；文字类是 2.0 相对 1.5 涨幅最大的类别<span class="src">§2.3.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑类 caption 统一用引号包住目标字符串、保留原语言；QC 时对目标图 OCR，与引号内字符串做精确匹配。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>同时覆盖「长脚本」和「模糊短 prompt」</h4>
+        <p class="paper">论文：评测既有 Long Script、Compound Multi-Instructions，也有「给模糊或简短 prompt 能否写出连贯情节」的情节设计维度<span class="src">表 3 · §2.2.1</span>；I2V Script-Controlled (15s) 单独成类<span class="src">表 11</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每对编辑样本配「完整差异描述」和「用户口吻的一句话」两档 caption；评测集按长度/明确度分桶报分，模糊指令桶看合理性而非逐项对照。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>没有方法细节。</b>架构、参数规模、训练数据、caption、训练阶段、RL、Fast 版加速方法全部未披露，没有任何消融。「新」只能从能力和评测上核对。</li>
+    <li class="key"><b>核心分数全来自内部基准。</b>SeedVideoBench 2.0 不公开；样本量、评审人数、评审一致性、主客观两轨的划分都未给出。细分格样本量可能只有 7–14 条<span class="src calc">推算</span>，单格 0.1–0.3 分的差距不宜过度解读。</li>
+    <li><b>对比口径不透明。</b>对手模型的调用方式、分辨率、时长、提交时间未披露；T2V 对比「Seedance 1.5」、I2V 对比「Seedance 1.5 Pro」，都引 [16]；表 24 写 Kling 3.0，正文写 Kling 3 Omni。</li>
+    <li><b>「全维度第一」只在汇总层成立。</b>细分表中有十余格落后（见 6.6），R2V 延展是最弱任务（1.93 vs Veo 3.1 2.78）<span class="src">表 28</span>，视频编辑任务遵循也落后 Kling O1<span class="src">表 28</span>。</li>
+    <li><b>Arena 结果是预览状态。</b>两榜分数均标 Preliminary，票数 2,702 / 6,998，远少于部分对手（如 grok-imagine-video-720p 220,941 票）；是 2026-04-08 的单次快照<span class="src">图 2</span>。</li>
+    <li><b>表格自身不一致。</b>表 22 标注 1–5 分，但 Kling 2.6 动物声音 APF 为 0.56，低于量表下限，原文未解释<span class="src">表 22</span>。表 25 标 Vidu Q2 Pro 支持「Audio + Image Reference」，表 26 的「Subject Ref. Image &amp; Audio」却记为不支持「–」。</li>
+    <li><b>量表混用。</b>R2V 同表中 1–3 分与 1–5 分并列<span class="src">表 24</span>，图 1 雷达把它们画在同一张图上，视觉上不可直接比较面积。</li>
+    <li><b>作者自述的不足。</b>轻微形变、边缘情况下的运动合理性、高频视觉噪声、音频失真与噪声、多人说话时口型错误<span class="src">§2.1</span>；多主体一致性、文字还原、复杂编辑<span class="src">§2.1</span>；续写中的颜色一致性、多主体遗漏与主体重复<span class="src">§2.5.1</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>编号</th><th>内容</th><th>本页</th></tr></thead>
+    <tbody>
+      <tr><td>首页图</td><td>§1 引言段落裁图（架构的唯一文字描述）</td><td><a href="#arch">03 架构</a></td></tr>
+      <tr><td>图 1</td><td>T2V / I2V / R2V 汇总雷达图（裁图不含图例，数值见表 1、9、24）</td><td>未展示（figures/fig1.jpg）</td></tr>
+      <tr><td>图 2</td><td>Arena.AI T2V / I2V 排行榜</td><td><a href="#eval">06.2</a></td></tr>
+      <tr><td>图 3</td><td>T2V 六场景雷达图（裁图仅含 Ad、Fiction）</td><td><a href="#eval">06.3</a></td></tr>
+      <tr><td>图 4</td><td>T2V / I2V 可视化（裁图仅含两行 T2V）</td><td><a href="#top">Hero</a></td></tr>
+      <tr><td>表 1–2</td><td>T2V 六维均分；可用率 / 满意率 / 惊喜率</td><td><a href="#eval">06.3</a></td></tr>
+      <tr><td>表 3–8</td><td>T2V 细分：运动、视频指令遵循、美学（30 类）；音频质量、音画同步、音频指令遵循（17 类）</td><td><a href="#eval">06.3 要点</a></td></tr>
+      <tr><td>表 9–10</td><td>I2V 六维均分；可用率 / 满意率</td><td><a href="#eval">06.4</a></td></tr>
+      <tr><td>表 11–18</td><td>I2V 视觉细分：prompt 抽象、复杂指令、复杂镜头、复杂运动、复杂交互、创意、物理规律、复杂参考图</td><td><a href="#eval">06.4 要点</a></td></tr>
+      <tr><td>表 19–23</td><td>I2V 音频细分：中文语音、非中文语音、复合语音、音效、乐器 / 双声道 / UGC</td><td><a href="#eval">06.4 要点</a></td></tr>
+      <tr><td>表 24</td><td>R2V 五维汇总</td><td><a href="#eval">06.5</a></td></tr>
+      <tr><td>表 25</td><td>R2V 多模态任务支持矩阵</td><td><a href="#eval">06.5</a></td></tr>
+      <tr><td>表 26–28</td><td>R2V 主体参考；运动与风格参考；视频编辑 / 续写 / 延展</td><td><a href="#eval">06.5</a></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 ByteDance Seed,《Seedance 2.0: Advancing Video Generation for World Complexity》，<a href="https://arxiv.org/abs/2604.14148" target="_blank" rel="noopener">arXiv:2604.14148</a>（v1，2026-04-15；本页对照 v1 全文）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算或计数；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，此处仅用于学术解读。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

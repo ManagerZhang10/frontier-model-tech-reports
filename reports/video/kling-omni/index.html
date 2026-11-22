@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kling-Omni 中文深读 · 多模态视觉语言（MVL）统一视频生成与编辑 | 前沿模型技术报告</title>
+<meta name="description" content="Kling-Omni（Kling Team, Kuaishou, arXiv 2512.16776）中文深读：MVL 交互范式、Prompt Enhancer + Omni-Generator + 多模态超分三段式架构、数据系统与三层过滤、预训练→SFT→DPO→两段蒸馏、OmniVideo-1.0 人评 GSB，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: 5-stage flow, GSB stacked bars, data funnel */
+.flow5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 16px 0 6px; }
+.flow5 .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+.flow5 .stage p { font-size: .84rem; line-height: 1.55; margin: .3rem 0 0; color: var(--ink-2); }
+.stage.pre { border-top: 3px solid var(--accent); }
+.stage.post { border-top: 3px solid var(--warm); }
+.stage.side { border-top: 3px solid var(--good); }
+.side-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 4px; }
+.side-row .stage p { font-size: .86rem; margin: .3rem 0 0; color: var(--ink-2); }
+.gsb .seg-g { fill: var(--good); }
+.gsb .seg-s { fill: var(--bar-other); }
+.gsb .seg-b { fill: var(--warn); }
+.gsb .seg-t { font: 700 11.5px var(--f-mono); fill: #fff; }
+.gsb .ax { stroke: var(--line); stroke-width: 1; }
+.gsb .ax-t { font: 500 10.5px var(--f-mono); fill: var(--muted); }
+.gsb .lab { font: 600 12.5px var(--f-body); fill: var(--ink); }
+.gsb .lab2 { font: 500 11px var(--f-body); fill: var(--muted); }
+.gsb .ov { font: 700 15px var(--f-mono); fill: var(--accent); }
+.leg { display: flex; gap: 16px; flex-wrap: wrap; font-size: .82rem; color: var(--muted); margin-top: 6px; }
+.leg i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.funnel .pipe-row { grid-template-columns: 132px repeat(3, minmax(0, 1fr)); }
+.ck { color: var(--good); font-weight: 700; }
+.cx { color: var(--muted); }
+table.txt th, table.txt td { text-align: left; white-space: normal; }
+table.txt td:last-child { white-space: nowrap; }
+table.cap td:nth-child(2), table.cap th:nth-child(2) { text-align: left; }
+table.cap td:nth-child(n+3), table.cap th:nth-child(n+3) { text-align: center; }
+table.cap td.ck, table.cap td.cx { text-align: center; }
+@media (max-width: 960px) {
+  .flow5 { grid-template-columns: 1fr 1fr; }
+  .flow5 .stage::after { display: none; }
+  .side-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .flow5 { grid-template-columns: 1fr; }
+  .funnel .pipe-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视频生成</div>
+    <h1>Kling-Omni<span class="sub">Kling-Omni Technical Report · Omni Video Generation Model from Multi-modal Visual Language</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Kling Team, Kuaishou Technology</b></span>
+      <span>发布 <b>2025-12-18</b>（arXiv v1）</span>
+      <span>arXiv <b>2512.16776</b></span>
+      <span>Model ID <b>Kling-Omni（Kling-O1）</b></span>
+    </div>
+    <p class="lede">快手可灵把视频<b>生成、编辑、参考生成</b>收进一个模型：用户用「文本 + <code>@Image_k</code> / <code>@Video_k</code> / 主体库」组成的<b>多模态视觉语言（MVL）</b>下指令，经 Prompt Enhancer → Omni-Generator → 多模态超分三段出片<span class="src">§2.1</span>。报告的干货在<b>数据系统（真实挖掘 + 专家模型合成 + 三层过滤）</b>和<b>训练/推理工程</b>；评测只有内部人评 GSB：对 Veo 3.1 <b>247%</b>、对 Runway-Aleph <b>230%</b><span class="src">图 7</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>闭源 · 仅在线访问</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>参数规模：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>视频生成 · 视频编辑 · 参考生成</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>150 → 10 NFE</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2512.16776" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2512.16776</a>
+      <a href="https://arxiv.org/pdf/2512.16776v1" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>PDF v1</a>
+      <a href="https://app.klingai.com/global/omni/new" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>在线访问（原文给出）</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">形态</span><span class="stat-num sm">闭源产品</span><span class="stat-sub">原文只给在线访问地址与 Model ID「Kling-O1」，未提权重或代码</span><span class="src">摘要页</span></div>
+    <div class="card stat"><span class="stat-k">参数 / 层数 / VAE / 文本编码器</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">结论只说「与视觉语言模型对齐的 diffusion transformer」</span><span class="src">§5</span></div>
+    <div class="card stat"><span class="stat-k">系统组成</span><span class="stat-num sm">PE → Omni-Generator → 多模态超分</span><span class="stat-sub">PE 基于 MLLM；超分为级联扩散，用基座权重初始化</span><span class="src">§2.1 · §2.4</span></div>
+    <div class="card stat"><span class="stat-k">推理步数</span><span class="stat-num">150 → 10</span><span class="stat-sub">NFE；两段蒸馏：轨迹匹配 + 分布匹配</span><span class="src">§2.2.4</span></div>
+    <div class="card stat"><span class="stat-k">条件缓存加速</span><span class="stat-num">≈2×</span><span class="stat-sub">针对大量参考图 / 参考视频的长条件输入；另有 FP8 混合量化</span><span class="src">§2.6</span></div>
+    <div class="card stat"><span class="stat-k">有效训练时间比</span><span class="stat-num">97%</span><span class="stat-sub">分钟级 hang 检测、亚分钟重启</span><span class="src">§2.5.3</span></div>
+    <div class="card stat"><span class="stat-k">训练数据量 / 配比</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只给任务分布饼图（图 5），无数值</span><span class="src">§3 · 图 5</span></div>
+    <div class="card stat"><span class="stat-k">评测集 OmniVideo-1.0</span><span class="stat-num">500+</span><span class="stat-sub">内部构建的 case，未公开</span><span class="src">§4.1.1</span></div>
+    <div class="card stat"><span class="stat-k">GSB vs Veo 3.1</span><span class="stat-num">247%</span><span class="stat-sub">图像参考生成（Ingredients to video）；G 62 / S 32 / B 6</span><span class="src">图 7</span></div>
+    <div class="card stat"><span class="stat-k">GSB vs Runway-Aleph</span><span class="stat-num">230%</span><span class="stat-sub">视频编辑；G 61 / S 29 / B 10</span><span class="src">图 7</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>一个模型，指令里直接 @ 素材</h3><p>MVL 以自然语言为骨架、嵌入图像 / 视频 / 主体库引用；同一模型覆盖参考生成、指令编辑、前后镜头、新机位、动作/运镜迁移、首尾帧等 23 项能力<span class="src">表 1</span>，并能在一次生成里组合多条指令<span class="src">§4.2.4</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>数据：挖掘 + 专家合成 + 三层过滤</h3><p>用内部 embedding 模型挖掘语义相关 / 主体一致的跨模态样本；用内部图像编辑、视频理解模型合成编辑与多图参考数据；「自动反向合成」造参考生成视频样本<span class="src">§3.1</span>。过滤分基础治理、时序质量、跨模态对齐三层<span class="src">§3.2</span>。规模与配比全未披露。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>训练：渐进五段</h3><p>T2V + I2V 预训练 → 交错多模态 continue-training → 高质量 quality-tuning → 人工偏好对 DPO（多轮）→ 两段蒸馏到 10 NFE<span class="src">§2.2</span>。不用 GRPO，理由是省掉轨迹采样<span class="src">§2.2.3</span>。超参一个都没给。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>PE 和超分也是正式组件</h3><p>Prompt Enhancer 先 SFT 学推理链、再 RL，奖励含「改写后 prompt 与高质量训练数据的相似度」<span class="src">§2.3</span>；超分用局部窗口 + 奇数层移窗 + 非对称注意力，条件 token 的 KV 跨采样步复用<span class="src">§2.4</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>评测只有内部人评</h3><p>OmniVideo-1.0（500+ case）双盲 GSB，每项只比一个对手；GSB 定义为 (G+S)/(S+B)<span class="src">图 7</span>，与常见口径不同。没有公开基准分数、没有消融。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：PE + Omni-Generator + 多模态超分</h2>
+  <p class="sec-intro">原文没有和前代可灵模型做结构对比，也没给 DiT 配置；能比的只有它对「同类做法」的批评：静态文本编码器、任务专用管线或外挂 adapter<span class="src">§1</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="Kling-Omni 总览：MVL 输入（指令 + Video_1 + Image_1 + Image_2）分别进入 Prompt Enhancer（含推理）与多模态上下文，汇入 Omni-Generator（Transformer 块），再经多模态超分和解码器输出视频" loading="eager"></div>
+    <figcaption><b>Kling-Omni 总览。</b>MVL 指令「According to @Video_1, add the cat from @Image_1 … holding the juice from @Image_2」一路经 Prompt Enhancer（含推理），一路作为多模态上下文 token，二者汇入 Omni-Generator；输出再经多模态超分与解码器成片。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>MVL：多模态视觉语言 <span class="tag">§1 · §2.1</span></h4>
+      <p>自然语言当「语义骨架」，图像、视频、主体库作为指令里可引用的词。主体库可放同一主体的多视角 / 姿态 / 表情 / 光照图，用于稳住身份<span class="src">§4.2.1</span>。</p></div>
+    <div class="card mod"><h4>Prompt Enhancer（PE） <span class="tag">§2.3</span></h4>
+      <p>基于 MLLM，作用是把多样的用户输入映射到<b>与训练数据一致的分布</b>，并借文本推理补物理合理性。训练：专门构建的多语言数据集，先 SFT（推理链）再 RL。</p>
+      <p>作者称 PE「显著」提升动态与细节——<span class="nd">无数字</span></p></div>
+    <div class="card mod"><h4>Omni-Generator <span class="tag">§2.1 · §5</span></h4>
+      <p>视觉与文本 token 在共享 embedding 空间里处理；图 1 画的是标准 Multi-Head Attention + FFN + Add&amp;Norm 块。层数、宽度、注意力形式（单流/双流）、文本编码器、VAE <span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>Multimodal Super-Resolution <span class="tag">§2.4 · 图 2</span></h4>
+      <p>级联扩散 VSR，条件 = 基座输出的低分辨率 latent + 原始 MVL 信号；沿用基座结构并用其预训练权重初始化。</p>
+      <ul>
+        <li>全注意力换成<b>局部窗口注意力</b>；奇数层把窗口平移半个窗口，打通相邻窗口。</li>
+        <li><b>非对称注意力</b>：条件 token（作 query）只做自注意力，噪声 token 看全序列 → 条件 token 的 KV 可缓存、跨采样步复用。</li>
+        <li>作者称对画质影响「可忽略」——<span class="nd">无数字</span></li>
+      </ul></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="多模态超分的注意力图：左为偶数层、右为奇数层（窗口平移），行列按噪声、文本与图像、视频分块；阴影区域跳过计算" loading="lazy"></div>
+    <figcaption><b>超分模块的注意力掩码。</b>左：偶数层；右：奇数层（窗口平移半个窗口）。Q/K 按「噪声 · 文本与图像 · 视频」分块，阴影部分跳过计算，从而减算力并支持 KV cache。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据系统</h2>
+  <p class="sec-intro">§3 是全文对数据最集中的描述：两个维度（跨模态 × 跨任务）、两条来源（真实采集 × 合成）、三层处理。<b>没有任何规模、比例或阈值数字。</b></p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig5.jpg" alt="跨模态跨任务数据分布饼图：Text-to-Video (V)、Multi-Image Reference (I)、Image Editing (I)、Multi-Image Reference (V)、Video Editing (V) 五类，周围配样例" loading="lazy"></div>
+    <figcaption><b>跨模态、跨任务的数据分布。</b>五个扇区：Text-to-Video (V)、Multi-Image Reference (I)、Image Editing (I)、Multi-Image Reference (V)、Video Editing (V)。扇区<b>没有数值标注</b>，本页不据面积推算比例；(I)/(V) 原文未解释，按字面应指图像 / 视频任务。<span class="from">来源：论文图 5</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>真实数据采集 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>精选视频与图像集合，覆盖多主体、复杂场景、风格变化，提供「自然先验」。</li>
+        <li><b>互联网大规模挖掘管线</b>：用内部 embedding 模型找出<b>语义相关</b>或<b>主体一致</b>的跨模态样本，拼成参考类训练样本。</li>
+      </ul></div>
+    <div class="card mod"><h4>合成数据构建 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li>理由：只靠真实数据学不到精确可控性。</li>
+        <li><b>专家模型驱动</b>：内部<b>图像编辑模型</b>与<b>视频理解模型</b>生成编辑、多图参考样本。</li>
+        <li><b>自动反向合成（reverse synthesis）</b>：构造参考生成视频样本，保留自然视频的时序一致性，同时给出显式控制信号。具体怎么「反向」<span class="nd">原文未披露</span>。</li>
+      </ul></div>
+  </div>
+
+  <h3 class="wide" style="margin-top:22px">三层处理 <span class="src">§3.2</span></h3>
+  <div class="pipe wide">
+    <div class="pipe-row"><div class="lbl">① 基础治理</div><div class="chip">分辨率 / 时长阈值</div><div class="chip m">逐帧 + 时序指纹去重；音视频损坏检测</div><div class="chip o">NSFW 安全过滤</div></div>
+    <div class="pipe-row"><div class="lbl">② 时序质量</div><div class="chip">质量分惩罚模糊、抖动、压缩噪声</div><div class="chip m">去除突兀转场、不连贯镜头切换</div><div class="chip o">过滤「动作语义密度」过低的视频</div></div>
+    <div class="pipe-row"><div class="lbl">③ 跨模态对齐</div><div class="chip">caption ↔ 视频内容语义一致</div><div class="chip m">参考图 ↔ 目标视频保真；编辑指令 ↔ 执行结果</div><div class="chip o">人像任务：严格身份一致性检查</div></div>
+  </div>
+  <p class="footnote wide">各打分模型、阈值、剔除率 <span class="nd">原文未披露</span>。</p>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig6.jpg" alt="数据过滤桑基图：收集数据池经分辨率时长、去重、损坏检测、NSFW 过滤得到基础过滤数据，再经场景一致性、画质、运动质量过滤成为预训练数据；之后分编辑、多图参考、视频参考三支，cross-pair 后经 ID 一致性、指令质量、合成质量过滤得到 continue-training 数据，再经人工审核得到 quality-tuning 数据" loading="lazy"></div>
+    <figcaption><b>数据过滤管线。</b>从收集池到 quality-tuning 数据的完整漏斗；灰色支流是被各过滤器剔除的部分（宽度不带数值）。<span class="from">来源：论文图 6</span></figcaption>
+  </figure>
+
+  <div class="wide funnel">
+    <h4>图 6 读出的「数据层级 ↔ 训练阶段」对应 <span class="src">图 6 · §2.2</span></h4>
+    <div class="pipe">
+      <div class="pipe-row"><div class="lbl">→ 预训练数据</div><div class="chip">收集数据池</div><div class="chip m">分辨率/时长、去重、损坏、NSFW → 场景一致性、画质、运动质量</div><div class="chip o">Model Pre-training Data</div></div>
+      <div class="pipe-row"><div class="lbl">→ continue-training</div><div class="chip">三支：视频&amp;图像编辑 / 多图参考 / 视频参考</div><div class="chip m">cross-pair 后过 ID 一致性、指令质量、合成质量</div><div class="chip o">Continue-training Data</div></div>
+      <div class="pipe-row"><div class="lbl">→ quality-tuning</div><div class="chip">continue-training 数据</div><div class="chip m">人工审核（Manual Review Filter）</div><div class="chip o">Quality-tuning Data</div></div>
+    </div>
+    <p class="footnote">「cross-pair」在正文中未解释；按图位置看是把预训练数据配成跨模态 / 跨任务样本对的步骤。图 6 里没有单独画 T2V 分支。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Caption / 指令标注：原文写到的全部 <span class="tag">§2.2–2.3 · §3.2</span></h4>
+      <ul>
+        <li>预训练 caption <b>从简短 prompt 到长篇叙述</b>都有，为适配多样指令格式<span class="src">§2.2.1</span>。</li>
+        <li>quality-tuning 集：任务分布均衡，每个样本配「精确的指令标注」<span class="src">§2.2.2</span>。</li>
+        <li>对齐层检查 caption 与画面一致、编辑指令与执行结果一致<span class="src">§3.2</span>。</li>
+        <li>PE 的目标分布 = 训练数据的 caption 分布；RL 奖励直接含「与高质量训练数据相似度」<span class="src">§2.3</span>。</li>
+      </ul>
+      <p class="footnote">captioner 是谁、caption 格式 / 长度分布、是否人工标注 <span class="nd">原文未披露</span>。</p></div>
+    <div class="card mod"><h4>数据加载侧的工程 <span class="tag">§2.5</span></h4>
+      <ul>
+        <li>VAE / 文本编码器<b>在线推理</b>，与 DiT 训练分两段；中心调度器按负载把样本分给 DP 组<span class="src">§2.5.1 · 图 3</span>。</li>
+        <li>洗牌带来的随机读改为<b>预洗牌 Parquet</b> 顺序读<span class="src">§2.5.3</span>。</li>
+        <li>序列压平成 1D、最小 padding，变长打包<span class="src">§2.5.2</span>。</li>
+      </ul></div>
+  </div>
+
+  <div class="tbl-wrap wide"><table class="txt">
+    <thead><tr><th>项目</th><th>原文给出的信息</th><th>来源</th></tr></thead>
+    <tbody>
+      <tr><td>视频 / 图像总量</td><td><span class="nd">原文未披露</span></td><td>§3.1</td></tr>
+      <tr><td>各任务配比（T2V / 编辑 / 多图参考 …）</td><td><span class="nd">原文未披露</span>（图 5 饼图无数值）</td><td>图 5</td></tr>
+      <tr><td>合成 vs 真实比例</td><td><span class="nd">原文未披露</span></td><td>§3.1</td></tr>
+      <tr><td>过滤阈值 / 剔除率</td><td><span class="nd">原文未披露</span>（图 6 支流无数值）</td><td>§3.2 · 图 6</td></tr>
+      <tr><td>quality-tuning 集规模</td><td><span class="nd">原文未披露</span>，仅说「任务分布均衡」</td><td>§2.2.2</td></tr>
+      <tr><td>DPO 偏好对数量 / 轮数</td><td><span class="nd">原文未披露</span>，仅说「多轮」</td><td>§2.2.3</td></tr>
+      <tr><td>PE 训练集</td><td>专门构建的多语言数据集；规模 <span class="nd">原文未披露</span></td><td>§2.3</td></tr>
+      <tr><td>评测集</td><td>OmniVideo-1.0：500+ case</td><td>§4.1.1</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">学习率、batch、步数、分辨率、时长、GPU 数量 <span class="nd">原文未披露</span>。下面只列阶段目标与数据。</p></div>
+
+  <div class="wide">
+    <h4 style="margin-top:0">Omni-Generator 主线 <span class="src">§2.2</span></h4>
+    <div class="flow5">
+      <div class="card stage pre"><span class="sid">P</span><h4>预训练</h4><p>大规模文本-视频对，学指令式 T2V；caption 长短兼有；混入 I2V 任务，提早建立图文协同。</p></div>
+      <div class="card stage pre"><span class="sid">S1</span><h4>Continue-training</h4><p>对齐复杂 MVL：参考生成视频、图像/视频编辑、语义理解类任务，图像-视频-文本高度交错。</p></div>
+      <div class="card stage pre"><span class="sid">S2</span><h4>Quality-tuning</h4><p>任务均衡、视频标准高的精选集，配精确指令标注；迭代微调收窄输出分布。</p></div>
+      <div class="card stage post"><span class="sid">RL</span><h4>DPO</h4><p>目标：运动动态、画面完整性。同一 MVL 条件换随机噪声生成多条 → 人工选优劣对 → 带对应噪声和 timestep 算 DPO loss；多轮。</p></div>
+      <div class="card stage post"><span class="sid">D</span><h4>两段蒸馏</h4><p>① 轨迹匹配（PCM / HyperSD 思路），分段 timestep，直接用 10 步目标调度；② 分布匹配（TDM 思路，少步 ODE），保留轨迹项作正则。150 → 10 NFE。</p></div>
+    </div>
+    <h4>旁路组件</h4>
+    <div class="side-row">
+      <div class="card stage side"><span class="sid">PE</span><h4>Prompt Enhancer</h4><p>MLLM 底座 → SFT（学推理链）→ RL，奖励：事实正确、内容丰富、语义合理、与高质量训练数据相似<span class="src">§2.3</span>。</p></div>
+      <div class="card stage side"><span class="sid">SR</span><h4>多模态超分</h4><p>沿用基座结构、用基座预训练权重初始化；条件是 LR latent + MVL 信号<span class="src">§2.4</span>。训练数据与步数 <span class="nd">原文未披露</span>。</p></div>
+    </div>
+  </div>
+
+  <div class="grid2 wide" style="margin-top:14px">
+    <div class="card mod"><h4>为什么是 DPO 不是 GRPO <span class="tag">§2.2.3</span></h4>
+      <p>原文理由只有一条：GRPO 需要昂贵的轨迹采样，DPO 是「一步扩散前向」。没有 DPO 前后的数字对比。</p></div>
+    <div class="card mod"><h4>蒸馏的两个非常规选择 <span class="tag">§2.2.4</span></h4>
+      <ul>
+        <li>第一段不经过「中间步数」过渡，直接蒸到 10 步目标调度。</li>
+        <li>第二段不用 DMD / SiD 的 SDE 形式，按 TDM 蒸成少步 ODE，称「经验上更适合我们的任务」；同时保留轨迹匹配损失防漂移（类似做法见 [3]）。</li>
+      </ul></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="在线训练数据管线：原始文本、图像、视频经推理调度器分发到各 DP 组做文本编码器与 VAE 推理，再由训练调度器重排后进入 DiT 训练" loading="lazy"></div>
+    <figcaption><b>在线训练数据管线。</b>推理调度器把原始数据分到各 DP/PP 组做 VAE / 文本编码器推理，训练调度器再重排数据以均衡 DiT 训练负载。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <details class="more wide"><summary>训练与推理系统细节 <span class="hint">§2.5–2.6</span></summary><div class="body">
+    <div class="tbl-wrap"><table class="txt">
+      <thead><tr><th>方向</th><th>做法</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>负载均衡</td><td>启发式调度减少 PP / DP 气泡；VAE / TE 推理的 token 按 PP stage 动态切分</td><td>§2.5.1</td></tr>
+        <tr><td>变长序列</td><td>microbatch 级弹性 Ulysses 并行度切换（参考 FlexSP [32]）；CPU 上的在线调度器预先决定每个 microbatch 的 UP 度</td><td>§2.5.1 · 图 4</td></tr>
+        <tr><td>通信</td><td>两级 all-to-all：节点内聚合 → 节点间交换，减轻 spine 交换机压力</td><td>§2.5.1</td></tr>
+        <tr><td>算子</td><td>打包版多模态 FlashAttention（MM-FlashAttention），单 kernel 支持任意跨模态 mask + 变长序列</td><td>§2.5.2</td></tr>
+        <tr><td>显存</td><td>选择性重算；流水线感知的 offload / onload；虚拟流水线 stage 感知的激活复用（多视图、多流场景）</td><td>§2.5.2</td></tr>
+        <tr><td>可靠性</td><td>有效训练时间比 97%；RDMA 流量监控 1 分钟内发现 hang；自研 TCP 同步层 + NVMe 并发加载实现亚分钟重启；异步 checkpoint</td><td>§2.5.3</td></tr>
+        <tr><td>推理并行</td><td>Ulysses + 张量并行，计算-通信重叠</td><td>§2.6</td></tr>
+        <tr><td>量化</td><td>大部分 GEMM 与自注意力 FP8；量化/反量化算子全融合；FP8 通信。称「近乎无损」，<span class="nd">无数字</span></td><td>§2.6</td></tr>
+        <tr><td>缓存</td><td>为长条件输入设计的 cache，约 2× 加速；配套 cache-offload 缓解显存</td><td>§2.6</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">图 4（流水线调度：交错 1F1B、offload/onload、UP2/UP4 切换）未随本页裁图提供。</p>
+  </div></details>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：OmniVideo-1.0 人评 GSB</h2>
+  <p class="sec-intro">全文唯一的定量结果是图 7 的两组 GSB。没有 VBench 等公开基准，也没有和前代可灵的对比。</p></div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>OmniVideo-1.0 基准 <span class="tag">§4.1.1</span></h4>
+      <dl class="kv">
+        <dt>规模</dt><dd>500+ case，基于内部收集的图像、主体、视频素材</dd>
+        <dt>主体类别</dt><dd>人物、卡通角色、动物、服装、道具</dd>
+        <dt>应用场景</dt><dd>专业视频制作、电商广告、社媒内容</dd>
+        <dt>附加难点</dt><dd>复杂动作、广角视角、情绪表达、跨风格融合、多元素融合</dd>
+      </dl></div>
+    <div class="card mod"><h4>评价维度 <span class="tag">§4.1.2 · 图 7</span></h4>
+      <dl class="kv">
+        <dt>Dynamic Quality</dt><dd>帧间连续、属性稳定、运动物理合理、幅度、多人交互与叙事运镜</dd>
+        <dt>Prompt Following</dt><dd>语义与约束的执行准确度</dd>
+        <dt>Identity Consistency</dt><dd>参考主体在机位、表情、动作、光照变化下的身份与结构</dd>
+        <dt>Video Consistency</dt><dd>仅编辑任务：未编辑区域的保真</dd>
+        <dt>Visual Quality</dt><dd>图 7 有此维度，§4.1.2 <span class="nd">未定义</span></dd>
+      </dl></div>
+  </div>
+
+  <div class="card diagram wide gsb">
+    <svg viewBox="0 0 860 196" role="img" aria-label="GSB 堆叠条：对 Veo 3.1 G 62% S 32% B 6%，Overall 247%；对 Runway-Aleph G 61% S 29% B 10%，Overall 230%">
+      <!-- axis: x from 230 to 760 = 0..100% -->
+      <line class="ax" x1="230" y1="20" x2="230" y2="150"/><line class="ax" x1="495" y1="20" x2="495" y2="150"/><line class="ax" x1="760" y1="20" x2="760" y2="150"/>
+      <text class="ax-t" x="230" y="166" text-anchor="middle">0%</text><text class="ax-t" x="495" y="166" text-anchor="middle">50%</text><text class="ax-t" x="760" y="166" text-anchor="middle">100%</text>
+      <!-- row 1 -->
+      <text class="lab" x="0" y="52">vs Veo 3.1</text><text class="lab2" x="0" y="68">图像参考生成 · Ingredients to video</text>
+      <rect class="seg-g" x="230" y="36" width="328.6" height="34" rx="3"/><text class="seg-t" x="394" y="58" text-anchor="middle">G 62%</text>
+      <rect class="seg-s" x="558.6" y="36" width="169.6" height="34"/><text class="seg-t" x="643" y="58" text-anchor="middle">S 32%</text>
+      <rect class="seg-b" x="728.2" y="36" width="31.8" height="34" rx="3"/><text class="seg-t" x="744" y="58" text-anchor="middle">6</text>
+      <text class="ov" x="772" y="59">247%</text>
+      <!-- row 2 -->
+      <text class="lab" x="0" y="112">vs Runway-Aleph</text><text class="lab2" x="0" y="128">视频编辑</text>
+      <rect class="seg-g" x="230" y="96" width="323.3" height="34" rx="3"/><text class="seg-t" x="392" y="118" text-anchor="middle">G 61%</text>
+      <rect class="seg-s" x="553.3" y="96" width="153.7" height="34"/><text class="seg-t" x="630" y="118" text-anchor="middle">S 29%</text>
+      <rect class="seg-b" x="707" y="96" width="53" height="34" rx="3"/><text class="seg-t" x="733" y="118" text-anchor="middle">B 10%</text>
+      <text class="ov" x="772" y="119">230%</text>
+      <text class="ax-t" x="772" y="30">Overall GSB</text>
+      <text class="ax-t" x="230" y="188">横轴从 0 起；G/S/B 为跨全部维度汇总的占比，读自图 7 左侧柱内标注</text>
+    </svg>
+    <div class="leg"><span><i style="background:var(--good)"></i>G：Kling-Omni 显著更好</span><span><i style="background:var(--bar-other)"></i>S：相当</span><span><i style="background:var(--warn)"></i>B：显著更差</span></div>
+  </div>
+
+  <div class="tbl-wrap wide"><table>
+    <thead><tr><th>对比</th><th style="text-align:left">任务</th><th>G</th><th>S</th><th>B</th><th>Overall GSB</th><th>G − B</th></tr></thead>
+    <tbody>
+      <tr><td>Kling-Omni vs Veo 3.1</td><td style="text-align:left">图像参考生成（Ingredients to video）</td><td class="num">62%</td><td class="num">32%</td><td class="num">6%</td><td class="num"><b>247%</b> <span class="src">图 7</span></td><td class="num">+56 pt <span class="src calc">推算</span></td></tr>
+      <tr><td>Kling-Omni vs Runway-Aleph</td><td style="text-align:left">视频编辑</td><td class="num">61%</td><td class="num">29%</td><td class="num">10%</td><td class="num"><b>230%</b> <span class="src">图 7</span></td><td class="num">+51 pt <span class="src calc">推算</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="tbl-note wide"><b>口径：</b>图 7 标注 GSB = (G+S)/(S+B)，S 同时进分子分母，与常见的 (G−B)/(G+S+B) 不同，不能和其他报告的 GSB 直接比。按图中整数复算：(62+32)/(32+6) ≈ 247%，(61+29)/(29+10) ≈ 231% <span class="src calc">推算</span>，后者与图中 230% 差 1 pt，应是百分比取整所致。分维度条（Dynamic / Visual / Prompt / Identity / Video Consistency）<b>没有数值标注</b>；目测两组里 Prompt Following 的 G 段都偏短、对 Veo 3.1 的 B 段最长，Runway-Aleph 组更明显——仅作定性参考。</p>
+  <p class="tbl-note wide">评测方式：双盲并排比较，评审为领域专家与专业标注员<span class="src">§4.1.3</span>；每组样本数、评审人数、一致性 <span class="nd">原文未披露</span>。</p>
+
+  <details class="more wide"><summary>表 1 能力对照（厂商自填 ✓/✗） <span class="hint">表 1 · 23 项</span></summary><div class="body">
+    <p class="tbl-note" style="margin-top:0">Kling-Omni 23/23，Veo 3.1 8/23，Runway Aleph 14/23 <span class="src calc">推算</span>。这是功能清单，不是效果分。末两行带 ✓ 的能力对应 §4.3，而 §4.3 标题的 <b>∗</b> 脚注写明「该节功能尚未在线上版本支持」，且该节用的是「更强的视觉-语言推理引擎」。原表「Visuao」为原文拼写错误。</p>
+    <div class="tbl-wrap"><table class="cap">
+      <thead><tr><th>类别</th><th>能力</th><th>Kling-Omni</th><th>Veo 3.1</th><th>Runway Aleph</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">图像 / 主体库参考</td><td>Image Reference</td><td class="ck">✓</td><td class="ck">✓</td><td class="cx">✗</td></tr>
+        <tr><td>Element Library Reference</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td>Image + Element Library Ref.</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td rowspan="9">指令编辑</td><td>Addition</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Removal</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>Replacement</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Stylization</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Attribute Manipulation</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Special Effects</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Video Matting</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Multi-image Editing</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td>Subject-driven Editing</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td rowspan="5">视频参考</td><td>Next Shot Generation</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Prev. Shot Generation</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>New Camera Angle Generation</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td>Motion Transfer</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td>Camera Motion Transfer</td><td class="ck">✓</td><td class="cx">✗</td><td class="cx">✗</td></tr>
+        <tr><td rowspan="2">帧条件生成</td><td>First Frame to Video</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td>First &amp; Last Frame</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td colspan="2">Text-to-Video</td><td class="ck">✓</td><td class="ck">✓</td><td class="ck">✓</td></tr>
+        <tr><td colspan="2">Compositional Generation</td><td class="ck">✓</td><td class="cx">✗</td><td class="ck">✓</td></tr>
+        <tr><td colspan="2">Visual Prompt Understanding（原表作 Visuao）</td><td class="ck">✓</td><td class="ck">✓</td><td class="cx">✗</td></tr>
+        <tr><td colspan="2">Reasoning-enhanced Generation</td><td class="ck">✓</td><td class="ck">✓</td><td class="cx">✗</td></tr>
+      </tbody>
+    </table></div>
+  </div></details>
+
+  <details class="more wide"><summary>定性展示（图 8–28）都在演示什么 <span class="hint">§4.2–4.3</span></summary><div class="body">
+    <ul>
+      <li><b>多模态参考</b>：7 张参考图组合（图 8）、主体库多表情（图 9）、图 + 主体库（图 10）、新机位 / 动作迁移（图 11）、运镜迁移（图 12）、前后镜头（图 13）、草图与色彩参考（图 14）。</li>
+      <li><b>时序叙事</b>：多宫格分镜图 → 连续视频（图 15–16）。</li>
+      <li><b>交互编辑</b>：增删换（图 17）、带参考图增 / 换（图 18）、背景替换（图 19）、风格化（图 20）、状态 / 材质（图 21）、特效（图 22）、天气（图 23）。</li>
+      <li><b>任务组合</b>：主体库 + 参考图 + 风格化（图 24）；新机位 + 添加、换背景 + 添加 + 黏土风（图 25）。</li>
+      <li><b>∗ 尚未上线的探索</b>：箭头 / 框等视觉信号控制（图 26）、GPS 坐标与「6 小时后」的世界知识推理（图 27）、按面数排序与成语填字（图 28）<span class="src">§4.3</span>。</li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">DPO、FP8 量化、Ulysses / 张量并行、选择性重算、局部窗口注意力本身都是已有做法，不算在内。</p></div>
+  <div class="novel prose">
+    <div class="card nv"><h4>MVL：把图像 / 视频 / 主体库变成指令里可引用的词</h4><p>一条指令里用 <code>@Image_k</code>、<code>@Video_k</code>、<code>@Girl</code> 这类槽位混合引用，主体库允许同一主体多图；生成、编辑、视频参考共用这一接口。</p><p class="why">可核对：§1、§2.1、§4.2.1、图 1 / 8–10。没有「单图参考 vs 主体库」的定量对比。</p></div>
+    <div class="card nv"><h4>同一生成器覆盖编辑 + 视频参考 + 组合任务</h4><p>continue-training 阶段把参考生成、图像/视频编辑、语义理解任务以交错格式混训；声称组合指令可一次完成、避免串行编辑的误差累积。</p><p class="why">可核对：§2.2.2、§4.2.4、表 1、图 24–25。「避免误差累积」无数字。</p></div>
+    <div class="card nv"><h4>以 MVL 为条件的超分 + 非对称注意力</h4><p>超分不只吃 LR latent，还吃原始参考图 / 视频；条件 token 只自注意、噪声 token 看全序列，使条件 KV 可跨步缓存。</p><p class="why">可核对：§2.4、图 2。无速度 / 画质数字。</p></div>
+    <div class="card nv"><h4>蒸馏直奔 10 步 + ODE 分布匹配带轨迹正则</h4><p>第一段跳过中间步数过渡；第二段按 TDM 做少步 ODE 而非 DMD / SiD 的 SDE，保留轨迹匹配项作正则。</p><p class="why">可核对：§2.2.4。方法组件来自 PCM / HyperSD / TDM / [3]，组合与选择是本文的；无蒸馏前后指标。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">每条先写论文怎么做（带出处），再写一条可迁移做法。<b>「迁移」都是本页的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>caption 长短混训</h4>
+        <p class="paper">论文：预训练 caption 从简短 prompt 到长篇叙述都有，为适配多样指令格式<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每个编辑对至少配「一句话口语指令 / 带对象与属性的标准指令 / 完整差异描述」三档，训练时按比例采样；评测按三档分桶报分，看短指令桶是否掉得最多。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>让推理期改写对齐训练 caption 分布</h4>
+        <p class="paper">论文：PE 的目标是把用户输入映射到训练数据分布；RL 奖励显式含「与高质量训练数据的相似度」<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑模型上线的指令改写器，用训练集指令做参照分布（embedding 距离或长度 / 句式统计）当奖励或筛选信号；并定期抽线上真实指令，量它和训练指令分布的距离。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>多图编辑用显式槽位</h4>
+        <p class="paper">论文：指令用 <code>@Image_1</code> 等槽位指明每张参考图的角色，如「@Image_1 wearing @Image_3, holding @Image_4」<span class="src">图 1 · 图 8</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>多参考图编辑数据的指令统一用槽位语法，并做自动 QC：指令里出现的每个槽位都必须在目标图里可检出对应元素，未被引用的参考图不进样本。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>反向合成，让目标端保持「真」</h4>
+        <p class="paper">论文：用「自动反向合成」构造参考生成样本，保留自然视频的时序一致性并给出显式控制信号<span class="src">§3.1</span>（具体做法未披露）。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>增加 / 替换类编辑对优先由真实照片当<b>目标</b>、用移除或改写模型造<b>源图</b>，指令取逆向操作；这样模型学到的输出端是真实分布，合成伪影只留在输入端。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>用 embedding 挖主体一致样本</h4>
+        <p class="paper">论文：内部 embedding 模型从互联网数据中挖「语义相关 / 主体一致」的跨模态样本<span class="src">§3.1</span>；主体库用同一主体多视角多表情图<span class="src">§4.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>主体驱动编辑（换衣、加道具、人物 ID 保持）用视频帧或同主体图集挖成对数据，并为每个主体留 3–5 张不同姿态参考图，构成可直接用于训练和评测的「主体库」。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>指令↔执行一致性单独过一层</h4>
+        <p class="paper">论文：对齐层校验编辑指令与执行结果；人像任务额外做严格身份一致性检查<span class="src">§3.2</span>；cross-pair 后有 ID 一致性、指令质量、合成质量三道过滤<span class="src">图 6</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据 QC 拆成三个独立打分器（指令是否被执行 / 人脸 ID 是否保持 / 合成伪影），分开记分、分开设阈值，方便事后定位是哪一项把样本卡掉的。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>数据漏斗与训练阶段一一对应</h4>
+        <p class="paper">论文：预训练数据 → 经 cross-pair 与三道过滤成为 continue-training 数据 → 人工审核后成为 quality-tuning 数据<span class="src">图 6 · §2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按「自动过滤即可进持续预训练 / 多模型交叉通过进 SFT / 人工审核过才进最终质量微调」分档存储，人工预算只花在最后一档。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>过滤「没什么变化」的样本</h4>
+        <p class="paper">论文：过滤「动作语义密度」过低的视频，提高动态内容的有效训练比例<span class="src">§3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑对的对应物是「几乎没改」的样本：按编辑区域面积、像素 / 感知差异下限剔除近似 no-op 的编辑对，但保留指令本就要求细微改动的类别（如去痣、调色）并单独设阈值。</p></div>
+    </div>
+
+    <div class="impl-group">评测与偏好数据</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>「未编辑区域保真」单列一维</h4>
+        <p class="paper">论文：编辑任务单独设 Video Consistency，评未编辑区域的保真，与 Prompt Following 分开<span class="src">§4.1.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>图像编辑人评至少拆成「指令执行」与「非编辑区保持」两维分别打分，避免什么都没改的输出在单一总分里拿到中等分。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>GSB 报原始 G/S/B 和公式</h4>
+        <p class="paper">论文：图 7 同时给 G/S/B 占比与公式 (G+S)/(S+B)<span class="src">图 7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>内部 GSB 永远同时报 G、S、B 三个占比和样本数；比率型指标在 S 很大时会掩盖 G 与 B 的差异，汇报里加一列 G−B。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>评测集三轴打标</h4>
+        <p class="paper">论文：OmniVideo-1.0 按主体类别 × 应用场景 × 附加难点构建<span class="src">§4.1.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测集每条打「主体类别 / 业务场景 / 难点」三个标签，报总分同时报各桶分，新版本回归时先看是哪一桶掉分。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>同条件多噪声采样做偏好对</h4>
+        <p class="paper">论文：同一 MVL 条件用不同随机噪声生成多条视频，人工选优劣对，DPO 时连同噪声与 timestep 一起用<span class="src">§2.2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑偏好数据按（源图, 指令）固定条件、只换 seed 采样 N 张，人工两两比较；保存 seed 以便复现，并把偏好标注维度限定在可判断的少数几项（如执行度、保持度）。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+
+<figure class="fig card wide">
+  <div class="img-pad"><img src="figures/fig7.jpg" alt="论文图 7：Kling-Omni 对 Veo 3.1 与 Runway-Aleph 的 GSB 对比" loading="lazy"></div>
+  <figcaption><b>人评 GSB。</b>左侧总览标注 Overall GSB = (G+S)/(S+B)。对 Veo 3.1（图像参考生成）为 247%（G 62 / S 32 / B 6）；对 Runway-Aleph（视频编辑）为 230%（G 61 / S 29 / B 10）。<span class="from">来源：论文图 7</span></figcaption>
+</figure>
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits prose">
+    <li class="key"><b>没有任何消融或分模块数字。</b>PE「显著提升」、超分「影响可忽略」、FP8「近乎无损」、DPO「显著改善」、蒸馏「保持保真度」都只是文字结论<span class="src">§2.2–2.6</span>。</li>
+    <li class="key"><b>数据规模、配比、阈值全未披露。</b>图 5 饼图与图 6 桑基图都无数值；合成与真实数据的比例、反向合成的具体流程也没写<span class="src">§3</span>。</li>
+    <li><b>评测只有内部人评，且对手各一个。</b>OmniVideo-1.0 未公开；参考生成只比 Veo 3.1（Ingredients to video），编辑只比 Runway-Aleph；样本数、评审人数、一致性未给<span class="src">§4.1 · 图 7</span>。</li>
+    <li><b>GSB 口径非常规。</b>(G+S)/(S+B) 把 S 计入分子分母，247% / 230% 不能与其他报告的 GSB 横比；按图中整数复算第二组约 231% <span class="src calc">推算</span>，与标注 230% 有 1 pt 取整差。</li>
+    <li><b>图文不一致。</b>图 7 含 Visual Quality 维度，§4.1.2 只定义了 Dynamic Quality、Prompt Following、Identity Consistency、Video Consistency；基准名在 §4.1.1 写作「OmniVideo-1.0 Benchmark」，§4.1.3 写作「OmniVideo-Benchmark 1.0」。</li>
+    <li><b>表 1 的 ✓ 含未上线能力。</b>Visual Prompt Understanding、Reasoning-enhanced Generation 打了 ✓，但对应的 §4.3 脚注写明尚未在线上版本支持，且用的是「更强的视觉-语言推理引擎」<span class="src">§4.3∗</span>。表 1 是厂商自填功能清单。</li>
+    <li><b>架构关键配置缺失。</b>参数量、层数、注意力形式、文本编码器、VAE、输出分辨率 / 时长 / 帧率都没写；也没说明与前代可灵模型的关系。</li>
+    <li><b>不可复现。</b>无权重、无代码、无许可证说明，只有在线访问入口<span class="src">摘要页</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>编号</th><th>内容</th><th>本页</th></tr></thead>
+    <tbody>
+      <tr><td>图 1</td><td>Kling-Omni 总览（MVL → PE / 多模态上下文 → Omni-Generator → 超分 → 解码）</td><td><a href="#arch">03 架构</a></td></tr>
+      <tr><td>图 2</td><td>多模态超分的注意力掩码（偶数层 / 奇数层移窗）</td><td><a href="#arch">03 架构</a></td></tr>
+      <tr><td>图 3</td><td>在线训练数据管线（推理调度器 / 训练调度器）</td><td><a href="#train">05 训练</a></td></tr>
+      <tr><td>图 4</td><td>流水线调度：交错 1F1B、offload / onload、弹性 Ulysses</td><td>未裁图（文字见 05 折叠表）</td></tr>
+      <tr><td>图 5</td><td>跨模态跨任务数据分布（五类，无数值）</td><td><a href="#data">04 数据</a></td></tr>
+      <tr><td>图 6</td><td>数据过滤桑基图（预训练 → continue-training → quality-tuning）</td><td><a href="#data">04 数据</a></td></tr>
+      <tr><td>图 7</td><td>GSB：vs Veo 3.1、vs Runway-Aleph</td><td>未裁图（数字与重绘见 <a href="#eval">06</a>）</td></tr>
+      <tr><td>图 8–14</td><td>多模态参考：多图、主体库、新机位、动作 / 运镜迁移、前后镜头、草图参考</td><td>未裁图（列表见 06）</td></tr>
+      <tr><td>图 15–16</td><td>时序叙事：多宫格分镜 → 视频</td><td>未裁图</td></tr>
+      <tr><td>图 17–23</td><td>视频编辑：增删换、参考图引导、背景、风格化、属性、特效、天气</td><td>未裁图</td></tr>
+      <tr><td>图 24–25</td><td>任务组合</td><td>未裁图</td></tr>
+      <tr><td>图 26–28</td><td>∗ 探索功能：视觉信号控制、世界知识推理、逻辑推理</td><td>未裁图</td></tr>
+      <tr><td>表 1</td><td>与 Veo 3.1、Runway Aleph 的能力对照</td><td><a href="#eval">06 折叠表</a></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 Kling Team, Kuaishou Technology,《Kling-Omni Technical Report》，<a href="https://arxiv.org/abs/2512.16776" target="_blank" rel="noopener">arXiv:2512.16776</a>（v1，2025-12-18）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；图 7 的 G/S/B 数值读自原文 PDF 图内标注。「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，此处仅用于学术解读。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

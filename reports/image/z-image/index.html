@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z-Image 中文深读 · 6B 单流 DiT、314K GPU 时与 Z-Image-Edit 的数据构建 | 前沿模型技术报告</title>
+<meta name="description" content="Z-Image（Alibaba / Z-Image Team, arXiv 2511.22699）中文深读：S3-DiT 架构、数据基础设施、Z-Captioner、omni 预训练、Decoupled DMD + DMDR 蒸馏、RLHF 与评测，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: hero duo figures, 5-stage flow, architecture SVG */
+.hero-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 28px; max-width: 1080px; }
+.hero-duo figure.fig { margin: 0; }
+.hero-duo .img-pad { max-height: 520px; }
+.hero-duo .img-pad img { object-fit: cover; object-position: top; max-height: 500px; }
+.flow5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 16px 0 6px; }
+.flow5 .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+.flow5 .stage p { font-size: .84rem; line-height: 1.55; margin: .3rem 0 0; color: var(--ink-2); }
+.stage.pre { border-top: 3px solid var(--accent); }
+.stage.post { border-top: 3px solid var(--warm); }
+.stage.edit { border-top: 3px solid var(--good); }
+.edit-branch { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 10px; margin: 6px 0 4px; align-items: stretch; }
+.edit-branch .lead { font-size: .84rem; color: var(--muted); display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; text-align: right; }
+.cost { margin: 14px 0 4px; }
+.cost .rbar span { font-size: .76rem; }
+.cost .rbar .c { background: var(--good); }
+.bar-legend span.c::before { background: var(--good); }
+.arch .dg-proc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.2; }
+.arch .dg-enc { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.arch .dg-dit { fill: color-mix(in srgb, var(--accent) 14%, var(--card)); stroke: var(--accent); stroke-width: 1.5; }
+.arch .dg-blk { fill: var(--card); stroke: var(--line); stroke-width: 1.2; }
+.arch .dg-dash { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 3; fill: none; }
+.arch .dg-edit { fill: none; stroke: var(--good); stroke-width: 1.4; stroke-dasharray: 5 3; }
+.arch .dg-et { fill: var(--good); font: 700 11px var(--f-mono); }
+.arch .dg-tk { font: 600 10.5px var(--f-mono); fill: var(--muted); }
+.cap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 12px 0; }
+.cap-grid .chip { font-size: .84rem; }
+.cap-grid .chip b { display: block; font-size: .8rem; color: var(--accent-ink); }
+.three-step { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+@media (max-width: 960px) {
+  .flow5 { grid-template-columns: 1fr 1fr; }
+  .flow5 .stage::after { display: none; }
+  .edit-branch { grid-template-columns: 1fr; }
+  .edit-branch .lead { justify-content: flex-start; text-align: left; }
+  .three-step { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .hero-duo { grid-template-columns: 1fr; }
+  .flow5 { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成</div>
+    <h1>Z-Image<span class="sub">An Efficient Image Generation Foundation Model with Single-Stream Diffusion Transformer</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Alibaba Group · Z-Image Team</b></span>
+      <span>发布 <b>2025-11-27</b>（arXiv v1）</span>
+      <span>arXiv <b>2511.22699</b></span>
+      <span>本页依据 <b>v5（2026-07-06）</b>全文</span>
+    </div>
+    <p class="lede">用 <b>6B</b> 单流 DiT（S3-DiT）、<b>314K H800 GPU 时</b><span class="src">表 1</span>走完整条训练流程，不蒸馏闭源模型的合成数据做文生图预训练；同一个 omni 预训练底座分出 8 步出图的 <b>Z-Image-Turbo</b> 和编辑模型 <b>Z-Image-Edit</b>。对编辑方向的读者，最值钱的是 §2.5 编辑对构建与 §3 的 Z-Captioner（OCR 先行、五级 caption、三步差异 caption）。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源：代码 + 权重 + Demo</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>6B（S3-DiT 6.15B）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>图像生成 · 图像编辑</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>Turbo：8 NFEs</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2511.22699" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2511.22699</a>
+      <a href="https://github.com/Tongyi-MAI/Z-Image" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.6 16 2.5a13.4 13.4 0 0 0-7 0C6.3.6 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.8c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/Tongyi-MAI/Z-Image-Turbo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>HF：Z-Image-Turbo</a>
+      <a href="https://modelscope.cn/models/Tongyi-MAI/Z-Image-Turbo" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>ModelScope</a>
+    </div>
+    <div class="hero-duo">
+      <figure class="fig card">
+        <div class="img-pad"><img src="figures/fig1.jpg" alt="Z-Image-Turbo 写实人像与场景生成示例拼图" loading="eager"></div>
+        <figcaption><b>Z-Image-Turbo 写实生成示例</b>（截取上部）。<span class="from">来源：论文图 1</span></figcaption>
+      </figure>
+      <figure class="fig card">
+        <div class="img-pad"><img src="figures/fig2.jpg" alt="Z-Image-Turbo 中英双语文字渲染示例拼图" loading="eager"></div>
+        <figcaption><b>Z-Image-Turbo 中英双语文字渲染示例</b>（截取上部）。<span class="from">来源：论文图 2</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v5；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num">6.15B</span><span class="stat-sub">S3-DiT 总参数；摘要写 6B。是否含文本编码器原文未单列</span><span class="src">表 2</span></div>
+    <div class="card stat"><span class="stat-k">骨干</span><span class="stat-num sm">30 层 · 3840 维 · 32 头</span><span class="stat-sub">FFN 10240；RoPE 维度 (32, 48, 48)</span><span class="src">表 2</span></div>
+    <div class="card stat"><span class="stat-k">全流程训练算力</span><span class="stat-num">314K</span><span class="stat-sub">H800 GPU 时，按 $2/GPU 时约 $628K（摘要写约 $630K）</span><span class="src">表 1</span></div>
+    <div class="card stat"><span class="stat-k">编码器</span><span class="stat-num sm">Qwen3-4B + Flux VAE</span><span class="stat-sub">编辑任务额外接 SigLIP 2</span><span class="src">§4.1</span></div>
+    <div class="card stat"><span class="stat-k">Turbo 推理</span><span class="stat-num">8 NFEs</span><span class="stat-sub">SFT 模型约 100 NFEs（含 CFG）；H800 亚秒级，&lt;16GB 显存</span><span class="src">§4.5</span></div>
+    <div class="card stat"><span class="stat-k">Artificial Analysis 竞技场</span><span class="stat-num">#8 · 1161</span><span class="stat-sub">Z-Image-Turbo 总榜第 8、开源第 1</span><span class="src">§5.1.1</span></div>
+    <div class="card stat"><span class="stat-k">Alibaba AI Arena</span><span class="stat-num">#4 · 1025</span><span class="stat-sub">95% CI −15/+17，胜率 45%</span><span class="src">表 3</span></div>
+    <div class="card stat"><span class="stat-k">编辑：GEdit-EN / ImgEdit</span><span class="stat-num sm">7.57 / 4.30</span><span class="stat-sub">Z-Image-Edit，两表均列第 3</span><span class="src">表 14–15</span></div>
+    <div class="card stat"><span class="stat-k">训练数据量</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只说内部「大规模版权集合」；向量库「数十亿」embedding</span><span class="src">§2</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 2025-11-27</span><span class="stat-sub">本页对照的 PDF 为 v5（2026-07-06）</span><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>小模型 + 账本公开</h3><p>6B 单流 DiT，低分辨率预训练 147.5K、omni 预训练 142.5K、后训练 24K，合计 314K H800 GPU 时<span class="src">表 1</span>。同行开源对照为 Qwen-Image 20B、FLUX.2 32B、HunyuanImage-3.0 80B<span class="src">§1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>一个底座，生成 + 编辑</h3><p>omni 预训练把任意分辨率、T2I、I2I（含视频帧等弱对齐图像对）放进同一阶段，作者称对 T2I 没有可察觉退化<span class="src">§4.3</span>（无数字）。Z-Image-Edit 从这里接续训练。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>caption 是一等公民</h3><p>Z-Captioner：先 OCR 再写 caption、文字保留原语言；五种粒度（长/中/短/标签/模拟用户 prompt）；编辑用三步差异 caption<span class="src">§3</span>。作者称显式 OCR 与文字渲染准确度「密不可分」（无消融表）。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>8 步蒸馏不掉色</h3><p>Decoupled DMD 把 DMD 拆成 CFG 增强（主引擎）与分布匹配（正则器），再用 DM 项给 RL 当正则（DMDR），得到 8 NFE 的 Turbo<span class="src">§4.5</span>；效果证据是图 13 定性对比。</p></div>
+    <div class="card tl"><span class="idx">05</span><h3>文字渲染领先，编辑第一梯队</h3><p>CVTG-2K 平均 Word Acc 0.8671 第 1<span class="src">表 5</span>；OneIG-EN 总分 0.546 第 1<span class="src">表 7</span>；GEdit-EN G_O 7.57、ImgEdit 4.30，落后 UniWorld-V2<span class="src">表 14–15</span>。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：S3-DiT（单流多模态 DiT）</h2>
+  <p class="sec-intro">论文架构图（图 10）未随本页裁图提供，下面用示意图按 §4.1 文字复原，只画原文写明的部分。</p></div>
+
+  <div class="card diagram wide arch">
+    <svg viewBox="0 0 980 360" role="img" aria-label="S3-DiT 架构示意">
+      <!-- inputs -->
+      <rect class="dg-enc" x="20" y="250" width="150" height="40" rx="8"/><text class="dg-t" x="95" y="268" text-anchor="middle">Qwen3-4B</text><text class="dg-s" x="95" y="283" text-anchor="middle">文本编码器（冻结）</text>
+      <rect class="dg-enc" x="190" y="250" width="150" height="40" rx="8"/><text class="dg-t" x="265" y="268" text-anchor="middle">SigLIP 2</text><text class="dg-s" x="265" y="283" text-anchor="middle">参考图语义 · 仅编辑</text>
+      <rect class="dg-enc" x="360" y="250" width="150" height="40" rx="8"/><text class="dg-t" x="435" y="268" text-anchor="middle">Flux VAE</text><text class="dg-s" x="435" y="283" text-anchor="middle">（加噪）图像 latent</text>
+      <rect class="dg-enc" x="530" y="250" width="130" height="40" rx="8"/><text class="dg-t" x="595" y="268" text-anchor="middle">Timestep t</text><text class="dg-s" x="595" y="283" text-anchor="middle">条件向量</text>
+      <text class="dg-tk" x="20" y="315">输入示例：文本 prompt / 编辑指令 · 参考图 · 目标图</text>
+      <!-- processors -->
+      <rect class="dg-proc" x="20" y="170" width="150" height="44" rx="8"/><text class="dg-t" x="95" y="189" text-anchor="middle">Text Processor</text><text class="dg-s" x="95" y="205" text-anchor="middle">2 个 Transformer 块</text>
+      <rect class="dg-proc" x="190" y="170" width="150" height="44" rx="8"/><text class="dg-t" x="265" y="189" text-anchor="middle">Semantic Processor</text><text class="dg-s" x="265" y="205" text-anchor="middle">2 个 Transformer 块</text>
+      <rect class="dg-proc" x="360" y="170" width="150" height="44" rx="8"/><text class="dg-t" x="435" y="189" text-anchor="middle">Image Processor</text><text class="dg-s" x="435" y="205" text-anchor="middle">2 个 Transformer 块</text>
+      <path class="dg-line" d="M95 250V214M265 250V214M435 250V214"/>
+      <rect class="dg-edit" x="182" y="162" width="166" height="136" rx="10"/><text class="dg-et" x="265" y="155" text-anchor="middle">Z-Image-Edit 才有</text>
+      <!-- concat -->
+      <rect class="dg-box" x="20" y="108" width="490" height="34" rx="8"/><text class="dg-t" x="265" y="130" text-anchor="middle">序列级拼接：[ 文本 tokens | 语义 tokens | VAE tokens ] → 统一单流</text>
+      <path class="dg-line-main" d="M95 170V142M265 170V142M435 170V142"/>
+      <!-- DiT -->
+      <rect class="dg-dit" x="560" y="40" width="400" height="180" rx="12"/>
+      <text class="dg-t" x="580" y="64">S3-DiT 单流骨干 ×30 层</text><text class="dg-s" x="580" y="80">hidden 3840 · 32 heads · FFN 10240 · 共 6.15B</text>
+      <rect class="dg-blk" x="580" y="94" width="170" height="54" rx="8"/><text class="dg-t" x="665" y="114" text-anchor="middle">Single-Stream Attention</text><text class="dg-s" x="665" y="130" text-anchor="middle">QK-Norm · 3D Unified RoPE</text>
+      <rect class="dg-blk" x="770" y="94" width="170" height="54" rx="8"/><text class="dg-t" x="855" y="114" text-anchor="middle">Single-Stream FFN</text><text class="dg-s" x="855" y="130" text-anchor="middle">Sandwich-Norm（RMSNorm）</text>
+      <path class="dg-line-main" d="M750 121H770"/>
+      <rect class="dg-box" x="580" y="160" width="360" height="46" rx="8"/><text class="dg-t" x="760" y="179" text-anchor="middle">条件注入：scale / gate 调制 Attn 与 FFN</text><text class="dg-s" x="760" y="195" text-anchor="middle">低秩分解：层间共享 down-proj + 逐层 up-proj</text>
+      <path class="dg-line-main" d="M510 125H560"/>
+      <path class="dg-dash" d="M660 250V206"/>
+      <!-- output -->
+      <rect class="dg-box" x="680" y="250" width="280" height="40" rx="8"/><text class="dg-t" x="820" y="268" text-anchor="middle">预测速度场 v（flow matching）</text><text class="dg-s" x="820" y="283" text-anchor="middle">→ VAE 解码</text>
+      <path class="dg-line-main" d="M820 220V250"/>
+      <text class="dg-tk" x="580" y="320">编辑：参考图与目标图 spatial RoPE 坐标对齐，temporal 维相差 1 个单位；</text>
+      <text class="dg-tk" x="580" y="336">参考图（干净）与目标图（加噪）使用不同的 time-conditioning 值。</text>
+    </svg>
+    <div class="cap">示意，非论文原图。依据 §4.1 与表 2 的文字绘制；Attention / FFN 块的具体排列与跳连以论文图 10 为准，此处不作断言。</div>
+  </div>
+
+  <div class="prose">
+    <h3>相对同类的改动</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>单流而非双流 <span class="tag">§4.1</span></h4><p>文本、语义、VAE token 在序列维拼接后共用一套权重，作者对比的是 SD3 / Qwen-Image 式双流 MM-DiT，理由是参数效率更高（未给同规模对照实验）。</p></div>
+      <div class="card mod"><h4>轻量模态处理器 <span class="tag">§4.1</span></h4><p>每个模态先过 2 个 Transformer 块做初步对齐，再进主干。</p></div>
+      <div class="card mod"><h4>稳定性三件套 <span class="tag">§4.1</span></h4><p>QK-Norm 控注意力激活，Sandwich-Norm 约束块输入输出幅度，全部归一化统一用 RMSNorm。</p></div>
+      <div class="card mod"><h4>编辑的位置编码 <span class="tag">§4.1</span></h4><p>3D Unified RoPE：图像 token 沿空间展开、文本 token 沿 temporal 递增；参考图与目标图空间坐标对齐、temporal 偏移 1，靠不同 t 值区分干净/加噪。</p></div>
+    </div>
+    <details class="more"><summary>训练系统优化 <span class="hint">§4.2</span></summary><div class="body">
+      <ul>
+        <li>冻结的 VAE 与文本编码器用普通 DP；DiT 用 FSDP2 分片优化器状态与梯度。</li>
+        <li>所有 DiT 层开 gradient checkpointing；DiT 块用 <code>torch.compile</code>。</li>
+        <li>按元数据里的宽高预估序列长度，相近长度组 batch，减少 padding；长序列小 batch、短序列大 batch（动态 batch size）。</li>
+        <li>Turbo 的亚秒推理需要 FlashAttention-3 与 <code>torch.compile</code><span class="src">脚注 1</span>。</li>
+      </ul>
+    </div></details>
+  </div>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：四模块基础设施 + 编辑对 + Z-Captioner</h2>
+  <p class="sec-intro">论文把重点从「数据量」换成「每单位算力的信息增益」。所有绝对规模和配比基本都没给，下面写清楚哪些披露了、哪些没有。</p></div>
+
+  <div class="wide">
+    <h3 style="margin-top:0">4.1 数据从哪来、管线长什么样</h3>
+    <p class="prose">来源：内部「大规模版权图像集合」构成的未清洗数据池<span class="src">§2.1</span>；编辑对另有视频帧和渲染系统<span class="src">§2.5</span>。作者在引言中明确称文生图训练「纯真实数据、不蒸馏其他模型的结果」<span class="src">§1</span>。</p>
+
+    <div class="pipe">
+      <div class="pipe-head"><span>模块</span><span>做什么</span><span>关键手段</span><span>产出</span></div>
+      <div class="pipe-row"><div class="lbl">① Data Profiling Engine</div><div class="chip">逐对计算多维特征</div><div class="chip m">pHash 去重、压缩比、内部画质模型、熵、美学、AIGC 检测、VLM 打标与 NSFW、CN-CLIP 图文分</div><div class="chip o">过滤 + 课程信号</div></div>
+      <div class="pipe-row"><div class="lbl">② Cross-modal Vector Engine</div><div class="chip">语义去重 + 检索</div><div class="chip m">k-NN 图 + 社区发现，替代 SD3 的 range_search</div><div class="chip o">非冗余数据 + 定位坏样本簇</div></div>
+      <div class="pipe-row"><div class="lbl">③ World Knowledge Graph</div><div class="chip">概念组织与配平</div><div class="chip m">Wikipedia 实体 → PageRank / 可视化性剪枝 → caption 标签层次聚类补全</div><div class="chip o">BM25 + 层级的采样权重</div></div>
+      <div class="pipe-row"><div class="lbl">④ Active Curation Engine</div><div class="chip">长尾挖掘 + 闭环标注</div><div class="chip m">Z-Image 诊断短板 → 跨模态检索补数；人 + AI 双校验</div><div class="chip o">迭代重训 captioner / reward</div></div>
+    </div>
+    <div class="legend-dots"><span>输入/目标</span><span class="m">手段</span><span class="o">产出</span></div>
+  </div>
+
+  <div class="wide">
+    <h3>4.2 清洗与过滤（Data Profiling Engine）</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>元数据层 <span class="tag">§2.1</span></h4><ul><li>宽高、文件大小 → 分辨率与长宽比过滤</li><li>由字节流算 pHash → 去除相同/近似重复</li></ul></div>
+      <div class="card mod"><h4>技术质量 <span class="tag">§2.1</span></h4><ul><li><b>压缩伪影</b>：理想未压缩大小 ÷ 实际文件大小，比值低 = 过度压缩</li><li><b>退化</b>：内部画质模型打分偏色、模糊、可见水印、噪声</li><li><b>信息熵</b>：边缘像素方差（纯色背景/边框）+ 临时 JPEG 重编码后的 BPP</li></ul></div>
+      <div class="card mod"><h4>语义与美学 <span class="tag">§2.1</span></h4><ul><li>美学模型，用专业标注员标签训练</li><li>参照 Imagen 3 训练 AIGC 分类器，过滤 AI 生成图</li><li>专门训练的 VLM 打语义标签（物体类别、人数等人物属性、侧重中国文化概念），同时给 NSFW 分</li></ul></div>
+      <div class="card mod"><h4>图文一致性 <span class="tag">§2.1</span></h4><ul><li>CN-CLIP 计算图像与 alt caption 的相关分，低分丢弃</li><li>入选预训练的图统一重写多级 caption；水印与可见文字交给 VLM 写进 caption，而不是单独跑 OCR / 水印检测模块</li></ul></div>
+    </div>
+    <p class="footnote">所有阈值（压缩比、美学分、CLIP 分、BPP 等）<span class="nd">原文未披露</span>；各过滤器的剔除比例也未给。</p>
+
+    <h3>4.3 去重、知识图谱与长尾补数</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>语义去重规模 <span class="tag">§2.2</span></h4><p>k-NN 构图 + 社区发现，k 足够大时近似原算法。全 GPU 管线在 <b>8 张 H800</b> 上约 <b>8 小时处理 10 亿条</b>（含建索引与 100-NN 查询）<span class="src">§2.2</span>。社区的模块度层级还用于细粒度配平。</p></div>
+      <div class="card mod"><h4>失败驱动的剪枝 <span class="tag">§2.2</span></h4><p>拿问题生成图或 prompt 去检索，定位并剪掉导致错误行为的数据簇；同时检索分布空洞做定向补数。</p></div>
+      <div class="card mod"><h4>知识图谱三步 <span class="tag">§2.3</span></h4><ol><li>全部 Wikipedia 实体 + 超链接建图；PageRank 过低的节点剪掉；VLM 剔除无法可视化的抽象概念</li><li>从内部 caption 抽标签与文本 embedding，层次聚类，父节点由 VLM 概括命名</li><li>人工上调用户 prompt 中的高频概念，主动加入新出现的热门概念</li></ol></div>
+      <div class="card mod"><h4>语义级平衡采样 <span class="tag">§2.3 / §4.4</span></h4><p>caption 标签映射到图谱节点，结合标签的 BM25 分与父子关系算每条样本的采样权重；SFT 阶段在线计算稀有度分，上调稀有概念、下调高频概念。</p></div>
+    </div>
+
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig5.jpg" alt="Active Curation Engine 流程：未清洗数据→图像 embedding→去重→规则过滤→检索→增强后的精选数据；下方长尾概念松鼠鳜鱼走文本 embedding 检索" loading="lazy"></div>
+      <figcaption><b>Active Curation Engine。</b>未清洗数据经图像 embedding、去重、规则过滤，再由长尾概念（例：「松鼠鳜鱼」是一道菜，模型容易拆成松鼠 + 鳜鱼去组合）的文本 embedding 检索补数。原图下方由 Z-Image 诊断、驱动持续预训练的反馈回路在本裁图中未完整显示。<span class="from">来源：论文图 5</span></figcaption>
+    </figure>
+
+    <figure class="fig card wide">
+      <div class="img-pad"><img src="figures/fig6.jpg" alt="人在回路的主动学习：媒体池经概念与质量平衡后由 reward 和 captioner 打伪标签，人工与 AI 双校验，未通过者人工修正" loading="lazy"></div>
+      <figcaption><b>人在回路的主动学习。</b>媒体池按拓扑图做概念平衡与质量平衡 → 当前 captioner / reward 模型打伪标签（caption 与分数）→ 人工 + AI 双校验，未通过的由专家修正 caption 或分数 → 回流重训 captioner 与 reward 模型。<span class="from">来源：论文图 6</span></figcaption>
+    </figure>
+  </div>
+
+  <div class="wide">
+    <h3>4.4 编辑对怎么造（§2.5，本系列读者重点）</h3>
+    <div class="grid2">
+      <div class="card mod"><h4>专家模型 + 混合编辑 <span class="tag">§2.5</span></h4><p>先整理编辑任务分类体系，每类用任务专属的专家模型合成数据；把多个编辑动作合进<b>同一对</b>样本（mixed-editing），一对数据练多种能力。</p></div>
+      <div class="card mod"><h4>图式组合（Graphical Representation） <span class="tag">§2.5 / 图 7a</span></h4><p>同一输入图生成 N 个不同任务的编辑版本，再任意两两组合，「零成本」扩量（参考 [41]）；原文给出的对数公式在文本抽取中受损，按排版应为 2·C(N+1, 2)，即 N+1 张图的有序对数<span class="src calc">推算</span>。附带两个好处：两个编辑版之间天然是混合编辑；会产生<b>反向对</b>，让真实、无失真的原图当输出。</p></div>
+      <div class="card mod"><h4>视频帧配对 <span class="tag">§2.5 / 图 7b</span></h4><p>来自媒体池中大规模视频帧的「天然成组」图像（同主体/场景/风格），用 CN-CLIP 余弦相似度筛出组内高语义相关的对。优点：任务多样、多种变化天然耦合（如姿态 + 背景同时变）、可扩展。相似度阈值<span class="nd">原文未披露</span>。</p></div>
+      <div class="card mod"><h4>渲染文字编辑 <span class="tag">§2.5 / 图 7c</span></h4><p>可控文字渲染系统（沿用 Qwen-Image [76] 的思路），控制内容、字体、颜色、字号、位置；渲染操作本身就是 GT 指令。但 SFT 阶段这类合成数据因偏离真实用户分布被<b>大幅下采样</b><span class="src">§4.7</span>。</p></div>
+    </div>
+  </div>
+
+  <div class="wide">
+    <h3>4.5 Caption：Z-Captioner（§3）</h3>
+    <p class="prose">一个模型同时出文生图 caption 和编辑指令，作者引 [49] 认为不同 caption 任务互相促进。world knowledge 来自图像的 meta 信息，以此为条件做 caption，减少对名人、地标、事件的命名幻觉<span class="src">§3.2</span>。</p>
+    <div class="cap-grid">
+      <div class="chip m"><b>长 caption</b>极密集：完整 OCR、主体、物体、背景、地点；平实客观，不写主观联想</div>
+      <div class="chip m"><b>中 caption</b>原文列出，未单独展开</div>
+      <div class="chip"><b>短 caption</b>相对完整地概括全图</div>
+      <div class="chip"><b>标签</b>Tagging caption（图 9 示例含 OCR 字串）</div>
+      <div class="chip o"><b>模拟用户 prompt</b>多数是不完整 prompt，只说用户关心的局部</div>
+    </div>
+    <div class="grid2">
+      <div class="card mod"><h4>OCR 先行（类 CoT） <span class="tag">§3.1</span></h4><p>先显式识别图中全部文字，再基于 OCR 结果写 caption，长/密文字场景漏字更少；OCR 结果<b>保持原语言、不翻译</b>，避免模型把文字渲染成译文。作者称「据实验」显式 OCR 与文字渲染准确度强相关，但未给数字。</p></div>
+      <div class="card mod"><h4>训练时怎么用 <span class="tag">§4.3</span></h4><p>omni 预训练用 Z-Captioner 生成的中英双语多级 caption；以「小概率」混入原始文本元数据补世界知识；I2I 任务以「一定概率」在目标图 caption（参考引导生成）与差异 caption（多任务编辑）间采样。具体概率<span class="nd">原文未披露</span>。</p></div>
+    </div>
+    <h4>差异 caption：三步 CoT <span class="src">§3.3</span></h4>
+    <div class="three-step">
+      <div class="chip m"><b>Step 1 · 详细描述</b>源图与目标图各写一段含 OCR 的详细 caption</div>
+      <div class="chip m"><b>Step 2 · 差异分析</b>结合原图与两段 caption，从视觉和文字两侧列出全部差异</div>
+      <div class="chip o"><b>Step 3 · 指令合成</b>基于差异写一条简洁编辑指令</div>
+    </div>
+    <p class="footnote">captioner 自身的训练数据规模、底座 VLM、评测指标<span class="nd">原文未披露</span>；只知道它在图 6 的主动学习回路里迭代重训。</p>
+  </div>
+
+  <div class="wide">
+    <h3>4.6 已披露的规模与配比</h3>
+    <p class="prose">原文没有给出任何来源占比，所以这里不画百分比柱，只列表。</p>
+    <div class="tbl-wrap"><table class="idx-table">
+      <thead><tr><th>项目</th><th>原文给出的内容</th><th>出处</th></tr></thead>
+      <tbody>
+        <tr><td>预训练图像总量</td><td><span class="nd">原文未披露</span>；仅称「大规模内部版权集合」</td><td>§2.1</td></tr>
+        <tr><td>向量引擎规模</td><td>「数十亿 embedding」；去重吞吐 8×H800 约 8 小时 / 10 亿条，100-NN</td><td>§2、§2.2</td></tr>
+        <tr><td>各过滤器剔除率 / 阈值</td><td><span class="nd">原文未披露</span></td><td>—</td></tr>
+        <tr><td>caption 类型</td><td>5 种：长、中、短、标签、模拟用户 prompt；中英双语</td><td>§3.2、§4.3</td></tr>
+        <tr><td>原始元数据混入概率</td><td>「小概率」，具体值<span class="nd">原文未披露</span></td><td>§4.3</td></tr>
+        <tr><td>编辑对总量 / 各来源占比</td><td><span class="nd">原文未披露</span>；仅说编辑对远少于、且远不如 T2I 数据多样</td><td>§4.7</td></tr>
+        <tr><td>编辑持续预训练的 T2I : I2I</td><td>建议 4 : 1（原文写作 e.g.，是建议值）</td><td>§4.7</td></tr>
+        <tr><td>DPO 偏好对数量</td><td><span class="nd">原文未披露</span></td><td>§4.6.2</td></tr>
+        <tr><td>人评样本</td><td>与 Flux 2 dev 对比：222 个样本，每个 3 名标注员</td><td>§5.1.2</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">目标函数：flow matching，x<sub>t</sub> = t·x<sub>1</sub> + (1−t)·x<sub>0</sub>，回归速度 x<sub>1</sub>−x<sub>0</sub>；logit-normal 采样 t（同 SD3），多分辨率下用 Flux 式动态 time shift<span class="src">§4.3</span>。学习率、batch、步数等超参原文均未给。</p></div>
+
+  <div class="wide">
+    <h4 style="margin-top:0">Z-Image 主线 <span class="src">图 11 · §4.3–4.6</span></h4>
+    <div class="flow5">
+      <div class="card stage pre"><span class="sid">P1</span><h4>低分辨率预训练</h4><p>单阶段，固定 256²，仅 T2I；做跨模态对齐与知识注入。作者称中文文字渲染等基础视觉知识主要在此阶段习得。</p></div>
+      <div class="card stage pre"><span class="sid">P2</span><h4>Omni 预训练</h4><p>多阶段。任意分辨率（映射到预设区间）+ T2I/I2I 联合 + 多级双语 caption；结束时可生成 1k–1.5k 任意分辨率，支持图文双条件。</p></div>
+      <div class="card stage post"><span class="sid">S1</span><h4>PE-aware SFT</h4><p>精选图 + 超详细 caption 收窄分布；所有 prompt 先过冻结的 Prompt Enhancer；BM25 稀有度重采样；多个 SFT 变体线性插值做模型融合。</p></div>
+      <div class="card stage post"><span class="sid">S2</span><h4>少步蒸馏</h4><p>Decoupled DMD 修复细节丢失和偏色，DMDR 在蒸馏中引入 RL、以 DM 项防 reward hacking；约 100 NFEs → 8 NFEs。</p></div>
+      <div class="card stage post"><span class="sid">S3</span><h4>RLHF</h4><p>先离线 DPO（只做文字渲染、计数等可客观校验维度），再在线 GRPO（多维 reward 聚合成复合 advantage）。</p></div>
+    </div>
+    <h4>Z-Image-Edit 分支 <span class="src">§4.7</span></h4>
+    <div class="edit-branch">
+      <div class="lead">从预训练底座接续（图 11：两段预训练为生成与编辑共用初始化）→</div>
+      <div class="card stage edit"><span class="sid">E1</span><h4>编辑持续预训练</h4><p style="font-size:.84rem;margin:.3rem 0 0">全部编辑对 + T2I SFT 数据；512² 训「几千步」快速适配，再升 1024²。</p></div>
+      <div class="card stage edit"><span class="sid">E1'</span><h4>配比</h4><p style="font-size:.84rem;margin:.3rem 0 0">建议 T2I : I2I = 4 : 1，防止因编辑数据少且单一导致退化。</p></div>
+      <div class="card stage edit"><span class="sid">E2</span><h4>编辑 SFT</h4><p style="font-size:.84rem;margin:.3rem 0 0">人工构建的任务均衡高质量子集；渲染类合成数据大幅下采样。</p></div>
+    </div>
+
+    <div class="ratio cost">
+      <div class="rlab"><span><b>训练算力分布（H800 GPU 时）</b><span class="src">表 1</span></span><span>合计 314K</span></div>
+      <div class="rbar">
+        <span class="a" style="width:46.97%">低分辨率预训练 147.5K</span>
+        <span class="b" style="width:45.38%">Omni 预训练 142.5K</span>
+        <span class="c" style="width:7.65%">24K</span>
+      </div>
+      <div class="bar-legend"><span>低分辨率预训练 ≈47.0%</span><span class="s">Omni 预训练 ≈45.4%</span><span class="c">后训练 24K ≈7.6%</span></div>
+      <p class="tbl-note">条宽按表 1 的 GPU 时换算，占比为<span class="src calc">推算</span>。低分辨率阶段占预训练（290K）的约 50.9%<span class="src calc">推算</span>，与正文「超过一半预训练算力」一致。后训练 24K 是否包含 Z-Image-Edit 分支<span class="nd">原文未披露</span>。</p>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>各阶段要点</h3>
+    <div class="card mod"><h4>SFT：收窄分布但不忘长尾 <span class="tag">§4.4</span></h4>
+      <ul><li>目标不是修局部伪影，而是把分布从「多样性最大」推到「质量最大」的工作点。</li>
+      <li>维护概念目标先验，BM25 在线算稀有度，组 mini-batch 时上调稀有实体/艺术风格、下调高频概念，保持概念边缘分布均匀。</li>
+      <li>多个偏向不同能力（指令遵循、美学渲染等）的 SFT 变体从同一底座微调，按 θ<sub>final</sub> = Σ α<sub>i</sub>θ<sub>i</sub> 线性合并；α 取值<span class="nd">原文未披露</span>。</li></ul></div>
+    <div class="card mod"><h4>蒸馏：DMD 的两种机制 <span class="tag">§4.5</span></h4>
+      <ul><li><b>CFG-Augmentation（CA）</b>：蒸馏的主引擎，构建少步生成能力，作者称以往文献忽视了它。</li>
+      <li><b>Distribution Matching（DM）</b>：主要起正则作用，稳定训练、去伪影。</li>
+      <li>Decoupled DMD 给 CA 与 DM 分别配 renoising schedule；DMDR 把 DM 当 RL 的内在正则。技术细节在独立论文 [45]、[31]。</li>
+      <li>作者称 8 步结果与 100 步 teacher「难以区分」且常常更好；证据只有图 13 的定性对比。</li></ul></div>
+    <div class="card mod"><h4>Reward 模型与 RLHF <span class="tag">§4.6</span></h4>
+      <ul><li>三维：指令遵循、AI 生成感知（AI-Content Detection perception）、美学。</li>
+      <li>指令遵循标注：prompt 拆为 5 类要素（主体实体 / 属性 / 动作交互 / 空间构图 / 风格渲染），标注员只点<b>未满足</b>的要素，满足比例即 reward 目标。</li>
+      <li>DPO：VLM 批量生成 chosen/rejected 对（如文字写对 vs 有错字），人工快速校验；课程从简单（单词、少量物体）到复杂，偏好对先取中等区分度，再逐步加入差异更大或更细微的对。</li>
+      <li>GRPO：多维 reward（真实感、美学、指令遵循等）聚合成复合 advantage，作者称明显优于单一 reward（无数字）。</li></ul></div>
+    <div class="card mod"><h4>Prompt Enhancer（PE） <span class="tag">§4.8</span></h4>
+      <p>系统提示词 + 预训练 VLM，<b>VLM 全程冻结</b>；SFT 阶段所有输入 prompt（编辑时连同输入图）都先过 PE，让 DiT 对齐 PE 的输出分布。结构化推理链（主体分析 → 解题/知识注入 → 美学增强 → 完整描述）<span class="src">§5.3.6</span>是关键，如能把经纬度推成西湖场景。PE 用的是哪个 VLM<span class="nd">原文未披露</span>。</p></div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测</h2>
+  <p class="sec-intro">两类人评（公开 Elo 竞技场 + 对 Flux 2 dev 的 GSB）、八个 T2I 基准、两个编辑基准。基线分数是否复用各自论文的数字原文未说明。§5.3 定性部分的「Z-Image」均为 Turbo 版<span class="src">脚注 4</span>。</p></div>
+
+  <div class="wide">
+    <div class="chart-grid">
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 188" role="img" aria-label="CVTG-2K 平均 Word Acc">
+<text class="ch-t" x="0" y="14">CVTG-2K 平均 Word Acc</text><text class="ch-src" x="340" y="14" text-anchor="end">表 5</text>
+<line x1="118.0" y1="28" x2="118.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="176" text-anchor="middle">0</text>
+<line x1="162.5" y1="28" x2="162.5" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="162.5" y="176" text-anchor="middle">0.25</text>
+<line x1="207.0" y1="28" x2="207.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="207.0" y="176" text-anchor="middle">0.5</text>
+<line x1="251.5" y1="28" x2="251.5" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="251.5" y="176" text-anchor="middle">0.75</text>
+<line x1="296.0" y1="28" x2="296.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="176" text-anchor="middle">1</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Z-Image</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="154.3" height="14" rx="3"/>
+<text class="ch-val" x="276.3" y="45">0.8671</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Z-Image-Turbo</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-qi" x="118" y="56" width="152.8" height="14" rx="3"/>
+<text class="ch-val" x="274.8" y="67">0.8585</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">GPT Image 1 [High]</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="152.5" height="14" rx="3"/>
+<text class="ch-val" x="274.5" y="89">0.8569</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Qwen-Image</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="147.5" height="14" rx="3"/>
+<text class="ch-val" x="269.5" y="111">0.8288</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Seedream 3.0</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="105.4" height="14" rx="3"/>
+<text class="ch-val" x="227.4" y="133">0.5924</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">FLUX.1 [dev]</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="88.4" height="14" rx="3"/>
+<text class="ch-val" x="210.4" y="155">0.4965</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="162"/>
+</svg></div>
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 188" role="img" aria-label="OneIG-EN Overall">
+<text class="ch-t" x="0" y="14">OneIG-EN Overall</text><text class="ch-src" x="340" y="14" text-anchor="end">表 7</text>
+<line x1="118.0" y1="28" x2="118.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="176" text-anchor="middle">0</text>
+<line x1="177.3" y1="28" x2="177.3" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="177.3" y="176" text-anchor="middle">0.2</text>
+<line x1="236.7" y1="28" x2="236.7" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="236.7" y="176" text-anchor="middle">0.4</text>
+<line x1="296.0" y1="28" x2="296.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="176" text-anchor="middle">0.6</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">Z-Image</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="34" width="162.0" height="14" rx="3"/>
+<text class="ch-val" x="284.0" y="45">0.546</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Qwen-Image</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="56" width="159.9" height="14" rx="3"/>
+<text class="ch-val" x="281.9" y="67">0.539</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">GPT Image 1 [High]</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="158.1" height="14" rx="3"/>
+<text class="ch-val" x="280.1" y="89">0.533</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Seedream 3.0</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="157.2" height="14" rx="3"/>
+<text class="ch-val" x="279.2" y="111">0.530</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">Z-Image-Turbo</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-qi" x="118" y="122" width="156.6" height="14" rx="3"/>
+<text class="ch-val" x="278.6" y="133">0.528</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">Imagen 4</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="152.8" height="14" rx="3"/>
+<text class="ch-val" x="274.8" y="155">0.515</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="162"/>
+</svg></div>
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 188" role="img" aria-label="GEdit-Bench-EN G_O">
+<text class="ch-t" x="0" y="14">GEdit-Bench-EN G_O</text><text class="ch-src" x="340" y="14" text-anchor="end">表 15</text>
+<line x1="118.0" y1="28" x2="118.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="176" text-anchor="middle">0</text>
+<line x1="162.5" y1="28" x2="162.5" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="162.5" y="176" text-anchor="middle">2.5</text>
+<line x1="207.0" y1="28" x2="207.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="207.0" y="176" text-anchor="middle">5</text>
+<line x1="251.5" y1="28" x2="251.5" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="251.5" y="176" text-anchor="middle">7.5</text>
+<line x1="296.0" y1="28" x2="296.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="176" text-anchor="middle">10</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">UniWorld-V2</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="34" width="139.4" height="14" rx="3"/>
+<text class="ch-val" x="261.4" y="45">7.83</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Z-Image-Edit</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="56" width="134.7" height="14" rx="3"/>
+<text class="ch-val" x="256.7" y="67">7.57</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Qwen-Image-Edit</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="78" width="134.6" height="14" rx="3"/>
+<text class="ch-val" x="256.6" y="89">7.56</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Qwen-Image-Edit 2509</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="134.2" height="14" rx="3"/>
+<text class="ch-val" x="256.2" y="111">7.54</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">GPT-Image-1 [High]</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="134.0" height="14" rx="3"/>
+<text class="ch-val" x="256.0" y="133">7.53</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">Step1X-Edit</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="124.1" height="14" rx="3"/>
+<text class="ch-val" x="246.1" y="155">6.97</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="162"/>
+</svg></div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart-cell"><svg class="chart" viewBox="0 0 340 188" role="img" aria-label="ImgEdit Overall（1–5 分）">
+<text class="ch-t" x="0" y="14">ImgEdit Overall（1–5 分）</text><text class="ch-src" x="340" y="14" text-anchor="end">表 14</text>
+<line x1="118.0" y1="28" x2="118.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="118.0" y="176" text-anchor="middle">0</text>
+<line x1="153.6" y1="28" x2="153.6" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="153.6" y="176" text-anchor="middle">1</text>
+<line x1="189.2" y1="28" x2="189.2" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="189.2" y="176" text-anchor="middle">2</text>
+<line x1="224.8" y1="28" x2="224.8" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="224.8" y="176" text-anchor="middle">3</text>
+<line x1="260.4" y1="28" x2="260.4" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="260.4" y="176" text-anchor="middle">4</text>
+<line x1="296.0" y1="28" x2="296.0" y2="162" stroke="var(--line)" stroke-width="1"/>
+<text class="ch-ax" x="296.0" y="176" text-anchor="middle">5</text>
+<text class="ch-lbl" x="112" y="45" text-anchor="end">UniWorld-V2</text>
+<rect class="bar-bg" x="118" y="34" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="34" width="159.8" height="14" rx="3"/>
+<text class="ch-val" x="281.8" y="45">4.49</text>
+<text class="ch-lbl" x="112" y="67" text-anchor="end">Qwen-Image-Edit 2509</text>
+<rect class="bar-bg" x="118" y="56" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="56" width="154.9" height="14" rx="3"/>
+<text class="ch-val" x="276.9" y="67">4.35</text>
+<text class="ch-lbl" x="112" y="89" text-anchor="end">Z-Image-Edit</text>
+<rect class="bar-bg" x="118" y="78" width="178" height="14" rx="3"/>
+<rect class="bar-q" x="118" y="78" width="153.1" height="14" rx="3"/>
+<text class="ch-val" x="275.1" y="89">4.30</text>
+<text class="ch-lbl" x="112" y="111" text-anchor="end">Qwen-Image-Edit</text>
+<rect class="bar-bg" x="118" y="100" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="100" width="152.0" height="14" rx="3"/>
+<text class="ch-val" x="274.0" y="111">4.27</text>
+<text class="ch-lbl" x="112" y="133" text-anchor="end">GPT-Image-1 [High]</text>
+<rect class="bar-bg" x="118" y="122" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="122" width="149.5" height="14" rx="3"/>
+<text class="ch-val" x="271.5" y="133">4.20</text>
+<text class="ch-lbl" x="112" y="155" text-anchor="end">FLUX.1 Kontext [Pro]</text>
+<rect class="bar-bg" x="118" y="144" width="178" height="14" rx="3"/>
+<rect class="bar-o" x="118" y="144" width="142.4" height="14" rx="3"/>
+<text class="ch-val" x="264.4" y="155">4.00</text>
+<line class="axis" x1="118" y1="28" x2="118" y2="162"/>
+</svg></div>
+      <div class="chart-cell span2">
+        <p style="margin:.2rem 0 .4rem;font-weight:700">人评</p>
+        <div class="tbl-wrap" style="margin:0"><table>
+          <thead><tr><th>Z-Image vs Flux 2 dev（32B）</th><th>G</th><th>S</th><th>B</th><th>G+S</th></tr></thead>
+          <tbody><tr><td>222 样本 × 3 标注员<span class="src">表 4</span></td><td class="q best">46.4%</td><td>41.0%</td><td>12.6%</td><td>87.4%</td></tr></tbody>
+        </table></div>
+        <p class="tbl-note">G = Good（Z-Image 更好），S = Same，B = Bad。作为对照，G − B = +33.8 pt<span class="src calc">推算</span>。原文只写「Z-Image」，未说明是基座还是 Turbo；prompt 集为内部「用户风格」prompt，未公开。</p>
+      </div>
+    </div>
+    <div class="chart-legend"><span class="l1">Z-Image / Z-Image-Edit</span><span class="l2">Z-Image-Turbo</span><span class="l3">对比模型</span></div>
+    <p class="tbl-note">所有柱从 0 起；GEdit 为 0–10 分，ImgEdit 为 1–5 分（轴画到 5）。</p>
+  </div>
+
+  <div class="wide">
+    <h3>精选：文生图</h3>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>基准（指标）</th><th class="q">Z-Image</th><th class="q">Z-Image-Turbo</th><th>Qwen-Image</th><th>GPT Image 1 [High]</th><th>Seedream 3.0</th><th>Z-Image 名次</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">文字渲染</td></tr>
+        <tr><td>CVTG-2K 平均 Word Acc<span class="src">表 5</span></td><td class="q best">0.8671</td><td class="q">0.8585</td><td>0.8288</td><td>0.8569</td><td>0.5924</td><td>1</td></tr>
+        <tr><td>CVTG-2K NED<span class="src">表 5</span></td><td class="q">0.9367</td><td class="q">0.9281</td><td>0.9116</td><td class="best">0.9478</td><td>0.8537</td><td>第 2<sup>a</sup></td></tr>
+        <tr><td>CVTG-2K CLIPScore<span class="src">表 5</span></td><td class="q">0.7969</td><td class="q best">0.8048</td><td>0.8017</td><td>0.7982</td><td>0.7821</td><td>Turbo 第 1</td></tr>
+        <tr><td>LongText-Bench-EN<span class="src">表 6</span></td><td class="q">0.935</td><td class="q">0.917</td><td>0.943</td><td class="best">0.956</td><td>0.896</td><td>3</td></tr>
+        <tr><td>LongText-Bench-ZH<span class="src">表 6</span></td><td class="q">0.936</td><td class="q">0.926</td><td class="best">0.946</td><td>0.619</td><td>0.878</td><td>2</td></tr>
+        <tr class="grp"><td colspan="7">综合对齐</td></tr>
+        <tr><td>OneIG-EN Overall<span class="src">表 7</span></td><td class="q best">0.546</td><td class="q">0.528</td><td>0.539</td><td>0.533</td><td>0.530</td><td>1</td></tr>
+        <tr><td>OneIG-EN Text<span class="src">表 7</span></td><td class="q">0.987</td><td class="q best">0.994</td><td>0.891</td><td>0.857</td><td>0.865</td><td>—</td></tr>
+        <tr><td>OneIG-ZH Overall<span class="src">表 8</span></td><td class="q">0.535</td><td class="q">0.507</td><td class="best">0.548</td><td>0.474</td><td>0.528</td><td>2</td></tr>
+        <tr><td>OneIG-ZH Text<span class="src">表 8</span></td><td class="q best">0.988</td><td class="q">0.982</td><td>0.963</td><td>0.650</td><td>0.928</td><td>—</td></tr>
+        <tr><td>GenEval Overall<span class="src">表 9</span></td><td class="q">0.84</td><td class="q">0.82</td><td class="best">0.87</td><td>0.84</td><td>0.84</td><td>并列 2</td></tr>
+        <tr><td>DPG-Bench Overall<span class="src">表 10</span></td><td class="q">88.14</td><td class="q">84.86</td><td class="best">88.32</td><td>85.15</td><td>88.27</td><td>3</td></tr>
+        <tr><td>TIIF testmini Overall（short / long）<span class="src">表 11</span></td><td class="q">80.20 / 83.04</td><td class="q">77.73 / 80.05</td><td>86.14 / 86.83</td><td class="best">89.15 / 88.29</td><td>86.02 / 84.31</td><td>4</td></tr>
+        <tr class="grp"><td colspan="7">VLM 评判（Qwen2.5-VL-72B）</td></tr>
+        <tr><td>PRISM-Bench Overall<span class="src">表 12</span></td><td class="q">75.6</td><td class="q">77.4</td><td>74.1</td><td class="best">80.7</td><td>76.2</td><td>Turbo 3 / 基座 5</td></tr>
+        <tr><td>PRISM-Bench-ZH Overall<span class="src">表 13</span></td><td class="q">75.3</td><td class="q">75.1</td><td>70.3</td><td class="best">77.7</td><td>74.7</td><td>2</td></tr>
+      </tbody>
+    </table></div>
+    <div class="keybox"><span class="k-best">该行最高（仅限本表所列列）</span><span class="k-q">Z-Image 系列</span></div>
+    <p class="tbl-note"><sup>a</sup> 正文称在 CVTG-2K「所有指标上都更优」，但表 5 中 NED 最高的是 GPT Image 1 [High]（0.9478），4 文本区域 Word Acc 也是 GPT Image 1 更高（0.8731 vs 0.8652）。PRISM-Bench 未列 Gemini 2.5-Flash-Image（EN 80.4，第 2）以节省宽度。</p>
+
+    <h3>精选：编辑（Z-Image-Edit）</h3>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>模型</th><th>ImgEdit Overall</th><th>Add</th><th>Extract</th><th>Remove</th><th>Hybrid</th><th>GEdit-EN G_SC</th><th>G_PQ</th><th>G_O</th><th>GEdit-CN G_O</th></tr></thead>
+      <tbody>
+        <tr><td>UniWorld-V2</td><td class="best">4.49</td><td>4.29</td><td class="best">4.32</td><td class="best">4.72</td><td>3.83</td><td class="best">8.39</td><td class="best">8.02</td><td class="best">7.83</td><td>—</td></tr>
+        <tr><td>Qwen-Image-Edit [2509]</td><td>4.35</td><td>4.32</td><td>4.04</td><td>4.52</td><td>3.39</td><td>8.15</td><td>7.86</td><td>7.54</td><td class="best">7.54</td></tr>
+        <tr class="hl"><td>Z-Image-Edit</td><td>4.30</td><td>4.40</td><td>4.30</td><td>4.13</td><td>3.63</td><td>8.11</td><td>7.72</td><td>7.57</td><td class="best">7.54</td></tr>
+        <tr><td>Qwen-Image-Edit</td><td>4.27</td><td>4.38</td><td>3.43</td><td>4.14</td><td>3.82</td><td>8.00</td><td>7.86</td><td>7.56</td><td>7.52</td></tr>
+        <tr><td>GPT-Image-1 [High]</td><td>4.20</td><td class="best">4.61</td><td>2.90</td><td>3.66</td><td class="best">3.96</td><td>7.85</td><td>7.62</td><td>7.53</td><td>7.30</td></tr>
+        <tr><td>FLUX.1 Kontext [Pro]</td><td>4.00</td><td>4.25</td><td>2.35</td><td>3.57</td><td>3.68</td><td>7.02</td><td>7.60</td><td>6.56</td><td>1.23</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">来源：表 14（ImgEdit，9 类任务，节选 4 类）、表 15（GEdit-Bench）。「—」= 原表未报告。表 15 的名次列与表头 G_O↑ 不一致：Z-Image-Edit 的 EN G_O（7.57）高于排第 2 的 Qwen-Image-Edit [2509]（7.54），名次实际与 EN G_SC 的降序一致<span class="src calc">推算</span>。正文称在「add 与 extract」上突出，但两项都不是最高（GPT-Image-1 Add 4.61、UniWorld-V2 Extract 4.32）。</p>
+
+    <details class="more"><summary>人评竞技场细节 <span class="hint">§5.1.1 · 表 3</span></summary><div class="body">
+      <ul>
+        <li><b>Artificial Analysis Image Arena</b>：Z-Image-Turbo Elo 1,161，总榜第 8、开源第 1；作者称前十中参数最少（6B）、推理成本最低（$5.0 / 1,000 张）<span class="src">§5.1.1 · 图 16–17</span>。榜单截图日期原文未给，排行榜会动态变化。</li>
+        <li><b>Alibaba AI Arena</b>（表 3）前 9：</li>
+      </ul>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>名次 · 模型</th><th>类型</th><th>95% CI</th><th>Elo</th><th>胜率</th></tr></thead>
+        <tbody>
+          <tr><td>1 · Imagen 4 Ultra Preview 0606</td><td>闭源</td><td>−16/+16</td><td>1048</td><td>48%</td></tr>
+          <tr><td>2 · gemini-2.5-flash-image-preview</td><td>闭源</td><td>−16/+14</td><td>1046</td><td>47%</td></tr>
+          <tr><td>3 · Seedream 4.0</td><td>闭源</td><td>−17/+16</td><td>1039</td><td>46%</td></tr>
+          <tr class="hl"><td>4 · Z-Image-Turbo</td><td>开源 6B</td><td>−15/+17</td><td>1025</td><td>45%</td></tr>
+          <tr><td>5 · Seedream 3.0</td><td>闭源</td><td>−15/+19</td><td>1012</td><td>41%</td></tr>
+          <tr><td>6 · Qwen-Image</td><td>开源 20B</td><td>−16/+16</td><td>1008</td><td>41%</td></tr>
+          <tr><td>7 · GPT Image 1</td><td>闭源</td><td>−14/+17</td><td>986</td><td>38%</td></tr>
+          <tr><td>8 · FLUX.1 Kontext Pro</td><td>闭源</td><td>−15/+14</td><td>950</td><td>32%</td></tr>
+          <tr><td>9 · Ideogram 3.0</td><td>闭源</td><td>−15/+16</td><td>936</td><td>29%</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">第 3 名 Seedream 4.0（1039, −17）与 Z-Image-Turbo（1025, +17）的置信区间重叠<span class="src calc">推算</span>，名次差距不显著。</p>
+    </div></details>
+
+    <details class="more"><summary>完整子项：GenEval / DPG / OneIG 分维度 <span class="hint">表 7–10 节选</span></summary><div class="body">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>模型</th><th>GenEval Counting</th><th>Position</th><th>Attr. Binding</th><th>DPG Attribute</th><th>DPG Relation</th><th>OneIG-EN Reasoning</th><th>Style</th><th>Diversity</th></tr></thead>
+        <tbody>
+          <tr><td>Z-Image</td><td>0.78</td><td>0.62</td><td>0.77</td><td class="best">93.16</td><td>92.22</td><td>0.280</td><td>0.387</td><td>0.194</td></tr>
+          <tr><td>Z-Image-Turbo</td><td>0.77</td><td>0.65</td><td>0.68</td><td>90.14</td><td>92.16</td><td>0.298</td><td>0.368</td><td>0.139</td></tr>
+          <tr><td>Qwen-Image</td><td>0.89</td><td>0.76</td><td>0.77</td><td>92.02</td><td class="best">94.31</td><td>0.306</td><td>0.418</td><td>0.197</td></tr>
+          <tr><td>Seedream 3.0</td><td class="best">0.91</td><td>0.47</td><td class="best">0.80</td><td>91.36</td><td>92.78</td><td>0.275</td><td>0.413</td><td class="best">0.277</td></tr>
+          <tr><td>GPT Image 1 [High]</td><td>0.85</td><td class="best">0.75</td><td>0.61</td><td>89.84</td><td>92.63</td><td class="best">0.345</td><td class="best">0.462</td><td>0.151</td></tr>
+        </tbody>
+      </table></div>
+      <p class="tbl-note">位置/计数是 Z-Image 的相对短板；Turbo 在 OneIG 的 Diversity 从 0.194 降到 0.139（EN）、从 0.243 降到 0.134（ZH）<span class="src">表 7–8</span>，与蒸馏 + RL 收窄分布一致（这是本页解读，论文未讨论）。注：「best」只在本表 5 行内比较；GenEval Position 最高其实是 Qwen-Image 0.76。</p>
+    </div></details>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="同一 iPhone 闪光海滩人像 prompt 下 Lumina-Image 2.0、Qwen-Image、Seedream3.0、HunyuanImage3.0、Imagen 4 Ultra、FLUX 2 dev、Seedream4.0、Nano Banana Pro 与 Z-Image-Turbo 的对比" loading="lazy"></div>
+    <figcaption><b>同一 prompt 下 9 个模型的写实对比</b>（iPhone 闪光灯下的夜晚海滩人像）：Lumina-Image 2.0、Qwen-Image、Seedream 3.0、HunyuanImage 3.0、Imagen 4 Ultra、FLUX 2 [dev]、Seedream 4.0、Nano Banana Pro、Z-Image-Turbo。挑选的单例，不代表统计结论。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪</h2>
+  <p class="sec-intro">单流 MM-DiT、flow matching、QK-Norm、FSDP2 都是已有做法，不算在内。</p></div>
+  <div class="novel prose">
+    <div class="card nv"><h4>omni 预训练：生成与编辑共用预训练预算</h4><p>任意分辨率、T2I、I2I（视频帧等弱对齐自然图像对）在同一预训练阶段完成，I2I 条件在目标 caption 与差异 caption 间采样；Edit 模型只需两段接续训练。</p><p class="why">可核对：§4.3、图 11。「对 T2I 无可察觉退化」没有给数字。</p></div>
+    <div class="card nv"><h4>把 DMD 拆成「引擎 + 正则」再接 RL</h4><p>Decoupled DMD 认为 CFG 增强才是少步能力的主来源，分布匹配只是正则；DMDR 顺势用 DM 项约束 RL 防 reward hacking。</p><p class="why">可核对：§4.5、图 13；方法细节在团队另两篇论文 [45][31]。</p></div>
+    <div class="card nv"><h4>PE-aware SFT：冻结 VLM、只让 DiT 去适配</h4><p>不训练 LLM，而是在 SFT 时把所有 prompt（编辑时连同输入图）都过一遍带推理链的 PE，让 6B DiT 学会吃 PE 的输出分布。</p><p class="why">可核对：§4.8、图 15。没有「SFT 时不过 PE」的对照数字。</p></div>
+    <div class="card nv"><h4>Z-Captioner：OCR 先行 + 元信息条件 + 三步差异 caption</h4><p>同一个模型同时产出五级 T2I caption 与编辑指令；先抽 OCR、保留原语言，再写 caption；以图像 meta 信息作条件注入世界知识。</p><p class="why">可核对：§3、图 8–9。</p></div>
+    <div class="card nv"><h4>数据基础设施的工程化闭环</h4><p>k-NN 图 + 社区发现的语义去重（8×H800 约 8 小时 / 10 亿条）、Wikipedia 知识图谱 + BM25 的语义级采样、生成模型自诊断长尾 + 检索补数、人 + AI 双校验迭代重训 captioner 与 reward。</p><p class="why">可核对：§2.2–2.4、图 5–6。均无与「不用该模块」对比的消融。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">每条先写论文怎么做（带出处），再写一条可迁移做法。<b>「迁移」都是本页的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>OCR 先抽、原文保留</h4>
+        <p class="paper">论文：先识别全部文字再写 caption，OCR 不翻译，称与文字渲染准确度强相关<span class="src">§3.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>文字编辑类样本的指令里，源/目标字符串一律从 OCR 结果原样拷贝（不翻译、不改写标点），并用字符串精确匹配做自动 QC：指令里的目标串必须出现在目标图 OCR 中。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>三步差异 caption，把中间产物留下</h4>
+        <p class="paper">论文：源图/目标图各写详细 caption → 结合原图列出全部差异 → 合成简洁指令<span class="src">§3.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>Step 2 的差异清单别丢，存成结构化字段（op 类型 + 对象 + 属性）。它可以同时当成：逐条核对的 QC 清单、「未提及即应保持」的 preserve 集合、评测时的逐项打分要素。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>同一对样本配多种粒度的指令</h4>
+        <p class="paper">论文：五级 caption，模拟用户 prompt 多数是只说局部的「不完整 prompt」<span class="src">§3.2</span>；I2I 训练在目标 caption 与差异 caption 间随机采样<span class="src">§4.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>每对编辑样本至少生成「完整差异描述 / 简短用户口吻 / 只点一处的模糊指令」三档，训练时按比例采样；评测集也按这三档分桶报分，模糊指令桶单独看。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>元信息条件，压实体幻觉</h4>
+        <p class="paper">论文：caption 以图像 meta 信息为条件写入世界知识，减少命名名人/地标/事件时的幻觉<span class="src">§3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>有来源元数据（商品名、地点、作品名）的编辑源图，把元数据喂给 captioner；没有元数据时禁止 captioner 自行命名专有实体，改用通用类别词。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>N 个编辑版两两组合 + 反向对</h4>
+        <p class="paper">论文：一张原图生成 N 个编辑版，任意两两组合扩量，得到混合编辑对和「真实原图当输出」的反向对<span class="src">§2.5 · 图 7a</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>组合出来的 A→B 对必须重新跑差异 caption，不能拼接两条原指令；反向对优先用于去除/修复类任务（目标是真实图，无合成伪影），并单独统计其在训练集中的占比以便消融。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>视频帧对 + 相似度筛选</h4>
+        <p class="paper">论文：同组视频帧天然包含姿态+背景等耦合变化，用 CN-CLIP 余弦相似度筛高相关对<span class="src">§2.5 · 图 7b</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>相似度同时设下限和上限：下限防不相关，上限防近重复帧（几乎无编辑）；再用差异 caption 的差异条数过滤掉「无可描述变化」的对。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>100% 正确的合成数据，SFT 要下采样</h4>
+        <p class="paper">论文：渲染文字编辑数据指令绝对准确，但偏离真实用户分布，编辑 SFT 阶段大幅下采样<span class="src">§4.7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>把数据按「真实度」打一个来源标签（真实对 / 视频对 / 专家模型合成 / 程序渲染），预训练放量、SFT 按标签限额；评测集按来源标签报分，避免合成数据刷高指标。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>T2I : I2I = 4 : 1 起步</h4>
+        <p class="paper">论文：编辑持续预训练混 T2I SFT 数据保画质，建议比例 4 : 1；先 512² 训几千步再升 1024²<span class="src">§4.7</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>把 4 : 1 当作扫配比的起点而非结论（论文无消融），同时盯 T2I 指标与编辑指标两条曲线；分辨率两段式可直接复用来缩短冷启动。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>AIGC 检测器 + 画质多因子</h4>
+        <p class="paper">论文：训练 AIGC 分类器剔除 AI 生成图；画质看压缩比、偏色/模糊/水印/噪声、边缘方差、JPEG 重编码 BPP<span class="src">§2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>专家模型合成的编辑目标图同样过 AIGC 检测与画质打分，记录分数而不是一刀切，按分数分层采样；BPP 和边缘方差是便宜的预筛，可在 VLM 打分前先跑。</p></div>
+      <div class="impl"><h4><span class="ix">D6</span>用失败案例反查数据</h4>
+        <p class="paper">论文：用问题生成图或 prompt 检索，定位并剪掉导致错误的数据簇；模型自诊断长尾概念再检索补数<span class="src">§2.2 · §2.4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测里的失败样本（如某类 op 不生效）做 embedding 检索，同时回查训练集中相似源图的指令质量；坏簇修 caption 或剔除，空洞簇定向补数。</p></div>
+    </div>
+
+    <div class="impl-group">评测与奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>要素拆解 + 只点未满足项</h4>
+        <p class="paper">论文：prompt 拆成主体/属性/动作/空间/风格 5 类要素，标注员只点未满足的要素，满足比例即指令遵循分<span class="src">§4.6.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测改成「编辑要素 + 保持要素」两张清单（来自 C2 的差异清单），标注员只勾失败项；得到可按 op 类型聚合的细粒度分数，也能直接当 reward 标签。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>DPO 只做可客观校验的维度</h4>
+        <p class="paper">论文：DPO 只用文字渲染、计数等二值可判维度，VLM 批量造对、人工快速校验；课程从中等区分度的对开始<span class="src">§4.6.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑里的客观维度可选：文字编辑字符串是否正确、增删后的物体计数、非编辑区像素/感知差异是否超阈值。先用这些造偏好对，主观维度留给在线 RL 的 reward 模型。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>报告排名口径要写清</h4>
+        <p class="paper">论文：GEdit 表名次与 G_O↑ 表头不一致；CVTG-2K 正文称「全部指标最佳」但 NED 不是<span class="src">表 5 · 表 15</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>自家评测报告固定写明排序键、评判模型版本、是否复用他人论文分数；对比时把 G_SC（指令遵循）与 G_PQ（画质）分开看，不只看 G_O。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>用 3D 重建验证视角编辑</h4>
+        <p class="paper">论文：对相机/视角编辑的多视图结果用 VGGT 重建稀疏点云与相机位姿，以重建成功与位姿对齐作几何一致性证据<span class="src">§5.3.4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>视角类编辑的自动评测可用「重建是否成功 + 估计位姿与指令角度的误差」作为指标，比 VLM 主观打分更可复现（论文本身只做了定性展示）。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits prose">
+    <li class="key"><b>几乎没有定量消融。</b>Decoupled DMD / DMDR（图 13）、RLHF（图 14）、PE 推理链（图 15）、模型融合、显式 OCR caption、omni 预训练「不伤 T2I」都只有定性图或一句结论。</li>
+    <li class="key"><b>数据规模与配比基本未披露。</b>没有图像总量、各来源占比、过滤阈值与剔除率、编辑对总量；唯一的配比是「建议」T2I : I2I = 4 : 1<span class="src">§4.7</span>。</li>
+    <li><b>正文与表格有出入。</b>CVTG-2K 称「所有指标最佳」，但 NED 与 4 区域 Word Acc 是 GPT Image 1 更高<span class="src">表 5</span>；GEdit 名次列按 EN G_SC 排序却标 G_O↑<span class="src">表 15</span>；ImgEdit 称 add / extract 突出，但两项都不是最高<span class="src">表 14</span>。</li>
+    <li><b>交叉引用错位。</b>§4.3 写「如图 1 所示」低分辨率阶段占一半以上算力，实为表 1；§4.7 写编辑两段训练「如图 10」，实为图 11；成本表 1 为 $628K，摘要/结论写约 / 不到 $630K。</li>
+    <li><b>「纯真实数据」的口径要看清。</b>引言称不蒸馏其他模型的结果<span class="src">§1</span>，但编辑数据用了任务专家模型合成和渲染系统<span class="src">§2.5</span>，PE 依赖预训练 VLM；这一表述应理解为针对文生图预训练。</li>
+    <li><b>人评不可复现。</b>与 Flux 2 dev 的 GSB 只有 222 个内部 prompt 样本、未说明是基座还是 Turbo<span class="src">§5.1.2</span>；Alibaba AI Arena 域名为 alibaba-inc.com，论文称其「独立」；两个竞技场的榜单快照日期都没给。</li>
+    <li><b>基线来源未说明。</b>大量对比模型（GPT Image 1、Seedream 3.0 等）的分数是否自测、采样设置如何，原文未交代；PRISM-Bench 两表由 Qwen2.5-VL-72B 自动评判。</li>
+    <li><b>Turbo 多样性下降。</b>OneIG Diversity：EN 0.194 → 0.139，ZH 0.243 → 0.134<span class="src">表 7–8</span>，论文未讨论。</li>
+    <li><b>许可证与 Edit 权重。</b>原文写了公开代码、权重与 Demo，但未写许可证；给出的模型链接只有 Z-Image-Turbo，Z-Image 基座与 Z-Image-Edit 权重是否发布原文未说明。</li>
+    <li><b>作者自述的能力局限。</b>受 6B 规模限制，世界知识、意图理解与复杂推理较弱，依赖外挂 PE 补齐<span class="src">§4.8</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide"><table class="idx-table">
+    <thead><tr><th>编号</th><th>内容</th><th>本页</th></tr></thead>
+    <tbody>
+      <tr><td>首页图</td><td>摘要页裁图（含 GitHub / ModelScope / HF 链接），本页未展示</td><td>figures/fig0-teaser.jpg</td></tr>
+      <tr><td>图 1</td><td>Z-Image-Turbo 写实生成示例</td><td><a href="#top">Hero</a></td></tr>
+      <tr><td>图 2</td><td>Z-Image-Turbo 中英双语文字渲染示例</td><td><a href="#top">Hero</a></td></tr>
+      <tr><td>图 3</td><td>Z-Image-Edit 各类图生图示例</td><td>未裁图</td></tr>
+      <tr><td>图 4</td><td>与 8 个 SOTA 模型的写实对比</td><td><a href="#eval">06 评测</a></td></tr>
+      <tr><td>图 5</td><td>Active Curation Engine</td><td><a href="#data">04 数据</a></td></tr>
+      <tr><td>图 6</td><td>人在回路的主动学习循环</td><td><a href="#data">04 数据</a></td></tr>
+      <tr><td>图 7</td><td>编辑数据构建：图式组合 / 视频帧 / 文字渲染</td><td>未裁图（文字见 04）</td></tr>
+      <tr><td>图 8–9</td><td>Z-Captioner 管线；单图多级 caption 与差异 caption 示例</td><td>未裁图（文字见 04）</td></tr>
+      <tr><td>图 10</td><td>S3-DiT 架构</td><td>未裁图（本页自绘示意见 03）</td></tr>
+      <tr><td>图 11</td><td>Z-Image / Z-Image-Edit 训练流程</td><td>未裁图（流程见 05）</td></tr>
+      <tr><td>图 12–15</td><td>训练过程中间结果；蒸馏策略对比；FSD vs RLHF；PE 有无推理链</td><td>未裁图</td></tr>
+      <tr><td>图 16–17</td><td>Artificial Analysis 竞技场排名</td><td>未裁图（数字见 06）</td></tr>
+      <tr><td>图 18–35</td><td>定性对比：人像、场景、中英文字、海报、局部编辑、视角控制、多图 ID、PE、多语言、复合指令</td><td>未裁图</td></tr>
+      <tr><td>表 1</td><td>训练成本（GPU 时 / 美元）</td><td><a href="#train">05</a></td></tr>
+      <tr><td>表 2</td><td>S3-DiT 配置</td><td><a href="#glance">01</a></td></tr>
+      <tr><td>表 3–4</td><td>Alibaba AI Arena Elo；对 Flux 2 dev 的 GSB</td><td><a href="#eval">06</a></td></tr>
+      <tr><td>表 5–13</td><td>CVTG-2K、LongText、OneIG-EN/ZH、GenEval、DPG、TIIF、PRISM-EN/ZH</td><td><a href="#eval">06</a></td></tr>
+      <tr><td>表 14–15</td><td>ImgEdit、GEdit-Bench</td><td><a href="#eval">06</a></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 Z-Image Team, Alibaba Group,《Z-Image: An Efficient Image Generation Foundation Model with Single-Stream Diffusion Transformer》，<a href="https://arxiv.org/abs/2511.22699" target="_blank" rel="noopener">arXiv:2511.22699</a>（v1 2025-11-27；本页对照 v5，2026-07-06）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，此处仅用于学术解读。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

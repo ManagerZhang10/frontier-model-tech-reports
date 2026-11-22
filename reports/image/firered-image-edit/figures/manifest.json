@@ -1,0 +1,44 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 2,
+    "caption_en": "Showcase of FireRed-Image-Edit in general image editing.",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig3.jpg",
+    "figure": 3,
+    "page": 5,
+    "caption_en": "Overview of Data Distrubution. Our training dataset achieves an approximate 1:1 ratio between",
+    "caption_note": "来源：论文图 3"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 6,
+    "caption_en": "Overview of Data Filtering. Our multi-stage data filtering pipeline includes deduplication, pho-",
+    "caption_note": "来源：论文图 4"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 8,
+    "caption_en": "Overview of Data Engine. The data production engine generates paired image editing samples",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig7.jpg",
+    "figure": 7,
+    "page": 11,
+    "caption_en": "Architecture overview. The data pipeline begins with a Bucket Sampler that organizes input sequences",
+    "caption_note": "来源：论文图 7"
+  }
+]

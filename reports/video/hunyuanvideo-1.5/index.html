@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HunyuanVideo 1.5 中文深读 · 8.3B 视频 DiT、SSTA 稀疏注意力与三类 captioner | 前沿模型技术报告</title>
+<meta name="description" content="HunyuanVideo 1.5（Tencent Hunyuan, arXiv 2511.18870）中文深读：8.3B 统一 DiT、16×/4× 3D 因果 VAE、SSTA 稀疏注意力、潜空间超分、视频数据过滤与 caption 后训练、渐进式训练与 RLHF、Rating/GSB 评测，以及对图像编辑数据/评测/caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: pretrain flow, SSTA diagram, GSB stacked bars, speed chart */
+.flow6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 16px 0 6px; }
+.flow6 .stage:not(:last-child)::after { content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px; border-top: 2px solid var(--muted); border-right: 2px solid var(--muted); transform: translateY(-50%) rotate(45deg); }
+.flow6 .stage { border-top: 3px solid var(--accent); }
+.flow6 .stage.t2i { border-top-color: var(--warm); }
+.flow6 .stage p { font-size: .82rem; line-height: 1.5; margin: .35rem 0 0; color: var(--ink-2); }
+.ssta .dg-proc { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1.2; }
+.ssta .dg-win { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 45%, var(--line)); stroke-width: 1.2; }
+.ssta .dg-out { fill: color-mix(in srgb, var(--accent) 16%, var(--card)); stroke: var(--accent); stroke-width: 1.5; }
+.ssta .dg-ar { stroke: var(--muted); stroke-width: 1.4; fill: none; marker-end: url(#ah); }
+.ssta .dg-ah { fill: var(--muted); }
+.ssta .dg-mono { fill: var(--accent-ink); font: 600 11px var(--f-mono); }
+.gsb { margin: 10px 0 4px; }
+.gsb .row { display: grid; grid-template-columns: 128px minmax(0, 1fr) 92px; gap: 10px; align-items: center; margin: 7px 0; font-size: .88rem; }
+.gsb .row .nm { font-weight: 600; }
+.gsb .row .net { font: 700 .9rem/1 var(--f-mono); text-align: right; }
+.gsb .rbar { display: flex; height: 24px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line); }
+.gsb .rbar span { display: flex; align-items: center; justify-content: center; font: 600 .72rem/1 var(--f-mono); color: #fff; white-space: nowrap; overflow: hidden; }
+.gsb .hy { background: var(--accent); }
+.gsb .eg { background: var(--good); }
+.gsb .eb { background: var(--bar-other); color: var(--ink) !important; }
+.gsb .ot { background: var(--warm); }
+:root[data-theme="dark"] .gsb .rbar span { color: #141218; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .gsb .rbar span { color: #141218; } }
+.gsb-legend span::before { content: ""; display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.gsb-legend .hy::before { background: var(--accent); }
+.gsb-legend .eg::before { background: var(--good); }
+.gsb-legend .eb::before { background: var(--bar-other); }
+.gsb-legend .ot::before { background: var(--warm); }
+.gsb-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .82rem; color: var(--muted); }
+.spd .bar-full { fill: var(--bar-other2); }
+.spd .bar-sp { fill: var(--accent); }
+.spd .grid { stroke: var(--line); stroke-width: 1; }
+.cap3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.hero-fig figure.fig { margin: 0; max-width: 1080px; }
+@media (max-width: 1100px) { .flow6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .flow6 .stage:nth-child(3)::after { display: none; } }
+@media (max-width: 960px) { .cap3 { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .flow6 { grid-template-columns: 1fr; }
+  .flow6 .stage::after { display: none !important; }
+  .gsb .row { grid-template-columns: 1fr; gap: 3px; }
+  .gsb .row .net { text-align: left; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 视频生成</div>
+    <h1>HunyuanVideo 1.5<span class="sub">HunyuanVideo 1.5 Technical Report</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Tencent Hunyuan Foundation Model Team</b></span>
+      <span>发布 <b>2025-11-24</b>（arXiv v1）</span>
+      <span>arXiv <b>2511.18870</b></span>
+      <span>本页依据 <b>v2（2025-11-25）</b>全文</span>
+    </div>
+    <p class="lede">一个 <b>8.3B</b> 参数的统一 DiT<span class="src">§3</span>，同一套权重做 T2V / I2V，出 480p–720p、5–10 秒视频，再用同架构的潜空间超分网络升到 1080p<span class="src">§1</span>；靠 16×/4× 压缩的 3D 因果 VAE 与 SSTA 稀疏注意力，720p 121 帧端到端推理峰值显存压到 <b>13.6 GB</b><span class="src">§6</span>。对编辑方向的读者，最值得看的是 §2 的视频过滤链和三类 captioner（含「只描述相对首帧变化」的 I2V 指令式 caption、caption 模型的 DPO 后训练）。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源：代码 + 权重</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>8.3B DiT（VSR 另一个 8.3B）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>视频生成 · T2V / I2V</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg>单卡 13.6 GB 峰值（offload）</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2511.18870" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>arXiv 2511.18870</a>
+      <a href="https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.6 16 2.5a13.4 13.4 0 0 0-7 0C6.3.6 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.7c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub：HunyuanVideo-1.5</a>
+      <a href="https://github.com/Tencent-Hunyuan/flex-block-attn" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.4 6.4-1.5 6.4-6.9A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.6 16 2.5a13.4 13.4 0 0 0-7 0C6.3.6 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.7c0 5.4 3.3 6.5 6.4 6.9a3.4 3.4 0 0 0-.9 2.6V22"/></svg>flex-block-attn（SSTA 算子库）</a>
+    </div>
+    <div class="hero-fig">
+      <figure class="fig card">
+        <div class="img-pad"><img src="figures/fig5.jpg" alt="同一段视频 720p 原生输出与超分到 1080p 后的逐帧对比" loading="eager"></div>
+        <figcaption><b>720p 原生输出（上）与 VSR 超分 1080p（下）</b>，裁图只含图 5 中间一组样例（宫廷舞会场景）。<span class="from">来源：论文图 5</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">编辑启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#figs">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自原文 v2；<span class="src calc">推算</span>为本页自算。</div>
+</nav>
+
+<main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num">8.3B</span><span class="stat-sub">主 DiT；VSR 网络沿用同一 8.3B 架构</span><span class="src">§3 · §3.2</span></div>
+    <div class="card stat"><span class="stat-k">骨干</span><span class="stat-num sm">54 个双流块 · 2048 维</span><span class="stat-sub">FFN 8192；16 头 × 128 维</span><span class="src">表 1</span></div>
+    <div class="card stat"><span class="stat-k">VAE</span><span class="stat-num sm">空间 16× · 时间 4×</span><span class="stat-sub">3D 因果 Transformer，潜通道 32，图像/视频共用</span><span class="src">§3.1</span></div>
+    <div class="card stat"><span class="stat-k">文本 / 条件编码</span><span class="stat-num sm">Qwen2.5-VL + Glyph-ByT5</span><span class="stat-sub">I2V 另接 SigLip 语义特征 + VAE 潜变量</span><span class="src">§3.1</span></div>
+    <div class="card stat"><span class="stat-k">输出</span><span class="stat-num sm">480p–720p · 5–10 s</span><span class="stat-sub">再经 VSR 升到 1080p</span><span class="src">§1</span></div>
+    <div class="card stat"><span class="stat-k">视频训练数据</span><span class="stat-num">≈800M</span><span class="stat-sub">片段，来自 &gt;1000 万小时原始视频</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">图像训练数据</span><span class="stat-num">5B</span><span class="stat-sub">从 &gt;10B 池中选出；另留 1B 给后续阶段</span><span class="src">§2.1</span></div>
+    <div class="card stat"><span class="stat-k">SSTA 加速</span><span class="stat-num">1.87×</span><span class="stat-sub">10 s 720p，对比 FlashAttention-3</span><span class="src">§1 · 表 7</span></div>
+    <div class="card stat"><span class="stat-k">单卡峰值显存</span><span class="stat-num">13.6 GB</span><span class="stat-sub">720p 121 帧，开 pipeline/group offload + VAE tiling</span><span class="src">§6</span></div>
+    <div class="card stat"><span class="stat-k">许可证</span><span class="stat-num sm"><span class="nd">原文未披露</span></span><span class="stat-sub">只写代码与权重开源于 GitHub</span><span class="src">摘要</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 2025-11-24</span><span class="stat-sub">本页对照的 PDF 为 v2（2025-11-25）</span><span class="src">arXiv</span></div>
+  </div>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五条要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>不靠 MoE，单个 8.3B 打开源</h3><p>作者把 Wan2.2 的 MoE（两个 14B 专家，总 27B、激活 14B）当作效率反例<span class="src">§1</span>，自己用一个 8.3B 双流 DiT + 16×/4× VAE，同一模型联合训练 T2I / T2V / I2V<span class="src">§3.1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>数据：&gt;1000 万小时 → ≈800M 片段</h3><p>切成 2–10 s 片段，裁字幕/台标/水印（保留面积 &lt;60% 即丢），再过基础 / 画质 / 美学三级过滤<span class="src">§2.1</span>。图像 5B 张沿用 HunyuanImage 3.0 流程<span class="src">§2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>三类 captioner，caption 模型也做 DPO</h3><p>图像 / 结构化视频 / I2V 指令式三种 caption；为缓解「越详细越幻觉」，caption 模型按 SFT → Ranking-DPO → OPA-DPO 后训练<span class="src">§2.2 · 图 1</span>。运镜由专门识别模型给出，只并入高置信结果<span class="src">§2.2</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>SSTA：长序列才显著提速</h3><p>720p 241 帧每步 5.51 s → 2.95 s<span class="src">表 7</span>；121 帧只从 2.01 s → 1.56 s<span class="src">表 7</span>。叠加 SageAttention / torch.compile / 特征缓存后，241 帧 50 步 96.78 s → 58.39 s<span class="src">表 8</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>评测全是内部集，且不赢 Veo3</h3><p>T2V GSB 净胜率：对 Wan2.2 +17.12%、Kling2.1 Master +12.6%、Seedance Pro +11.02%、对 Veo3 −10.32%<span class="src">表 5</span>；I2V 对 Seedance Pro −5.77%、Veo3 −3.61%<span class="src">表 6</span>。无公开基准分数。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：统一 DiT + 潜空间超分</h2>
+  <p class="sec-intro">两段式：8.3B 统一 DiT 生成 480p/720p，再由级联 VSR 升到 1080p<span class="src">§1 · §3</span>。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig2.jpg" alt="统一扩散 Transformer 架构：MLLM、Glyph ByT5、SigLip、VAE 编码器四路输入，经投影后进入双流块" loading="lazy"></div>
+    <figcaption><b>统一 DiT 架构。</b>四路输入：MLLM（→ Token Refiner）、Glyph ByT5（→ ByT5 Proj）、SigLip（→ Vision Proj，图中为虚线）、VAE Encoder 潜变量与噪声（→ Patch Emb）；双流块内共享 Self-Attention / Sparse-Attention，两路各自 MLP，3D RoPE 注入注意力。<span class="from">来源：论文图 2</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>骨干与 VAE <span class="tag">表 1 · §3.1</span></h4>
+      <dl class="kv">
+        <dt>双流块</dt><dd>54 个；model dim 2048，FFN 8192，16 头 × 128<span class="src">表 1</span></dd>
+        <dt>VAE</dt><dd>因果 3D Transformer，图像视频联合编码；空间 16×、时间 4×、潜通道 32<span class="src">§3.1</span></dd>
+        <dt>patch size</dt><dd><span class="nd">原文未披露</span>（因此无法从分辨率反推 token 数）</dd>
+        <dt>优化器</dt><dd>Muon，weight decay 0.01；称在一半步数内达到比 AdamW 更低的训练损失<span class="src">§3.1</span></dd>
+      </dl></div>
+    <div class="card mod"><h4>文本与 I2V 条件 <span class="tag">§3.1</span></h4>
+      <ul>
+        <li><b>文本：</b>Qwen2.5-VL 做语义理解，多语言 Glyph-ByT5 专管字形，提升视频内文字渲染<span class="src">§3.1</span>。</li>
+        <li><b>I2V 参考图两路注入：</b>① VAE 潜变量与噪声潜变量<em>按通道拼接</em>，保细节；② SigLip 语义特征<em>按序列拼接</em>，强化语义与指令遵循<span class="src">§3.1</span>。</li>
+        <li>可学习的 type embedding 区分不同条件类型<span class="src">§3.1</span>。</li>
+      </ul></div>
+  </div>
+
+  <h3 class="prose">SSTA：选择性块 + 滑动窗口的块稀疏注意力</h3>
+  <p class="prose">无参数，可在任意训练阶段接入；实际在<b>蒸馏阶段</b>引入稀疏训练<span class="src">§3.1</span>。下图按算法 1 逐行复原。</p>
+  <div class="card diagram wide ssta">
+    <svg viewBox="0 0 980 250" role="img" aria-label="SSTA 算法流程示意">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="dg-ah" d="M0 0 10 5 0 10z"/></marker></defs>
+      <rect class="dg-box" x="14" y="88" width="150" height="58" rx="9"/><text class="dg-t" x="89" y="112" text-anchor="middle">① 3D 分块</text><text class="dg-s" x="89" y="130" text-anchor="middle">tile_t × tile_h × tile_w</text>
+      <rect class="dg-proc" x="200" y="22" width="150" height="58" rx="9"/><text class="dg-t" x="275" y="46" text-anchor="middle">adaptive_pool</text><text class="dg-s" x="275" y="64" text-anchor="middle">块均值 Q̄, K̄</text>
+      <rect class="dg-proc" x="386" y="4" width="170" height="46" rx="9"/><text class="dg-mono" x="471" y="24" text-anchor="middle">Score_s = Q̄K̄ᵀ</text><text class="dg-s" x="471" y="40" text-anchor="middle">Q-K 块相似度</text>
+      <rect class="dg-proc" x="386" y="58" width="170" height="46" rx="9"/><text class="dg-mono" x="471" y="78" text-anchor="middle">Score_r = mean K̄K̄ᵀ</text><text class="dg-s" x="471" y="94" text-anchor="middle">K-K 块冗余（i≠j）</text>
+      <rect class="dg-proc" x="592" y="22" width="170" height="58" rx="9"/><text class="dg-mono" x="677" y="44" text-anchor="middle">λ·S_s − β·S_r</text><text class="dg-s" x="677" y="64" text-anchor="middle">Top-k → M_sel</text>
+      <rect class="dg-win" x="386" y="166" width="376" height="58" rx="9"/><text class="dg-t" x="574" y="190" text-anchor="middle">STA 局部窗 WS = (w_t, w_h, w_w)</text><text class="dg-s" x="574" y="208" text-anchor="middle">块对 (i, j) 在窗内 → M_sta = 1</text>
+      <rect class="dg-out" x="800" y="88" width="166" height="58" rx="9"/><text class="dg-mono" x="883" y="110" text-anchor="middle">M_sel ∧ M_sta</text><text class="dg-s" x="883" y="130" text-anchor="middle">flex_block_attention</text>
+      <path class="dg-ar" d="M164 108 C182 108 182 51 198 51"/>
+      <path class="dg-ar" d="M350 45 L384 30"/><path class="dg-ar" d="M350 58 L384 78"/>
+      <path class="dg-ar" d="M556 28 L590 44"/><path class="dg-ar" d="M556 82 L590 64"/>
+      <path class="dg-ar" d="M164 126 C270 126 270 195 384 195"/>
+      <path class="dg-ar" d="M762 51 C782 51 782 108 798 108"/>
+      <path class="dg-ar" d="M762 195 C782 195 782 128 798 128"/>
+    </svg>
+    <div class="cap">示意，按算法 1 复原。「∧」照抄原文记号（字面为交集），原文未解释为何不是并集，见 <a href="#limits">局限</a>。kernel 基于 ThunderKittens 实现<span class="src">§3.1</span>。</div>
+  </div>
+
+  <h3 class="prose">VSR：同架构、在潜空间做超分</h3>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="级联视频超分流程：Base DiT 输出低分辨率潜变量，经 Upsampler 得到高分辨率潜变量，与噪声拼接后进入 SR DiT，再由 VAE 解码" loading="lazy"></div>
+    <figcaption><b>级联超分流程。</b>Base DiT 输出 F<sub>LR</sub> → 单独训练的 latent Upsampler 得到 F<sub>HR</sub> → 与噪声按通道拼接（ⓒ）→ SR DiT → VAE Decoder 输出 HR 视频。裁图未含原图顶部的文本 prompt 部分。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+  <div class="prose">
+    <ul>
+      <li>VSR 沿用主模型 8.3B 视频 DiT 架构，在潜空间超分；LR 潜变量按通道拼接注入<span class="src">§3.2</span>。</li>
+      <li>为对齐 LR / HR 潜变量，单独训练一个 latent upsample block<span class="src">§3.2</span>。</li>
+      <li>引言称其为 few-step 网络<span class="src">§1</span>，具体步数 <span class="nd">原文未披露</span>。</li>
+    </ul>
+  </div>
+
+  <details class="more wide"><summary>相对前代 / 同类，原文明确说了什么<span class="hint">§1 · §2.1</span></summary><div class="body">
+    <ul>
+      <li><b>对 HunyuanVideo（前代）：</b>视频数据流程「基于 [4]」，扩大数据量并改进过滤<span class="src">§2.1</span>。原文<b>没有</b>给出与前代在参数、结构、指标上的逐项对比。</li>
+      <li><b>对 Wan2.2：</b>作者认为 MoE（2×14B，总 27B / 激活 14B）计算低效；其 5B 版本虽用高压缩 3D VAE，但运动稳定性与美学仍不足<span class="src">§1</span>。这是作者观点，未给对 5B 版本的直接评测。</li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：过滤链与三类 caption</h2>
+  <p class="sec-intro">本节是全篇最值得细读的部分；但<b>来源构成与配比几乎都没披露</b>，下面只画原文写明的步骤与数量。</p></div>
+
+  <h3 class="prose">4.1 视频：获取 → 清理 → 质量筛</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>步骤 1</span><span>步骤 2</span><span>步骤 3</span></div>
+    <div class="pipe-row"><div class="lbl">获取</div>
+      <div class="chip">多渠道原始视频，覆盖内容、拍法、运镜、风格、场景<span class="src">§2.1</span></div>
+      <div class="chip">基础去重 + 去损坏 → <b>&gt;1000 万小时</b><span class="src">§2.1</span></div>
+      <div class="chip m">切成 <b>2–10 s</b> 片段：PySceneDetect + 自研切分算子；再用转场分类器二次剔除转场<span class="src">§2.1</span></div></div>
+    <div class="pipe-row"><div class="lbl">清理</div>
+      <div class="chip">空间裁剪掉字幕、台标、水印区域<span class="src">§2.1</span></div>
+      <div class="chip m">裁后保留面积 <b>&lt;60%</b> 原帧 → 整段丢弃<span class="src">§2.1</span></div>
+      <div class="chip">基础过滤：黑边 padding、拼接痕迹、宫格拼图、静止/低动态<span class="src">§2.1</span></div></div>
+    <div class="pipe-row"><div class="lbl">质量</div>
+      <div class="chip m">画质算子 4 维：清晰度、细节保留、噪声与伪影、动态范围<span class="src">§2.1</span></div>
+      <div class="chip">美学算子（基于文献 [11]，UGC 视频质量评估的美学/技术视角）去低分<span class="src">§2.1</span></div>
+      <div class="chip o">剩余 <b>≈800M</b> 高质量片段用于预训练<span class="src">§2.1</span></div></div>
+  </div>
+  <div class="legend-dots wide"><span>常规步骤</span><span class="m">有明确阈值 / 维度</span><span class="o">产出</span></div>
+  <p class="prose footnote">各级过滤的阈值（画质、美学分数线）、每级淘汰比例 <span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.2 图像</h3>
+  <p class="prose">沿用 HunyuanImage 3.0 的获取与处理流程<span class="src">§2.1</span>，从 <b>&gt;10B</b> 张池中选出 <b>5B</b> 用于预训练，另有 <b>1B</b> 留给后续阶段<span class="src">§2.1</span>——对应表 2 的 Stage I（256p，5 billion）与 Stage II（512p，1 billion）<span class="src">表 2</span>。保留率约一半或更低<span class="src calc">推算</span>。</p>
+
+  <h3 class="prose">4.3 已披露规模（全流程）</h3>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>数据</th><th>规模</th><th>说明</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>原始视频</td><td>&gt;1000 万小时</td><td>去重、去损坏之后</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>预训练视频片段</td><td>≈800M</td><td>2–10 s，经三级过滤</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>预训练图像</td><td>5B（池 &gt;10B）</td><td>另留 1B 给后续阶段</td><td><span class="src">§2.1</span></td></tr>
+        <tr><td>Stage III / IV / V / VI</td><td>800M / 200M / 100M / 100M</td><td>256p→480p→720p；单位与图像占比未说明（表头的 “/” 写法未在行中出现）</td><td><span class="src">表 2</span></td></tr>
+        <tr><td>CT（T2V、I2V 各一份）</td><td>各 1M 片段</td><td>跨类别平衡，取自 premium 数据集；T2V 偏高动态</td><td><span class="src">§4.2 · 表 2</span></td></tr>
+        <tr><td>SFT</td><td><span class="nd">原文未披露</span></td><td>按美学、清晰度、运动平滑度严格筛选</td><td><span class="src">§4.2</span></td></tr>
+        <tr><td>I2V RL prompt 集</td><td>100+ 类别</td><td>由高美学图像构建，VLM 生成 prompt 后人工核验图文一致</td><td><span class="src">§4.2</span></td></tr>
+        <tr><td>T2V DPO prompt 集</td><td>O(10K)</td><td>LLM 生成 prompt + 训练视频 caption；每 prompt 生成 N 个候选，N <span class="nd">原文未披露</span></td><td><span class="src">§4.2</span></td></tr>
+        <tr><td>VSR 训练视频</td><td>1M 片段</td><td>1K–4K 分辨率，3–10 s，24 fps；另加高分辨率图像（数量未披露）</td><td><span class="src">§4.3</span></td></tr>
+        <tr><td>数据来源构成 / 版权</td><td><span class="nd">原文未披露</span></td><td>只写 “variety of channels”</td><td><span class="src">§2.1</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">4.4 Caption：三类专用模型</h3>
+  <div class="cap3 wide">
+    <div class="card mod"><h4>图像 caption <span class="tag">§2.2</span></h4><p>方法同 HunyuanImage 3.0，原文不再展开。</p></div>
+    <div class="card mod"><h4>视频 caption <span class="tag">§2.2</span></h4><p>高度结构化、多组件：多层级叙述文本 + 一组影视/美学属性（景别、机位角度、构图、光照、风格、色调、氛围）。</p></div>
+    <div class="card mod"><h4>I2V 指令式 caption <span class="tag ok-tag">新模块 · §2.2</span></h4><p>只描述<b>相对首帧</b>的时间演变与变换，覆盖前景主体和背景环境的变化。I2V 的 CT 阶段专门使用这类 caption<span class="src">§4.2</span>。</p></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="caption 模型后训练三步：SFT、带 Critic 打分的 Ranking-DPO、带人工修正的 OPA-DPO" loading="lazy"></div>
+    <figcaption><b>Caption 模型后训练流程。</b>Step 1 SFT；Step 2 Ranking-DPO：多轨迹 rollout，Critic Model 打分，最好/最差 caption 组成 DPO win/lose 对；Step 3 OPA-DPO：温度采样 rollout，经 Human Corrector 修正后作为正例。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>为什么做 RL：richness–hallucination 权衡 <span class="tag">§2.2</span></h4>
+      <p>越追求细节越容易幻觉。作者把 OPA-DPO [12]（「on-policy 数据是关键」的 DPO 去幻觉方法）接入 caption 后训练，目标是细节最多、事实错误最少<span class="src">§2.2</span>。</p>
+      <p class="footnote">Critic 模型是什么、打分维度、人工修正的样本量、caption 质量的量化指标：<span class="nd">原文未披露</span>（Step 2/3 细节只见于图 1）。</p></div>
+    <div class="card mod"><h4>运镜描述：专门识别模型 <span class="tag">§2.2</span></h4>
+      <p>识别多种运镜类型，既做 clip 级（整段）也做序列级（随时间）；<b>只把高置信预测</b>转成自然语言并并入结构化 caption，目的是让生成模型可控运镜<span class="src">§2.2</span>。</p>
+      <p class="footnote">运镜类别数、置信度阈值：<span class="nd">原文未披露</span>。</p></div>
+  </div>
+
+  <h3 class="prose">4.5 配比</h3>
+  <p class="prose">原文唯一给出的比例是预训练阶段的<b>任务</b>配比 T2I : T2V : I2V = <b>1 : 6 : 3</b><span class="src">§4.1</span>。数据来源、类别、分辨率配比均未披露，故只画这一条。</p>
+  <div class="ratio wide" style="max-width:820px">
+    <div class="rlab"><span>预训练 Stage III–VI 任务配比</span><span class="src">§4.1</span></div>
+    <div class="rbar"><span class="b" style="width:10%">T2I 1</span><span class="a" style="width:60%">T2V 6</span><span class="a" style="width:30%;opacity:.7">I2V 3</span></div>
+    <div class="bar-legend"><span class="s">T2I（10%<span class="src calc">推算</span>）</span><span>T2V 60% / I2V 30%<span class="src calc">推算</span></span></div>
+  </div>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方</h2>
+  <p class="sec-intro">从 T2I 起步，逐级拉高分辨率、时长和帧率；后训练 T2V、I2V 分开做 CT → SFT → RLHF<span class="src">§4</span>。</p></div>
+
+  <h3 class="prose">预训练（Stage I–VI）</h3>
+  <div class="flow6 wide">
+    <div class="card stage t2i"><span class="sid">I</span><h4>T2I 256p</h4><dl><dt>数据</dt><dd>5B</dd><dt>任务</dt><dd>T2I</dd></dl><p>多宽高比分桶采样</p></div>
+    <div class="card stage t2i"><span class="sid">II</span><h4>T2I 512p</h4><dl><dt>数据</dt><dd>1B</dd><dt>任务</dt><dd>T2I</dd></dl><p>称显著加速后续 T2V/I2V 收敛</p></div>
+    <div class="card stage"><span class="sid">III</span><h4>256p 16fps</h4><dl><dt>数据</dt><dd>800M</dd><dt>时长</dt><dd>2–10 s</dd></dl><p>T2V/I2V/T2I 混训 1:6:3</p></div>
+    <div class="card stage"><span class="sid">IV</span><h4>480p 16fps</h4><dl><dt>数据</dt><dd>200M</dd><dt>时长</dt><dd>2–10 s</dd></dl></div>
+    <div class="card stage"><span class="sid">V</span><h4>720p 16fps</h4><dl><dt>数据</dt><dd>100M</dd><dt>时长</dt><dd>2–10 s</dd></dl></div>
+    <div class="card stage"><span class="sid">VI</span><h4>720p 24fps</h4><dl><dt>数据</dt><dd>100M</dd><dt>时长</dt><dd>2–10 s</dd></dl></div>
+  </div>
+  <div class="bar-legend wide"><span class="s">T2I 阶段</span><span>视频混训阶段</span><span>全部数字：表 2</span></div>
+  <div class="prose">
+    <ul>
+      <li><b>shift 调度：</b>flow matching 对 shift 敏感，作者为不同 token 长度设计了一系列 shift 调度<span class="src">§4.1</span>；具体取值 <span class="nd">原文未披露</span>。</li>
+      <li><b>超参：</b>学习率、batch size、各阶段步数、GPU 时 <span class="nd">原文未披露</span>；只给出 Muon + weight decay 0.01<span class="src">§3.1</span>。</li>
+    </ul>
+  </div>
+
+  <h3 class="prose">后训练（T2V / I2V 分别进行）</h3>
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">VII / VIII · CT</span><h4>继续训练</h4>
+      <ul><li>480p/720p 24fps，各任务 1M 片段<span class="src">表 2</span></li><li>T2V 偏重高动态片段</li><li>I2V 改用只描述动作与变换的指令式 caption</li><li>两任务都从同一个最优预训练 ckpt 起步<span class="src">§4.2</span></li></ul></div>
+    <div class="card stage"><span class="sid">SFT</span><h4>精选微调</h4>
+      <ul><li>按美学、清晰度、运动平滑度严格筛选</li><li>数据量 <span class="nd">原文未披露</span></li><li>称 CT+SFT 后稳定性、画质、美学、时序一致性明显提升<span class="src">§4.2</span></li></ul></div>
+    <div class="card stage"><span class="sid">RLHF</span><h4>主要修伪影与运动</h4>
+      <ul><li><b>I2V：</b>在线 RL。VLM 奖励模型 4 维：文本对齐、图像对齐、画质、运动动态；变随机种子和 CFG 混合采样；MixGRPO（ODE–SDE 混合求解）<span class="src">§4.2</span></li>
+      <li><b>T2V：</b>先离线 DPO——O(10K) prompt、每条 N 个候选、人工 GSB 标注语义/运动/美学；再接与 I2V 相同的在线 RL<span class="src">§4.2</span></li>
+      <li>理由：现有奖励模型分不清细粒度运动质量<span class="src">§4.2</span></li></ul></div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="花样滑冰视频在 CT、SFT、RLHF 三个后训练阶段的生成帧对比" loading="lazy"></div>
+    <figcaption><b>后训练各阶段的生成效果</b>（同一花样滑冰 prompt，CT / SFT / RLHF 三行）。单例定性对比，无量化。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>VSR 训练 <span class="tag">§4.3</span></h4>
+      <ul><li>用预训练 T2V 模型初始化</li><li>1M 片段（1K–4K，3–10 s，24 fps）+ 高分辨率图像</li><li>LR 潜变量与噪声按通道拼接；全参数可训，flow matching 目标</li></ul></div>
+    <div class="card mod"><h4>蒸馏与稀疏训练 <span class="tag nd-tag">细节缺失</span></h4>
+      <p>SSTA 在蒸馏阶段接入<span class="src">§3.1</span>；测速用的是 CFG 蒸馏模型<span class="src">§6</span>。蒸馏方法、步数、数据 <span class="nd">原文未披露</span>。</p></div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：Rating + GSB，全部内部集</h2>
+  <p class="sec-intro">对比对象：Wan2.2、Kling2.1 Master、Seedance Pro、Veo3（原文未注明 Wan2.2 用的是哪个规格）<span class="src">表 3–6</span>。</p></div>
+
+  <h3 class="prose">Rating：T2V（HY1.5 720p）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>维度</th><th class="q">HY1.5 720p</th><th>Wan2.2</th><th>Kling2.1 Master</th><th>Seedance Pro</th><th>Veo3</th></tr></thead>
+      <tbody>
+        <tr><td>Instruction following</td><td class="q">61.57</td><td>44.07</td><td>50.03</td><td>53.19</td><td class="best">73.77</td></tr>
+        <tr><td>Aesthetic quality</td><td class="q">63.30</td><td>65.98</td><td>68.00</td><td class="best">68.22</td><td>67.98</td></tr>
+        <tr><td>Visual quality</td><td class="q">57.35</td><td>56.37</td><td>59.68</td><td class="best">60.20</td><td>58.64</td></tr>
+        <tr><td>Structural stability</td><td class="q best">79.75</td><td>73.75</td><td>66.74</td><td>68.69</td><td>75.62</td></tr>
+        <tr><td>Motion effects</td><td class="q">57.67</td><td>53.08</td><td>58.59</td><td>55.17</td><td class="best">60.81</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">该行最高</span><span class="k-q">HunyuanVideo 1.5</span><span>来源：<span class="src">表 3</span></span></div>
+  <p class="prose">只在<b>结构稳定性</b>上第一；美学 63.30 是五家最低；指令遵循 61.57 落后 Veo3 12.20 分<span class="src calc">推算</span>。正文把第一维称作 text-video consistency，表中写 Instruction following<span class="src">§5.1</span>。</p>
+
+  <h3 class="prose">Rating：I2V</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>维度</th><th class="q">HY1.5 480pSR</th><th class="q">HY1.5 720p</th><th>Wan2.2</th><th>Kling2.1 Master</th><th>Seedance Pro</th><th>Veo3</th></tr></thead>
+      <tbody>
+        <tr><td>Instruction following</td><td class="q">63.11</td><td class="q">63.05</td><td>56.19</td><td class="best">68.43</td><td>62.90</td><td>67.86</td></tr>
+        <tr><td>Image consistency</td><td class="q">68.82</td><td class="q">72.07</td><td class="best">73.53</td><td>64.09</td><td>73.06</td><td>72.19</td></tr>
+        <tr><td>Visual quality</td><td class="q">59.87</td><td class="q best">60.33</td><td>58.31</td><td>59.28</td><td>58.95</td><td>59.29</td></tr>
+        <tr><td>Structural stability</td><td class="q best">70.13</td><td class="q">66.67</td><td>69.03</td><td>59.71</td><td>68.01</td><td>69.25</td></tr>
+        <tr><td>Motion effects</td><td class="q">57.60</td><td class="q">58.62</td><td>57.41</td><td>57.36</td><td>60.47</td><td class="best">60.91</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">该行最高</span><span class="k-q">HunyuanVideo 1.5</span><span>来源：<span class="src">表 4</span></span></div>
+  <p class="prose"><b>HY1.5 480pSR</b> = 先生成 480p 再用 VSR 升到 720p（表 4 原注）<span class="src">表 4</span>。它在结构稳定性上反超原生 720p（70.13 vs 66.67），但图像一致性低 3.25 分<span class="src calc">推算</span>。Rating 的打分尺度、样本数、评分人数 <span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">GSB：300 条 prompt / 300 张图，&gt;100 名专业评估员</h3>
+  <p class="prose">每个输入每个模型只推理一次、不挑样，竞品用默认配置<span class="src">§5.2</span>。表中 <b>HY Win Rate = HY Better − Other Better</b>（逐项核对一致）<span class="src calc">推算</span>。</p>
+  <div class="card wide" style="padding:14px 16px">
+    <div class="gsb-legend"><span class="hy">HY better</span><span class="eg">Equally good</span><span class="eb">Equally bad</span><span class="ot">Other better</span></div>
+    <div class="gsb">
+      <div style="font:600 .78rem/1 var(--f-mono);color:var(--muted);margin:12px 0 4px">T2V · 720P<span class="src">表 5</span></div>
+      <div class="row"><span class="nm">vs Wan2.2</span><div class="rbar"><span class="hy" style="width:34.90%">34.90</span><span class="eg" style="width:6.62%"></span><span class="eb" style="width:40.70%">40.70</span><span class="ot" style="width:17.78%">17.78</span></div><span class="net up">+17.12%</span></div>
+      <div class="row"><span class="nm">vs Kling2.1 Master</span><div class="rbar"><span class="hy" style="width:31.55%">31.55</span><span class="eg" style="width:6.75%"></span><span class="eb" style="width:42.76%">42.76</span><span class="ot" style="width:18.95%">18.95</span></div><span class="net up">+12.6%</span></div>
+      <div class="row"><span class="nm">vs Seedance Pro</span><div class="rbar"><span class="hy" style="width:31.67%">31.67</span><span class="eg" style="width:9.06%">9.06</span><span class="eb" style="width:38.61%">38.61</span><span class="ot" style="width:20.65%">20.65</span></div><span class="net up">+11.02%</span></div>
+      <div class="row"><span class="nm">vs Veo3</span><div class="rbar"><span class="hy" style="width:24.64%">24.64</span><span class="eg" style="width:9.69%">9.69</span><span class="eb" style="width:30.71%">30.71</span><span class="ot" style="width:34.96%">34.96</span></div><span class="net down">−10.32%</span></div>
+      <div style="font:600 .78rem/1 var(--f-mono);color:var(--muted);margin:16px 0 4px">I2V · 720P<span class="src">表 6</span></div>
+      <div class="row"><span class="nm">vs Wan2.2</span><div class="rbar"><span class="hy" style="width:45.60%">45.60</span><span class="eg" style="width:2.85%"></span><span class="eb" style="width:18.60%">18.60</span><span class="ot" style="width:32.95%">32.95</span></div><span class="net up">+12.65%</span></div>
+      <div class="row"><span class="nm">vs Kling2.1 Master</span><div class="rbar"><span class="hy" style="width:40.60%">40.60</span><span class="eg" style="width:5.79%"></span><span class="eb" style="width:22.73%">22.73</span><span class="ot" style="width:30.88%">30.88</span></div><span class="net up">+9.72%</span></div>
+      <div class="row"><span class="nm">vs Seedance Pro</span><div class="rbar"><span class="hy" style="width:30.62%">30.62</span><span class="eg" style="width:6.38%"></span><span class="eb" style="width:26.61%">26.61</span><span class="ot" style="width:36.39%">36.39</span></div><span class="net down">−5.77%</span></div>
+      <div class="row"><span class="nm">vs Veo3</span><div class="rbar"><span class="hy" style="width:37.44%">37.44</span><span class="eg" style="width:3.07%"></span><span class="eb" style="width:18.44%">18.44</span><span class="ot" style="width:41.05%">41.05</span></div><span class="net down">−3.61%</span></div>
+    </div>
+    <p class="tbl-note">100% 堆叠条，各段为原表百分比；右侧为原表 HY Win Rate。窄段省略数字。</p>
+  </div>
+  <p class="prose">注意 T2V 里 <b>Equally bad 占 30.71%–42.76%</b><span class="src">表 5</span>：对 Wan2.2 / Kling / Seedance 三组，「两边都差」比「HY 更好」还多。Rating 与 GSB 结论也不总一致：T2V Rating 里 Seedance Pro 美学、画质都高于 HY，GSB 却是 HY 净胜 11.02%<span class="src">表 3 · 表 5</span>。</p>
+
+  <h3 class="prose">推理速度：SSTA 只在长序列上明显</h3>
+  <div class="card diagram wide spd">
+    <svg viewBox="0 0 900 262" role="img" aria-label="不同配置下每个扩散步耗时柱状图">
+      <text class="ch-t" x="0" y="16">每步耗时（秒，横轴从 0 起）· 8×H800，无工程加速</text><text class="ch-src" x="900" y="16" text-anchor="end">表 7</text>
+      <g class="grid">
+        <line x1="190" y1="30" x2="190" y2="232"/><line x1="303" y1="30" x2="303" y2="232"/><line x1="416" y1="30" x2="416" y2="232"/><line x1="529" y1="30" x2="529" y2="232"/><line x1="642" y1="30" x2="642" y2="232"/><line x1="755" y1="30" x2="755" y2="232"/><line x1="868" y1="30" x2="868" y2="232"/>
+      </g>
+      <text class="ch-ax" x="190" y="248" text-anchor="middle">0</text><text class="ch-ax" x="303" y="248" text-anchor="middle">1</text><text class="ch-ax" x="416" y="248" text-anchor="middle">2</text><text class="ch-ax" x="529" y="248" text-anchor="middle">3</text><text class="ch-ax" x="642" y="248" text-anchor="middle">4</text><text class="ch-ax" x="755" y="248" text-anchor="middle">5</text><text class="ch-ax" x="868" y="248" text-anchor="middle">6</text>
+      <text class="ch-lbl" x="180" y="50" text-anchor="end">480p · 121 帧</text><rect class="bar-full" x="190" y="36" width="102.4" height="20" rx="3"/><text class="ch-val" x="298" y="50">0.9064</text>
+      <text class="ch-lbl" x="180" y="82" text-anchor="end">480p · 241 帧</text><rect class="bar-full" x="190" y="68" width="192.3" height="20" rx="3"/><text class="ch-val" x="388" y="82">1.7015</text>
+      <text class="ch-lbl" x="180" y="114" text-anchor="end">720p · 121 帧</text><rect class="bar-full" x="190" y="100" width="227.0" height="20" rx="3"/><text class="ch-val" x="423" y="114">2.0084</text>
+      <text class="ch-lbl" x="180" y="146" text-anchor="end">720p · 121 帧 + SSTA</text><rect class="bar-sp" x="190" y="132" width="176.7" height="20" rx="3"/><text class="ch-val" x="373" y="146">1.5638（1.28×）</text>
+      <text class="ch-lbl" x="180" y="178" text-anchor="end">720p · 241 帧</text><rect class="bar-full" x="190" y="164" width="622.3" height="20" rx="3"/><text class="ch-val" x="818" y="178">5.5070</text>
+      <text class="ch-lbl" x="180" y="210" text-anchor="end">720p · 241 帧 + SSTA</text><rect class="bar-sp" x="190" y="196" width="333.1" height="20" rx="3"/><text class="ch-val" x="529" y="210">2.9475（1.87×）</text>
+    </svg>
+    <div class="chart-legend"><span class="l4">FlashAttention-3</span><span class="l1">SSTA 稀疏注意力</span><span>括号内加速比为 <span class="src calc">推算</span></span></div>
+  </div>
+  <p class="prose">引言的「10 s 720p 端到端 1.87×」<span class="src">§1</span>与表 7 <b>每步耗时</b>之比 5.5070 / 2.9475 吻合<span class="src calc">推算</span>；开启工程加速后的 50 步总时长比为 96.78 / 58.39 ≈ 1.66×<span class="src calc">推算</span>。</p>
+
+  <details class="more wide"><summary>表 8：开启工程加速后的 50 步总耗时<span class="hint">SageAttention + torch.compile + 特征缓存</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>配置</th><th>Sparse Attention</th><th>50 步总耗时 (s)</th><th>平均每步 (s)</th></tr></thead>
+        <tbody>
+          <tr><td>T2V 480p (480×848) · 121 帧</td><td>✗</td><td>13.90</td><td>0.2781</td></tr>
+          <tr><td>T2V 480p (480×848) · 241 帧</td><td>✗</td><td>27.08</td><td>0.5418</td></tr>
+          <tr><td>T2V 720p (720×1280) · 121 帧</td><td>✗</td><td>28.33</td><td>0.5667</td></tr>
+          <tr><td>T2V 720p (720×1280) · 121 帧</td><td>✓</td><td>26.41</td><td>0.5283</td></tr>
+          <tr><td>T2V 720p (720×1280) · 241 帧</td><td>✗</td><td>96.78</td><td>1.9356</td></tr>
+          <tr class="hl"><td>T2V 720p (720×1280) · 241 帧</td><td>✓</td><td>58.39</td><td>1.1679</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">均为 CFG 蒸馏模型、8 张 H800、全卡 context parallel<span class="src">§6</span>。表 7 的 ± 为多次运行的标准差/波动（原文写 averaged across multiple runs，未说明 ± 的定义）。</p>
+  </div></details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪（可核对）</h2></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>SSTA：Q-K 相似度减 K-K 冗余做块选择，再和 STA 窗口组合</h4><p>块重要性 = λ·(Q̄K̄ᵀ) − β·(K 块间平均相似度)，Top-k 选块，与滑动窗 mask 组合后走块稀疏 kernel；无参数、在蒸馏阶段接入<span class="src">算法 1 · §3.1</span>。</p><p class="why">证据：表 7/8 的速度；<b>无</b>稀疏 vs 全注意力的质量对比。</p></div>
+    <div class="card nv"><h4>Caption 模型本身做偏好对齐：Ranking-DPO → OPA-DPO（人改正例）</h4><p>把 caption 的「详细 vs 幻觉」当成对齐问题处理，critic 打分排序造 DPO 对，再用人工修正的 on-policy 样本做 OPA-DPO<span class="src">§2.2 · 图 1</span>。</p><p class="why">证据：只有流程图，无 caption 质量指标或下游消融。</p></div>
+    <div class="card nv"><h4>I2V 指令式 caption：只写「相对首帧发生了什么」</h4><p>作为独立 captioner 训练，并在 I2V 的 CT 阶段专用，目的是提高动作保真<span class="src">§2.2 · §4.2</span>。</p><p class="why">证据：无对照实验。</p></div>
+    <div class="card nv"><h4>T2V 对齐先离线 DPO 再在线 RL</h4><p>理由是现有奖励模型分不清细粒度运动质量，所以先用人工 GSB 标注的 pair 做 DPO 修运动伪影，再接 MixGRPO 在线 RL<span class="src">§4.2</span>。</p><p class="why">证据：图 4 单例定性；各阶段无数字。</p></div>
+    <div class="card nv"><h4>超分直接复用 8.3B 主干、在潜空间做</h4><p>T2V 权重初始化，独立训练 latent upsampler 对齐 LR/HR 潜变量<span class="src">§3.2 · §4.3</span>。</p><p class="why">证据：图 5 定性；表 4 的 480pSR 一列。属于工程组合，单项都不算全新。</p></div>
+  </div>
+  <p class="prose footnote">不算新点的常规工程：多宽高比分桶、渐进式分辨率、T2I 预热、I2V 通道拼接、SageAttention / torch.compile / 特征缓存、offload 降显存。</p>
+</section>
+
+<!-- 08 IMPL -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro" style="color:var(--ink-2)">每条先写论文怎么做（带出处），再写一条可迁移做法。<b>「迁移」都是本页的建议，不是论文内容。</b></p>
+
+    <div class="impl-group">Caption 与指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>差异式指令单独成一类 caption</h4>
+        <p class="paper">论文：I2V 用专门的指令式 captioner，只写相对首帧的前景/背景变化；I2V CT 阶段专用这类 caption<span class="src">§2.2 · §4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据别拿「目标图全描述」凑指令。单独训一个只输出 src→tgt 差异的 captioner，并把「前景变了什么 / 背景变了什么」拆成两个字段；后期训练阶段只喂差异式指令。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>用偏好对齐治 caption 幻觉</h4>
+        <p class="paper">论文：caption 模型 SFT 后，多轨迹采样 + critic 打分做 Ranking-DPO，再用人工修正的 on-policy 输出做 OPA-DPO<span class="src">§2.2 · 图 1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 captioner 的人工标注改成「改模型自己的输出」而非从零写：同一对图采样多条差异描述，标注员只删错句、补漏项，修正版作 win、原版作 lose。省标注量，正例也贴近模型分布。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>结构化属性字段</h4>
+        <p class="paper">论文：视频 caption = 多层级叙述 + 景别、机位、构图、光照、风格、色调、氛围等属性<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑样本的 src/tgt caption 也带同一套全局属性字段，逐字段 diff 就能自动标出「换光照 / 换风格 / 改构图」类编辑，并给「未变字段」自动生成保持约束。</p></div>
+      <div class="impl"><h4><span class="ix">C4</span>专家模型只并入高置信结果</h4>
+        <p class="paper">论文：运镜由专门识别模型给出，只把高置信预测转成文字并入 caption<span class="src">§2.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>OCR、人脸/姿态、计数等专家信号并入编辑指令时同样设置置信门槛；低于门槛就不写，而不是让 VLM 猜——宁缺勿错，尤其是文字编辑的源串。</p></div>
+    </div>
+
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>裁水印 + 保留面积阈值</h4>
+        <p class="paper">论文：裁掉字幕/台标/水印区域，裁后保留 &lt;60% 原帧就整段丢弃<span class="src">§2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑对的 src/tgt 必须用<b>同一个</b>裁剪框；任一侧有水印/字幕而另一侧没有的对直接丢，否则模型会学到「编辑 = 去水印」的捷径。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>基础过滤器清单可直接照搬</h4>
+        <p class="paper">论文：去黑边 padding、拼接痕迹、宫格拼图、静止/低动态<span class="src">§2.1</span>；转场用专门分类器二次剔除<span class="src">§2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>爬来的 before/after 图常是左右拼接或宫格，宫格检测要放在最前。「低动态」在编辑里对应「几乎无变化」的 no-op 对，按像素/语义差异下限过滤；从视频抽帧造对时，帧间有转场的也要剔。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>画质拆维度、和美学分开打</h4>
+        <p class="paper">论文：画质算子 4 维（清晰度、细节保留、噪声与伪影、动态范围），美学用另一个算子<span class="src">§2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>对 tgt 逐维打分并要求「tgt 不劣于 src」，防止编辑数据把降质（糊、噪、动态范围压缩）当成编辑效果教给模型。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>数据漏斗：大池粗筛 → 每任务 1M 精选 → 严选 SFT</h4>
+        <p class="paper">论文：800M → 200M → 100M → 100M 预训练，CT 每任务 1M 且跨类别平衡，SFT 再按美学/清晰/平滑严选<span class="src">表 2 · §4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑数据也分三层，CT 层按编辑类别（增删改、风格、文字、人像）做显式平衡，并在 CT 层就切到最终 caption 格式，SFT 层只留人工过审样本。</p></div>
+    </div>
+
+    <div class="impl-group">评测与偏好</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>GSB 把「同好 / 同差」拆开报</h4>
+        <p class="paper">论文：GSB 报四档，T2V 的 Equally bad 达 30.71%–42.76%<span class="src">表 5</span>；净胜率 = Better − Worse<span class="src calc">推算</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑盲测同样报「同差」比例并单独抽样复盘——它指向两边共同的失败模式（常见是保持性），是下一轮数据最该补的地方，净胜率看不出来。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>诊断用 Rating、决策用 GSB</h4>
+        <p class="paper">论文：Rating 多维诊断短板，GSB 比整体观感；I2V Rating 维度含图像一致性与指令响应<span class="src">§5 · §5.1</span>。两者结论可不一致<span class="src">表 3 · 表 5</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑 Rating 至少拆成「指令遵循 / 非编辑区保持 / 画质 / 结构合理」四维，与 GSB 并列报；两者矛盾时按维度回看样本，而不是只信一个数。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>评测协议写死「只跑一次、默认配置」</h4>
+        <p class="paper">论文：每输入每模型只推理一次、不挑样、竞品默认配置，&gt;100 名专业评估员<span class="src">§5.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑评测冻结输入图、指令与种子，记录竞品 API 版本与日期；再补上论文没给的评估员一致性和置信区间，结果才可复现。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>奖励模型看不清的，先用人工 pair 做 DPO</h4>
+        <p class="paper">论文：奖励模型分不清细粒度运动 → 先离线 DPO（人工 GSB 标注）再在线 RL；I2V 的 VLM 奖励含文本对齐、图像对齐、画质、运动 4 维<span class="src">§4.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>编辑里身份漂移、细微纹理改变这类奖励模型抓不住的问题，先攒人工偏好对做 DPO；在线 RL 的奖励则拆出「图像对齐（保持）」独立一维，别和指令遵循混成一个分。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · CAVEATS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>没有任何消融。</b>Muon「一半步数更低 loss」<span class="src">§3.1</span>、Glyph-ByT5 文字渲染、I2V 双路注入、caption RL、T2I 预热「显著加速收敛」<span class="src">§4.1</span>均只有文字断言，无曲线或数字。</li>
+    <li class="key"><b>评测全在内部集，不可复现。</b>300 条 prompt / 300 张图未公开<span class="src">§5.2</span>；Rating 的尺度、样本数、评分人数未写；没有报告任何公开基准分数。</li>
+    <li><b>对比对象偏旧且规格不明。</b>引言点名 Kling2.5、Veo3.1、Sora2<span class="src">§1</span>，评测实际对比的是 Kling2.1 Master、Veo3，Sora2 缺席；Wan2.2 未注明是 A14B 还是 5B<span class="src">表 3–6</span>。</li>
+    <li><b>正文与表格不一致：超分目标。</b>§1/§3.2 说 VSR 升到 1080p，表 4 注释却说 480pSR 是「升到 720p」<span class="src">表 4</span>。</li>
+    <li><b>正文与表格不一致：帧率。</b>§4.1 写「从 256p 16fps 推进到 480p 与 720p 24fps」，表 2 中 480p（IV）与 720p（V）仍是 16fps，只有 VI 是 24fps<span class="src">§4.1 · 表 2</span>。</li>
+    <li><b>表 2 的数据量口径不清。</b>表头说「/ 前为视频、后为图像」，但所有行都没有「/」；Stage III–VI 混训了 T2I，图像用量无法拆出<span class="src">表 2</span>。</li>
+    <li><b>SSTA 只有速度、没有质量对比；mask 组合语义可疑。</b>算法 1 写 M_sel ∧ M_sta（字面为交集），与「静态局部 + 动态全局」的描述不太对得上，原文未解释<span class="src">算法 1</span>。「端到端 1.87×」实为表 7 每步耗时之比<span class="src calc">推算</span>。</li>
+    <li><b>关键配方缺失。</b>patch size、shift 取值、学习率/batch/步数、SFT 数据量、DPO 的 N、RL 步数、CFG 蒸馏方法与步数、VSR 步数都未披露。</li>
+    <li><b>数据来源与许可未说明。</b>视频只写 “variety of channels”<span class="src">§2.1</span>；模型许可证原文未写。</li>
+  </ul>
+</section>
+
+<!-- 10 FIGS -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>Caption 模型后训练流程（SFT → Ranking-DPO → OPA-DPO）· p.3</td><td><a href="#data">数据 4.4</a></td></tr>
+        <tr><td>图 2</td><td>统一 DiT 架构 · p.4</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>图 3</td><td>级联视频超分流程（裁图缺顶部 prompt）· p.6</td><td><a href="#arch">架构 · VSR</a></td></tr>
+        <tr><td>图 4</td><td>CT / SFT / RLHF 各阶段效果 · p.8</td><td><a href="#train">训练配方</a></td></tr>
+        <tr><td>图 5</td><td>720p vs SR 1080p 对比（裁图仅一组样例）· p.9</td><td><a href="#top">页首</a></td></tr>
+        <tr><td>首页裁图</td><td>figures/fig0-teaser.jpg 实为首页正文截图（摘要链接与引言），非论文图，本页未引用 · p.1</td><td>—</td></tr>
+        <tr><td>算法 1</td><td>SSTA 四步 · p.5</td><td><a href="#arch">架构 · SSTA 示意</a></td></tr>
+        <tr><td>表 1</td><td>架构超参</td><td><a href="#glance">速览</a> · <a href="#arch">架构</a></td></tr>
+        <tr><td>表 2</td><td>Stage I–VIII 分辨率 / 数据量 / 任务</td><td><a href="#train">训练配方</a></td></tr>
+        <tr><td>表 3 / 表 4</td><td>T2V / I2V Rating</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 5 / 表 6</td><td>T2V / I2V GSB</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 7 / 表 8</td><td>无加速每步耗时 / 加速后 50 步总耗时</td><td><a href="#eval">评测 · 推理速度</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    基于 Tencent Hunyuan Foundation Model Team,《HunyuanVideo 1.5 Technical Report》，<a href="https://arxiv.org/abs/2511.18870" target="_blank" rel="noopener">arXiv:2511.18870</a>（v1 2025-11-24；本页对照 v2，2025-11-25）。文中数字均来自原文，标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有，此处仅用于学术解读。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

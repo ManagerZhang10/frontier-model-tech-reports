@@ -1,0 +1,44 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig1.jpg",
+    "figure": 1,
+    "page": 2,
+    "caption_en": "Showcases of Z-Image-Turbo in photo-realistic image generation. All related prompts can be",
+    "caption_note": "来源：论文图 1"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 3,
+    "caption_en": "Showcases of Z-Image-Turbo in bilingual text-rendering. All related prompts can be found in",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 5,
+    "caption_en": "Showcases of comparison between Z-Image-Turbo and currently state-of-the-art models [58, 76,",
+    "caption_note": "来源：论文图 4"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 12,
+    "caption_en": "Overview of the Active Curation Engine. The pipeline refines uncurated data through cross-",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 13,
+    "caption_en": "Illustration of the Human-in-the-Loop Active Learning Cycle. Data sampled from the media",
+    "caption_note": "来源：论文图 6"
+  }
+]

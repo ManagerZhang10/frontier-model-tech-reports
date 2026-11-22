@@ -1,0 +1,44 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 2,
+    "caption_en": "Photo-realistic image generation showcase with Qwen-Image-2.0.",
+    "caption_note": "来源：论文图 2"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 6,
+    "caption_en": "Qwen-Image-2.0 data distribution across image categories.",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig6.jpg",
+    "figure": 6,
+    "page": 8,
+    "caption_en": "Overview of the Qwen-Image-2.0 data pipeline.",
+    "caption_note": "来源：论文图 6"
+  },
+  {
+    "file": "fig8.jpg",
+    "figure": 8,
+    "page": 10,
+    "caption_en": "Overview of the Qwen-Image-2.0 architecture. The model adopts a MMDiT architecture, with",
+    "caption_note": "来源：论文图 8"
+  },
+  {
+    "file": "fig7.jpg",
+    "figure": 7,
+    "page": 9,
+    "caption_en": "An error-attribution-driven closed-loop data flywheel for multi-track targeted optimization.",
+    "caption_note": "来源：论文图 7"
+  }
+]

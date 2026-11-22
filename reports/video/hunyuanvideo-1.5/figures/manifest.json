@@ -1,0 +1,44 @@
+[
+  {
+    "file": "fig0-teaser.jpg",
+    "figure": "teaser",
+    "page": 1,
+    "caption_en": "First-page teaser / overview figure",
+    "caption_note": "来源：论文首页图"
+  },
+  {
+    "file": "fig1.jpg",
+    "figure": 1,
+    "page": 3,
+    "caption_en": "Caption Model Post-training Pipeline.",
+    "caption_note": "来源：论文图 1"
+  },
+  {
+    "file": "fig3.jpg",
+    "figure": 3,
+    "page": 6,
+    "caption_en": "The pipeline of a cascaded video super-resolution model.",
+    "caption_note": "来源：论文图 3"
+  },
+  {
+    "file": "fig4.jpg",
+    "figure": 4,
+    "page": 8,
+    "caption_en": "Visualization during different post-training stages",
+    "caption_note": "来源：论文图 4"
+  },
+  {
+    "file": "fig5.jpg",
+    "figure": 5,
+    "page": 9,
+    "caption_en": "Visualization results of the cascaded video super-resolution model.",
+    "caption_note": "来源：论文图 5"
+  },
+  {
+    "file": "fig2.jpg",
+    "figure": 2,
+    "page": 4,
+    "caption_en": "Architecture of the Unified Diffusion Transformer.",
+    "caption_note": "来源：论文图 2"
+  }
+]

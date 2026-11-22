@@ -1,0 +1,14 @@
+# 更新日志
+
+## 2026-11-22
+
+- 站点首次发布：上线 GitHub Pages，统一了图文深读版式。
+- 已发布深读：
+  - [Qwen3-VL](./reports/vlm/qwen3-vl/)（VLM）
+  - [Z-Image](./reports/image/z-image/)（图像生成）
+  - [FireRed-Image-Edit](./reports/image/firered-image-edit/)（图像编辑）
+  - [Qwen-Image-2.0](./reports/image/qwen-image-2.0/)（图像生成 / 编辑）
+  - [HunyuanVideo 1.5](./reports/video/hunyuanvideo-1.5/)（视频生成）
+  - [Kling-Omni](./reports/video/kling-omni/)（视频生成）
+  - [Seedance 2.0](./reports/video/seedance-2.0/)（视频生成）
+- 后续批次将补上 Wan-Image 及其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

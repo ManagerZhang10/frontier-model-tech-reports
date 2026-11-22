@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FireRed-Image-Edit-1.0 技术报告中文深读 · 前沿模型技术报告</title>
+<meta name="description" content="小红书 FireRed-Image-Edit-1.0 技术报告中文深读：1.6B 收集 → 100M+ 训练样本的数据管线、三级指令 caption、DPO/DiffusionNFT 后训练、REDEdit-Bench 评测与局限。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+  .grid-l { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+  .ratio .rbar .c { background: var(--good); }
+  .bar-legend span.i::before { background: var(--good); }
+  :root[data-theme="dark"] .ratio .rbar .c { color: #141218; }
+  .flow.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .flow.five .stage dl { font-size: .82rem; }
+  .flow.five .stage .tag-rl { display: inline-block; font: 600 .68rem/1.6 var(--f-mono); padding: 0 .5em; border-radius: 6px; background: var(--warm-soft); color: var(--warm); margin-left: 4px; }
+  .rope .tok-r { fill: color-mix(in srgb, var(--accent) 22%, var(--card)); stroke: var(--accent); stroke-width: 1; }
+  .rope .tok-t { fill: var(--warm-soft); stroke: var(--warm); stroke-width: 1; }
+  .rope .tok-x { fill: var(--good-soft); stroke: var(--good); stroke-width: 1; }
+  .rope .lab { fill: var(--muted); font: 600 10px var(--f-mono); }
+  .rope .hd { fill: var(--ink); font: 700 12.5px var(--f-body); }
+  .rope .sm { fill: var(--muted); font: 500 11px var(--f-body); }
+  .funnel { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 14px 0; }
+  .funnel .stat-num { font-size: 1.9rem; }
+  @media (max-width: 960px) { .flow.five { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 640px) { .flow.five, .funnel { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 图像生成 / 图像编辑</div>
+    <h1>FireRed-Image-Edit-1.0<span class="sub">FireRed-Image-Edit-1.0 Technical Report · 指令式图像编辑扩散 Transformer</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>小红书 Super Intelligence Team</b></span>
+      <span>arXiv v1 <b>2026-02-12</b></span>
+      <span>本页依据 <b>v2（2026-06-14）</b>全文</span>
+      <span>arXiv <b>2602.13344</b></span>
+    </div>
+    <p class="lede">不靠堆参数，靠<strong>数据工程 + 训练细节 + 自建评测</strong>：从 1.6B 收集样本中筛出 100M+ 条（T2I : 编辑 ≈ 1:1），用三级指令 caption、Qwen3-VL-8B 质检模型、PSR 版 DPO 和带版面感知 OCR 奖励的 DiffusionNFT，在 ImgEdit / GEdit 上拿到开源第一，在自建 REDEdit-Bench 上仅次于 Nano-Banana-Pro。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>开源（原文称发布代码、模型与基准）</span>
+      <span class="badge">许可证：<span class="nd">原文未披露</span></span>
+      <span class="badge">参数量：<span class="nd">原文未披露</span></span>
+      <span class="badge">图像编辑 / 图像生成</span>
+      <span class="badge">MM-DiT · 基座引 [38] Qwen-Image</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2602.13344" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>arXiv 论文</a>
+      <a href="https://github.com/FireRedTeam/FireRed-Image-Edit" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.9a3.4 3.4 0 0 0-.9-2.6c3.1-.3 6.4-1.5 6.4-7A5.4 5.4 0 0 0 20 4.8 5 5 0 0 0 19.9 1S18.7.7 16 2.5a13.4 13.4 0 0 0-7 0C6.3.7 5.1 1 5.1 1A5 5 0 0 0 5 4.8a5.4 5.4 0 0 0-1.5 3.7c0 5.4 3.3 6.6 6.4 7a3.4 3.4 0 0 0-.9 2.6V22"/></svg>GitHub</a>
+      <a href="https://huggingface.co/FireRedTeam/FireRed-Image-Edit-1.0" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>HuggingFace 模型</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-title">目录</div>
+    <ol>
+      <li><a href="#glance">速览</a></li>
+      <li><a href="#tldr">TL;DR</a></li>
+      <li><a href="#arch">架构</a></li>
+      <li><a href="#data">数据</a></li>
+      <li><a href="#train">训练配方</a></li>
+      <li><a href="#eval">评测</a></li>
+      <li><a href="#novel">新在哪</a></li>
+      <li><a href="#impl">对编辑数据的启示</a></li>
+      <li><a href="#limits">局限与存疑</a></li>
+      <li><a href="#figs">图表索引</a></li>
+    </ol>
+    <div class="toc-foot">数字均摘自原文；<span class="src calc">推算</span> 为本页自行加减。</div>
+  </nav>
+
+  <main>
+
+<!-- 01 GLANCE -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">任务</div><div class="stat-num sm">指令式图像编辑 + T2I</div><div class="stat-sub">单图 / 多图参考编辑</div><span class="src">§1 §3.1</span></div>
+    <div class="card stat"><div class="stat-k">骨干</div><div class="stat-num sm">双流 MM-DiT</div><div class="stat-sub">Qwen VL 编码条件；VAE 编码图像；3D Unified RoPE</div><span class="src">§3.1 图 7</span></div>
+    <div class="card stat"><div class="stat-k">原始收集</div><div class="stat-num">1.6B</div><div class="stat-sub">900M T2I + 700M 编辑对</div><span class="src">§2</span></div>
+    <div class="card stat"><div class="stat-k">清洗后保留</div><div class="stat-num">100M+</div><div class="stat-sub">T2I : I2I ≈ 1:1；约为收集量的 6%</div><span class="src">§2 · <span class="calc">6% 为推算</span></span></div>
+    <div class="card stat"><div class="stat-k">训练阶段</div><div class="stat-num sm">Pretrain → CT → SFT → DPO → NFT</div><div class="stat-sub">合计 375.5K 步</div><span class="src">表 1 · <span class="calc">合计为推算</span></span></div>
+    <div class="card stat"><div class="stat-k">ImgEdit Overall</div><div class="stat-num">4.56</div><div class="stat-sub">表内最高（含闭源）；Qwen-Image-Edit-2511 为 4.51</div><span class="src">表 3</span></div>
+    <div class="card stat"><div class="stat-k">GEdit-EN G_O</div><div class="stat-num">7.943</div><div class="stat-sub">表内最高；CN 7.887 也最高</div><span class="src">表 4</span></div>
+    <div class="card stat"><div class="stat-k">REDEdit-CN Overall</div><div class="stat-num">4.33</div><div class="stat-sub">开源第一；Nano-Banana-Pro 4.48</div><span class="src">表 5</span></div>
+    <div class="card stat"><div class="stat-k">自建基准</div><div class="stat-num sm">REDEdit-Bench</div><div class="stat-sub">1,673 对中英双语、15 类，Gemini 3 Flash 评分</div><span class="src">§4</span></div>
+    <div class="card stat"><div class="stat-k">参数量 / 许可证</div><div class="stat-num sm"><span class="nd">原文未披露</span></div><div class="stat-sub">引言称基座 Qwen-Image 为 20B，但未给本模型参数</div><span class="src">§1</span></div>
+  </div>
+  <p class="footnote wide">版本说明：arXiv v1 发布于 2026-02-12（本页主日期）；本页逐字核对的是 arXiv v2（页眉标注 2026-06-14）。v1 与 v2 的差异未逐条比对。</p>
+</section>
+
+<!-- 02 TLDR -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>五句话看懂</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>数据漏斗：1.6B → 100M+</h3><p>900M T2I + 700M 编辑对<span class="src">§2</span>，经三级去重、统计/内容/美学/AIGC 预过滤、合成补数、VLM 后过滤，留下 100M+，生成与编辑约 1:1<span class="src">§2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>caption 分三级，并随阶段换配比</h3><p>编辑指令有详细 / 精简 / 口语三种写法<span class="src">§2.5.2</span>；指令型 caption 占比从预训练 5% 升到 DPO/NFT 的 60%<span class="src">表 1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>质检模型是 100K 标注训出的 Qwen3-VL-8B</h3><p>50K 正例 + 50K 改写指令的负例，人工双盲标「指令对齐」「感知质量」，SFT 后用于筛超过一亿条原始样本<span class="src">§2.6</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>后训练：PSR-DPO + DiffusionNFT</h3><p>DPO 中放大 Win Diff 权重（ω&gt;1）并加 SFT 项，缓解「双降」<span class="src">式 2</span>；NFT 用 CoT 软分数 VLM 奖励 + 版面感知 OCR 奖励，并只挑 semi-hard 样本<span class="src">§3.6.2</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>成绩强，但没有消融</h3><p>ImgEdit 4.56、GEdit-EN 7.943 均列表内第一<span class="src">表 3/4</span>；REDEdit-CN 落后 Nano-Banana-Pro 0.15<span class="src calc">推算</span>。全文没有任何消融实验，各组件贡献无法核对。</p></div>
+  </div>
+</section>
+
+<!-- 03 ARCH -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构：沿用开源 T2I 基座，改动集中在训练侧</h2>
+  <p class="sec-intro">原文没有给层数、宽度或参数量。架构上能确认的只有下面几点；大部分新东西在采样器、数据整理和损失上。</p></div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig7.jpg" alt="论文图 7：架构总览，左侧 Bucket Sampler 与 Collate Shuffle & Drop，右侧 VAE Encoder、Qwen VL、MMDiT Block 与 Consistency Loss" loading="lazy"></div>
+    <figcaption><b>架构总览。</b>左：按任务和宽高比分桶的 Bucket Sampler，以及随机打乱 / 丢弃参考图并重写「Fig N」指代的 Collate Shuffle &amp; Drop。右：输入图经 VAE 编码，指令或稠密 caption 与参考图经 Qwen VL 编码，进入 MMDiT Block；训练时在 MSE 外加 RoI 一致性损失。（裁图未含原图上缘 Bucket 1 与 Consistency Loss 细节）<span class="from">来源：论文图 7</span></figcaption>
+  </figure>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>基座 <span class="tag">§3.1</span></h4><p>基于开源多模态 T2I 基础模型 [38]（参考文献为 Qwen-Image），双流 MM-DiT 作为生成主干。文本嵌入、VAE latent、编辑场景下的参考图特征拼成一条序列。</p></div>
+    <div class="card mod"><h4>3D Unified RoPE <span class="tag">§3.1</span></h4><p>参考图与目标图 token <b>共享空间坐标</b>，用一个时间间隔区分；干净参考图与带噪目标 latent 使用不同的时间条件。</p></div>
+    <div class="card mod"><h4>条件编码 <span class="tag">图 7</span></h4><p>Qwen VL 同时吃指令（或 instructive / dense caption）和输入图；VLM 嵌入离线预计算存盘，训练时不再在线编码<span class="src">§3.2</span>。</p></div>
+    <div class="card mod"><h4>训练侧附加 <span class="tag">§3.2 §3.7</span></h4><p>Multi-Condition Aware Bucket Sampler、Stochastic Instruction Alignment、人脸 RoI 一致性损失（只在 σ&lt;0.9 时生效）。推理侧原文未给步数、CFG 等设置。</p></div>
+  </div>
+
+  <div class="card diagram wide rope">
+    <svg viewBox="0 0 720 190" role="img" aria-label="3D Unified RoPE 坐标示意">
+      <text class="hd" x="10" y="20">3D Unified RoPE：同一 (h, w) 网格，靠第三维区分参考图与目标图</text>
+      <!-- text tokens -->
+      <text class="sm" x="10" y="52">文本 / 条件 token</text>
+      <g transform="translate(10,60)">
+        <rect class="tok-x" x="0" y="0" width="18" height="18" rx="3"/><rect class="tok-x" x="22" y="0" width="18" height="18" rx="3"/><rect class="tok-x" x="44" y="0" width="18" height="18" rx="3"/><rect class="tok-x" x="66" y="0" width="18" height="18" rx="3"/><rect class="tok-x" x="88" y="0" width="18" height="18" rx="3"/>
+      </g>
+      <!-- ref grid -->
+      <g transform="translate(200,48)">
+        <text class="sm" x="0" y="-4">参考图 token（干净）</text>
+        <g>
+          <rect class="tok-r" x="0" y="6" width="34" height="34" rx="3"/><rect class="tok-r" x="38" y="6" width="34" height="34" rx="3"/><rect class="tok-r" x="76" y="6" width="34" height="34" rx="3"/>
+          <rect class="tok-r" x="0" y="44" width="34" height="34" rx="3"/><rect class="tok-r" x="38" y="44" width="34" height="34" rx="3"/><rect class="tok-r" x="76" y="44" width="34" height="34" rx="3"/>
+          <text class="lab" x="3" y="27">0,0</text><text class="lab" x="41" y="27">0,1</text><text class="lab" x="79" y="27">0,2</text>
+          <text class="lab" x="3" y="65">1,0</text><text class="lab" x="41" y="65">1,1</text><text class="lab" x="79" y="65">1,2</text>
+        </g>
+        <text class="lab" x="0" y="98">第三维 = t₀</text>
+      </g>
+      <!-- target grid -->
+      <g transform="translate(400,48)">
+        <text class="sm" x="0" y="-4">目标图 token（带噪）</text>
+        <g>
+          <rect class="tok-t" x="0" y="6" width="34" height="34" rx="3"/><rect class="tok-t" x="38" y="6" width="34" height="34" rx="3"/><rect class="tok-t" x="76" y="6" width="34" height="34" rx="3"/>
+          <rect class="tok-t" x="0" y="44" width="34" height="34" rx="3"/><rect class="tok-t" x="38" y="44" width="34" height="34" rx="3"/><rect class="tok-t" x="76" y="44" width="34" height="34" rx="3"/>
+          <text class="lab" x="3" y="27">0,0</text><text class="lab" x="41" y="27">0,1</text><text class="lab" x="79" y="27">0,2</text>
+          <text class="lab" x="3" y="65">1,0</text><text class="lab" x="41" y="65">1,1</text><text class="lab" x="79" y="65">1,2</text>
+        </g>
+        <text class="lab" x="0" y="98">第三维 = t₀ + Δ</text>
+      </g>
+      <path class="dg-line-main" d="M312 72 C 350 72, 360 72, 396 72" marker-end="url(#ar)"/>
+      <text class="sm" x="318" y="64">同 (h,w)</text>
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="var(--accent)"/></marker></defs>
+      <text class="sm" x="560" y="70">→ 拼成一条序列</text>
+      <text class="sm" x="560" y="88">进入双流 MM-DiT</text>
+      <text class="sm" x="10" y="176">原文只说「共享空间坐标、以时间间隔区分」；Δ 取值、文本 token 的位置编码方式原文未给。</text>
+    </svg>
+    <div class="cap">示意 · 依据 §3.1 文字绘制，网格尺寸与 Δ 为示意，非原文参数。</div>
+  </div>
+
+  <details class="more wide"><summary>训练效率细节（分桶 / 指令对齐 / 系统层）<span class="hint">§3.2</span></summary><div class="body">
+    <ul>
+      <li><b>Multi-Condition Aware Bucket Sampler</b>：桶 B<sub>r,n</sub> 同时由目标宽高比 r 和<b>输入图数 n</b> 决定；每卡视觉序列长度约束到常数容量 C；桶尺寸按最小化总裁切面积选取<span class="src">式 1</span>。</li>
+      <li><b>Stochastic Instruction Alignment</b>：collate 时对参考图随机丢弃 + 随机重排，并把提示词里的「Fig 1 / Fig 2」重新编号，使文字指代与新顺序一致。丢弃概率原文未给。</li>
+      <li><b>系统层</b>：VLM 特征离线缓存；FSDP → 显存够后改为节点内分片的 HSDP；梯度检查点；BF16 混合精度。吞吐提升幅度原文未给数字。</li>
+    </ul>
+  </div></details>
+</section>
+
+<!-- 04 DATA -->
+<section class="sec" id="data">
+  <div class="sec-head"><div class="sec-num">04 · DATA</div><h2>数据：漏斗、合成引擎、三级 caption、VLM 质检</h2>
+  <p class="sec-intro">全文最厚的一章（§2，约 7 页）。顺序是：收集 → 预过滤 → 合成补数 → 长尾补充 → caption → 后过滤。</p></div>
+
+  <div class="funnel wide">
+    <div class="card stat"><div class="stat-k">① 收集</div><div class="stat-num">1.6B</div><div class="stat-sub">900M T2I 对 + 700M 编辑对；编辑来源：开源集（OmniEdit、UnicEdit-10M 等）、自建数据引擎、视频序列、互联网</div><span class="src">§2</span></div>
+    <div class="card stat"><div class="stat-k">② 后过滤输入</div><div class="stat-num sm">&gt;100M 原始样本</div><div class="stat-sub">用 Qwen3-VL-8B 质检模型按对齐分 + 质量分联合筛</div><span class="src">§2.6</span></div>
+    <div class="card stat"><div class="stat-k">③ 训练用</div><div class="stat-num">100M+</div><div class="stat-sub">T2I 与编辑对半</div><span class="src">§2 §2.1</span></div>
+  </div>
+
+  <h3 class="wide">分布：原文给了比例，可以画</h3>
+  <div class="card mod wide">
+    <div class="ratio"><div class="rlab"><b>T2I 内部</b><span>Nature 57.7% · Design 22.6% · People 19.7%<span class="src">§2.1</span></span></div>
+      <div class="rbar"><span class="a" style="width:57.7%">Nature 57.7%</span><span class="b" style="width:22.6%">Design 22.6%</span><span class="c" style="width:19.7%">People 19.7%</span></div></div>
+    <div class="ratio"><div class="rlab"><b>I2I（编辑）内部</b><span>Structural 49.6% · Semantic 26.2% · Stylistic 24.2%<span class="src">§2.1</span></span></div>
+      <div class="rbar"><span class="a" style="width:49.6%">Structural 49.6%</span><span class="b" style="width:26.2%">Semantic 26.2%</span><span class="c" style="width:24.2%">Stylistic 24.2%</span></div></div>
+    <p class="tbl-note">Structural 包括视角、动作、人像、文字修改、混合变化；Semantic 为增删替换与换背景；Stylistic 为调色、风格迁移、色调、材质。T2I 与 I2I 两大块之间约 1:1<span class="src">图 3</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="论文图 3：数据分布旭日图，上半为 Text2Image，下半为 Image2Image" loading="lazy"></div>
+    <figcaption><b>数据分布。</b>上半 T2I 分 Nature / People / Design，下半 I2I 分 Semantic / Stylistic / Structural，外圈为子类占比（如 Portrait Edit 11.45%、Text Modification 11.32%、Motion Change 10.02%）。外圈子类百分比加总与内圈 100% 不完全对得上，可能是四舍五入或图中细类标注未完全可读；图中数字为读图，正文未列表给出。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <h3 class="wide">预过滤：五类过滤器</h3>
+  <div class="pipe wide">
+    <div class="pipe-head"><span>环节</span><span>做法</span><span>指标 / 工具</span><span>去掉什么</span></div>
+    <div class="pipe-row"><div class="lbl">三级去重<span class="src">§2.2.1</span></div><div class="chip">L1 全局近重聚类（自监督拷贝检测描述子 [25]）</div><div class="chip">L2 编辑对级：CLIP + 内部 embedding 算 src–tgt 相似度</div><div class="chip o">L3 PSNR + SSIM + ISC21 + CLIP 多指标细筛</div></div>
+    <div class="pipe-row"><div class="lbl">统计过滤<span class="src">§2.2.2</span></div><div class="chip">亮度、饱和度、RGB 熵、纹理复杂度、锐度</div><div class="chip">估各指标经验分布</div><div class="chip o">丢弃统计上不合理的区间</div></div>
+    <div class="pipe-row"><div class="lbl">内容有效性<span class="src">§2.2.3</span></div><div class="chip">专用检测器</div><div class="chip">水印、文字叠加、马赛克、拼图、隐私遮挡、二维码、条形码</div><div class="chip o">另按元数据 / 几何线索做旋转校正</div></div>
+    <div class="pipe-row"><div class="lbl">质量与美学<span class="src">§2.2.4</span></div><div class="chip">IQA 模型 [23, 24]</div><div class="chip">LAION 美学预测器 [28]</div><div class="chip o">低分样本过滤</div></div>
+    <div class="pipe-row"><div class="lbl">AIGC 检测<span class="src">§2.2.5</span></div><div class="chip">内部 AIGC 检测器</div><div class="chip">针对过平滑、光照均一、细节被抑制</div><div class="chip o">去掉生成图，避免合成先验</div></div>
+  </div>
+  <p class="tbl-note wide">各级阈值、每级过滤掉的比例：<span class="nd">原文未披露</span>。</p>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig4.jpg" alt="论文图 4 局部：去重三级与统计过滤指标" loading="lazy"></div>
+    <figcaption><b>数据过滤总览（局部）。</b>裁图只含上半：左为 Global / Pair / Multi-Metric 三级去重，右为五个统计指标与分布截断示意；下半的美学、内容有效性、AIGC 检测见原文。<span class="from">来源：论文图 4</span></figcaption>
+  </figure>
+
+  <h3 class="wide">合成：数据生产引擎（三条正向构造 + 两个增强）</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>① 指令控制的专家模型 <span class="tag">§2.3</span></h4><p>默认专家为只需「图 + 指令」的编辑模型 [16, 32, 39, 51]。维护两个库：<b>专家指令库</b>（把每个专家的能力边界写成确定性模板与槽位）和<b>编辑目标词表</b>（VLM 发现可编辑目标 + 任务清单 + OCR、坐标等辅助元数据）。专家还会用 SFT / LoRA 再精调。</p></div>
+    <div class="card mod"><h4>② 结构控制的专家模型 <span class="tag">§2.3</span></h4><p>用 SAM 3 [3] 取 mask、DWPose [46] 取关键点，结合预设配置模板生成结构化控制信号，驱动 ControlNet 类专家 [51 等]。适合精确移除、表情 / 姿态迁移、外观重定向。</p></div>
+    <div class="card mod"><h4>③ 免模型模板合成 <span class="tag">§2.3</span></h4><p>3D 参数化模板（图形引擎 + 骨骼绑定，生成像素一致的表情 / 姿态）、版式模板（文字、logo、UI 锚点）、算法滤镜模板（锐化、调色等低层操作）。</p></div>
+    <div class="card mod"><h4>增强：Task Inversion / Task Splitting <span class="tag">§2.3</span></h4><p><b>反转</b>：可逆编辑交换 src/tgt，减少指令方向偏置。<b>拆分</b>：多操作编辑拆成原子步骤逐步执行，减少质量退化。</p></div>
+  </div>
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig5.jpg" alt="论文图 5 局部：Model-free Template-based Synthesis，原图经 3D 模板、版式模板、算法滤镜生成编辑结果" loading="lazy"></div>
+    <figcaption><b>数据引擎（局部）。</b>裁图只含第三条路径「免模型模板合成」：原图 →（3D 模板 / 版式模板 / 算法滤镜 / …）→ 编辑结果；前两条路径见原文。<span class="from">来源：论文图 5</span></figcaption>
+  </figure>
+
+  <div class="card mod wide"><h4>长尾补充：check and fill <span class="tag">§2.4</span></h4>
+    <p>所有训练指令入向量库。模型在某个编辑域表现差时，先查该类指令的样本密度；不够就判为「数据缺口」，再用以图搜图 / 以文搜图从大候选池找底图，送入数据引擎生成新对。密度阈值、补了多少：<span class="nd">原文未披露</span>。</p>
+  </div>
+
+  <h3 class="wide">Caption 引擎：结构化 caption + 三级编辑指令</h3>
+  <div class="post-flow wide">
+    <div class="card stage"><div class="sid">DETAILED</div><h4>详细指令 caption</h4><ul><li>专门微调的 VLM（引 Qwen3-VL [33]）做 src→tgt 差异推理</li><li>重点：左右方位、视角变化、细粒度属性</li><li>作为编辑描述的「基准真值」</li></ul></div>
+    <div class="card stage"><div class="sid">CONCISE</div><h4>精简改写</h4><ul><li>从多种 VLM 中随机选一个（引 GLM [8]、Kimi K2 [31]）+ 词表</li><li>随机句式：倒装、无主语祈使、口语等</li><li>去掉冗余修饰，抽象具体概念</li></ul></div>
+    <div class="card stage"><div class="sid">USER-LIKE</div><h4>口语化改写</h4><ul><li>注入人设语气与求助语（如 “Can you help me fix this?”）</li><li>按不同比例混入</li><li>与详细描述混训，形成从口语到细粒度的多尺度指令分布</li></ul></div>
+  </div>
+  <p class="wide">结构化 caption（主体、背景、光照、风格、机位）用于 T2I 训练与 I2I 对的视觉锚定<span class="src">§2.5.1</span>。正文引用了「Annotation Prompt 7」，但 v2 全文中找不到这个 prompt。</p>
+
+  <h3 class="wide">后过滤：自训 VLM 质检模型</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>训练数据 <span class="tag">§2.6</span></h4>
+      <dl class="kv"><dt>正例</dt><dd>50,000 条「源图–指令–目标图」三元组</dd><dt>负例</dt><dd>50,000 条：LLM 对原指令做语义扰动 / 随机改写</dd><dt>总量</dt><dd>100,000 条，人工专家双盲标注</dd><dt>标注维度</dt><dd>指令对齐、感知质量（清晰度、伪影、美感）</dd></dl></div>
+    <div class="card mod"><h4>模型与用法 <span class="tag">§2.6</span></h4>
+      <dl class="kv"><dt>骨干</dt><dd>Qwen3-VL-8B，SFT</dd><dt>作用对象</dt><dd>&gt;100M 原始样本（真实对 + 合成对）</dd><dt>规则</dt><dd>对齐分 + 质量分联合阈值</dd><dt>与人评相关性</dt><dd>原文称“strong correlation”，<span class="nd">无具体数字</span></dd></dl>
+      <p>同一套奖励模型在 NFT 阶段复用为 VLM 奖励<span class="src">§3.6.2</span>。</p></div>
+  </div>
+
+  <h3 class="wide">已披露规模表（训练各阶段）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项</th><th>Pretrain</th><th>CT</th><th>SFT</th><th>DPO</th><th>NFT</th></tr></thead>
+      <tbody>
+        <tr><td>互联网收集</td><td>100M</td><td>5M</td><td>50K</td><td>10K</td><td>10K</td></tr>
+        <tr><td>合成数据</td><td>5M</td><td>10M</td><td>50K</td><td>50K</td><td>10K</td></tr>
+        <tr><td>Original Cap.</td><td>55%</td><td>20%</td><td>10%</td><td>10%</td><td>10%</td></tr>
+        <tr><td>Structured Cap.</td><td>40%</td><td>60%</td><td>45%</td><td>30%</td><td>30%</td></tr>
+        <tr class="hl"><td>Instructive Cap.</td><td>5%</td><td>20%</td><td>45%</td><td>60%</td><td>60%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 1。<b>未披露</b>：各阶段 T2I / 编辑的具体比例、15 个编辑子任务在各阶段的配比、开源集 / 引擎 / 视频 / 互联网四种来源各占多少、各过滤环节淘汰率。</p>
+</section>
+
+<!-- 05 TRAIN -->
+<section class="sec" id="train">
+  <div class="sec-head"><div class="sec-num">05 · TRAINING</div><h2>训练配方：五段式</h2>
+  <p class="sec-intro">表 1 给了数据量、分辨率、步数、warm-up 与共享优化器设置；学习率、batch size、GPU 数均未给。</p></div>
+
+  <div class="flow five wide">
+    <div class="card stage"><div class="sid">S1</div><h4>Pretrain</h4><dl><dt>数据</dt><dd>100M + 5M</dd><dt>分辨率</dt><dd>384–512</dd><dt>步数</dt><dd>300K</dd><dt>warm-up</dt><dd>0</dd></dl></div>
+    <div class="card stage"><div class="sid">S2</div><h4>Continued PT</h4><dl><dt>数据</dt><dd>5M + 10M</dd><dt>分辨率</dt><dd>512–1024</dd><dt>步数</dt><dd>65K</dd><dt>warm-up</dt><dd>0</dd></dl></div>
+    <div class="card stage"><div class="sid">S3</div><h4>SFT</h4><dl><dt>数据</dt><dd>50K + 50K</dd><dt>分辨率</dt><dd>1024</dd><dt>步数</dt><dd>5K</dd><dt>warm-up</dt><dd>500</dd></dl></div>
+    <div class="card stage"><div class="sid">S4</div><h4>DPO<span class="tag-rl">RL</span></h4><dl><dt>数据</dt><dd>10K + 50K</dd><dt>分辨率</dt><dd>1024</dd><dt>步数</dt><dd>5K</dd><dt>warm-up</dt><dd>500</dd></dl></div>
+    <div class="card stage"><div class="sid">S5</div><h4>DiffusionNFT<span class="tag-rl">RL</span></h4><dl><dt>数据</dt><dd>10K + 10K</dd><dt>分辨率</dt><dd>1024</dd><dt>步数</dt><dd>500</dd><dt>warm-up</dt><dd>0</dd></dl></div>
+  </div>
+  <p class="tbl-note wide">数据 = 互联网 + 合成<span class="src">表 1</span>。共享：AdamW（β₁=0.9，β₂=0.999）、梯度裁剪 1、weight decay 0.01<span class="src">表 1</span>。</p>
+
+  <div class="card mod wide"><h4>caption 类型配比随阶段迁移 <span class="tag">表 1</span></h4>
+    <div class="bar-legend"><span>Original</span><span class="s">Structured</span><span class="i">Instructive</span></div>
+    <div class="ratio"><div class="rlab"><b>Pretrain</b></div><div class="rbar"><span class="a" style="width:55%">55%</span><span class="b" style="width:40%">40%</span><span class="c" style="width:5%"></span></div></div>
+    <div class="ratio"><div class="rlab"><b>CT</b></div><div class="rbar"><span class="a" style="width:20%">20%</span><span class="b" style="width:60%">60%</span><span class="c" style="width:20%">20%</span></div></div>
+    <div class="ratio"><div class="rlab"><b>SFT</b></div><div class="rbar"><span class="a" style="width:10%">10%</span><span class="b" style="width:45%">45%</span><span class="c" style="width:45%">45%</span></div></div>
+    <div class="ratio"><div class="rlab"><b>DPO / NFT</b></div><div class="rbar"><span class="a" style="width:10%">10%</span><span class="b" style="width:30%">30%</span><span class="c" style="width:60%">60%</span></div></div>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>Pretrain <span class="tag">§3.3</span></h4><ul><li>动态分桶，原生任意分辨率 / 宽高比；可在 T2I 与单图输入间切换</li><li>「包容式」过滤：不做严格美学筛选和类别平衡，保留长尾概念</li><li>原始元数据 + 结构化合成 caption 混训</li><li>timestep 课程：先偏高噪声，逐步过渡到均匀采样</li></ul></div>
+    <div class="card mod"><h4>Continued PT <span class="tag">§3.4</span></h4><ul><li>T2I / 单图 / 多图统一采样</li><li>宽高比覆盖 2:1、16:9、3:2、4:3、1:1、3:4、2:3、9:16、1:2</li><li>加入稠密 caption，学长尾词汇</li><li>按语义聚类均匀采样做类别平衡</li></ul></div>
+    <div class="card mod"><h4>SFT <span class="tag">§3.5</span></h4><ul><li>以 1024×1024 为主、经人工精细过滤的数据</li><li>指令型 caption + 结构化 prompt</li><li>按类别动态重采样，防长尾遗忘</li><li>学习率「显著小于」预训练（数值未给）+ EMA</li></ul></div>
+    <div class="card mod"><h4>全程训练策略 <span class="tag">§3.8</span></h4><ul><li>分布式分层 timestep 采样：时间轴切成 K 段（K = world size），各 rank 各取一段，定期广播种子轮换</li><li>Logit-Normal 损失加权，侧重中间时间步</li><li>EMA 权重平均</li></ul></div>
+  </div>
+
+  <h3 class="wide">后训练三件事</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>DPO + PSR <span class="tag">§3.6.1 式 2</span></h4>
+      <p>观察到 Win Diff 与 Lose Diff 同步上升（「双降」）。做法：在 Win Diff 前乘 ω&gt;1，再减去 λ·SFT 项，让优化以正样本重建为主。</p>
+      <p>数据：VLM 多阶段指令演化合成指令；<b>Mix-Policy</b>——正例来自多个专家分支与美学优化模型，负例来自基座模型并经 VLM 过滤。ω、λ、β 取值<span class="nd">原文未给</span>。</p></div>
+    <div class="card mod"><h4>DiffusionNFT <span class="tag">§3.6.2 式 3–5</span></h4>
+      <p><b>VLM 奖励</b>：先生成 CoT，再取评分 token（如 1–5）的 softmax 概率求期望，K 次随机推理取平均，得到连续奖励。</p>
+      <p><b>版面感知 OCR 奖励</b>：编辑距离项 + 门控后的逐字符位置 / 尺度项，惩罚靠「把字写大」骗 OCR 的 reward hacking。</p>
+      <p><b>Semi-hard 挖掘</b>：用 DPO checkpoint 离线采多个候选，挑「均值够高但下界不稳」的样本。</p></div>
+    <div class="card mod"><h4>Consistency Loss <span class="tag">§3.7 式 6–8</span></h4>
+      <p>用 x̂₀ = x_t − σ_t·v_t 的一步估计，按 GT 人脸关键点做同一对齐变换，过人脸识别骨干算余弦距离；多人时逐脸平均。</p>
+      <p>权重 λ_id(σ) = η·σ²（σ&lt;0.9），否则为 0。η 取值<span class="nd">原文未给</span>。</p></div>
+    <div class="card mod"><h4>原文没给的超参 <span class="tag nd-tag">未披露</span></h4>
+      <p>学习率、batch size、GPU 规模与训练时长、EMA 衰减、Stochastic Instruction Alignment 丢弃概率、NFT 的 β 与 K、OCR 奖励权重 w_text / w_layout、后过滤阈值。</p></div>
+  </div>
+</section>
+
+<!-- 06 EVAL -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">06 · EVALUATION</div><h2>评测：两个公开基准 + 自建 REDEdit-Bench + 人评</h2>
+  <p class="sec-intro">原表用粗体 / 下划线标最佳 / 次佳，纯文本里丢失了；本页用 <b>●</b> 标出按数值重新判定的列最佳。表中无 * / † 等记号。</p></div>
+
+  <div class="chart-grid wide">
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 258" role="img" aria-label="ImgEdit Overall（0–5）">
+<text class="ch-t" x="0" y="15">ImgEdit Overall（0–5）</text><text class="ch-src" x="0" y="30">表 3 · 节选 8 个</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="232"/><text class="ch-ax" x="132.0" y="246" text-anchor="middle">0</text>
+<line class="grid-l" x1="170.0" y1="36" x2="170.0" y2="232"/><text class="ch-ax" x="170.0" y="246" text-anchor="middle">1</text>
+<line class="grid-l" x1="208.0" y1="36" x2="208.0" y2="232"/><text class="ch-ax" x="208.0" y="246" text-anchor="middle">2</text>
+<line class="grid-l" x1="246.0" y1="36" x2="246.0" y2="232"/><text class="ch-ax" x="246.0" y="246" text-anchor="middle">3</text>
+<line class="grid-l" x1="284.0" y1="36" x2="284.0" y2="232"/><text class="ch-ax" x="284.0" y="246" text-anchor="middle">4</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="232"/><text class="ch-ax" x="322.0" y="246" text-anchor="middle">5</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">FireRed-Image-Edit</text><rect class="bar-q" x="132" y="44" width="173.3" height="15" rx="3"/><text class="ch-val" x="310.3" y="56">4.56</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Qwen-Image-Edit-2511</text><rect class="bar-o" x="132" y="68" width="171.4" height="15" rx="3"/><text class="ch-val" x="308.4" y="80">4.51</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">LongCat-Image-Edit</text><rect class="bar-o" x="132" y="92" width="169.1" height="15" rx="3"/><text class="ch-val" x="306.1" y="104">4.45</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">ChronoEdit</text><rect class="bar-o" x="132" y="116" width="168.0" height="15" rx="3"/><text class="ch-val" x="305.0" y="128">4.42</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Emu3.5</text><rect class="bar-o" x="132" y="140" width="167.6" height="15" rx="3"/><text class="ch-val" x="304.6" y="152">4.41</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">Nano-Banana-Pro</text><rect class="bar-o2" x="132" y="164" width="166.1" height="15" rx="3"/><text class="ch-val" x="303.1" y="176">4.37</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">FLUX.2 [Dev]</text><rect class="bar-o" x="132" y="188" width="165.3" height="15" rx="3"/><text class="ch-val" x="302.3" y="200">4.35</text>
+<text class="ch-lbl" x="124" y="223" text-anchor="end">Seedream4.5</text><rect class="bar-o2" x="132" y="212" width="164.2" height="15" rx="3"/><text class="ch-val" x="301.2" y="224">4.32</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="232"/></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 258" role="img" aria-label="GEdit-Bench-EN G_O（0–10）">
+<text class="ch-t" x="0" y="15">GEdit-Bench-EN G_O（0–10）</text><text class="ch-src" x="0" y="30">表 4 · 节选 8 个</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="232"/><text class="ch-ax" x="132.0" y="246" text-anchor="middle">0</text>
+<line class="grid-l" x1="170.0" y1="36" x2="170.0" y2="232"/><text class="ch-ax" x="170.0" y="246" text-anchor="middle">2</text>
+<line class="grid-l" x1="208.0" y1="36" x2="208.0" y2="232"/><text class="ch-ax" x="208.0" y="246" text-anchor="middle">4</text>
+<line class="grid-l" x1="246.0" y1="36" x2="246.0" y2="232"/><text class="ch-ax" x="246.0" y="246" text-anchor="middle">6</text>
+<line class="grid-l" x1="284.0" y1="36" x2="284.0" y2="232"/><text class="ch-ax" x="284.0" y="246" text-anchor="middle">8</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="232"/><text class="ch-ax" x="322.0" y="246" text-anchor="middle">10</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">FireRed-Image-Edit</text><rect class="bar-q" x="132" y="44" width="150.9" height="15" rx="3"/><text class="ch-val" x="287.9" y="56">7.943</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">Qwen-Image-Edit-2511</text><rect class="bar-o" x="132" y="68" width="149.7" height="15" rx="3"/><text class="ch-val" x="286.7" y="80">7.877</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Seedream4.5</text><rect class="bar-o2" x="132" y="92" width="148.6" height="15" rx="3"/><text class="ch-val" x="285.6" y="104">7.820</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">Longcat-Image-Edit</text><rect class="bar-o" x="132" y="116" width="147.2" height="15" rx="3"/><text class="ch-val" x="284.2" y="128">7.748</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Nano-Banana-Pro</text><rect class="bar-o2" x="132" y="140" width="147.0" height="15" rx="3"/><text class="ch-val" x="284.0" y="152">7.738</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">Seedream4.0</text><rect class="bar-o2" x="132" y="164" width="146.3" height="15" rx="3"/><text class="ch-val" x="283.3" y="176">7.701</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">FLUX.2 [Dev]</text><rect class="bar-o" x="132" y="188" width="140.8" height="15" rx="3"/><text class="ch-val" x="277.8" y="200">7.413</text>
+<text class="ch-lbl" x="124" y="223" text-anchor="end">Nano-Banana</text><rect class="bar-o2" x="132" y="212" width="138.5" height="15" rx="3"/><text class="ch-val" x="275.5" y="224">7.291</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="232"/></svg></div>
+    <div class="chart-cell"><svg class="chart" viewBox="0 0 360 282" role="img" aria-label="REDEdit-Bench-CN Overall（0–5）">
+<text class="ch-t" x="0" y="15">REDEdit-Bench-CN Overall（0–5）</text><text class="ch-src" x="0" y="30">表 5 · 全部 9 个</text>
+<line class="grid-l" x1="132.0" y1="36" x2="132.0" y2="256"/><text class="ch-ax" x="132.0" y="270" text-anchor="middle">0</text>
+<line class="grid-l" x1="170.0" y1="36" x2="170.0" y2="256"/><text class="ch-ax" x="170.0" y="270" text-anchor="middle">1</text>
+<line class="grid-l" x1="208.0" y1="36" x2="208.0" y2="256"/><text class="ch-ax" x="208.0" y="270" text-anchor="middle">2</text>
+<line class="grid-l" x1="246.0" y1="36" x2="246.0" y2="256"/><text class="ch-ax" x="246.0" y="270" text-anchor="middle">3</text>
+<line class="grid-l" x1="284.0" y1="36" x2="284.0" y2="256"/><text class="ch-ax" x="284.0" y="270" text-anchor="middle">4</text>
+<line class="grid-l" x1="322.0" y1="36" x2="322.0" y2="256"/><text class="ch-ax" x="322.0" y="270" text-anchor="middle">5</text>
+<text class="ch-lbl" x="124" y="55" text-anchor="end">Nano-Banana-Pro</text><rect class="bar-o2" x="132" y="44" width="170.2" height="15" rx="3"/><text class="ch-val" x="307.2" y="56">4.48</text>
+<text class="ch-lbl" x="124" y="79" text-anchor="end">FireRed-Image-Edit</text><rect class="bar-q" x="132" y="68" width="164.5" height="15" rx="3"/><text class="ch-val" x="301.5" y="80">4.33</text>
+<text class="ch-lbl" x="124" y="103" text-anchor="end">Seedream4.5</text><rect class="bar-o2" x="132" y="92" width="158.8" height="15" rx="3"/><text class="ch-val" x="295.8" y="104">4.18</text>
+<text class="ch-lbl" x="124" y="127" text-anchor="end">Qwen-Image-Edit-2511</text><rect class="bar-o" x="132" y="116" width="158.8" height="15" rx="3"/><text class="ch-val" x="295.8" y="128">4.18</text>
+<text class="ch-lbl" x="124" y="151" text-anchor="end">Seedream4.0</text><rect class="bar-o2" x="132" y="140" width="157.7" height="15" rx="3"/><text class="ch-val" x="294.7" y="152">4.15</text>
+<text class="ch-lbl" x="124" y="175" text-anchor="end">Nano-Banana</text><rect class="bar-o2" x="132" y="164" width="156.9" height="15" rx="3"/><text class="ch-val" x="293.9" y="176">4.13</text>
+<text class="ch-lbl" x="124" y="199" text-anchor="end">Longcat-Image-Edit</text><rect class="bar-o" x="132" y="188" width="156.6" height="15" rx="3"/><text class="ch-val" x="293.6" y="200">4.12</text>
+<text class="ch-lbl" x="124" y="223" text-anchor="end">FLUX.2 [Dev]</text><rect class="bar-o" x="132" y="212" width="153.9" height="15" rx="3"/><text class="ch-val" x="290.9" y="224">4.05</text>
+<text class="ch-lbl" x="124" y="247" text-anchor="end">Qwen-Image-Edit-2509</text><rect class="bar-o" x="132" y="236" width="152.0" height="15" rx="3"/><text class="ch-val" x="289.0" y="248">4.00</text>
+<line class="axis" x1="132" y1="36" x2="132" y2="256"/></svg></div>
+  </div>
+  <div class="chart-legend wide"><span class="l1">FireRed-Image-Edit</span><span class="l3">开源对手</span><span class="l4">闭源对手</span><span>坐标轴均从 0 起</span></div>
+
+  <h3 class="wide">主表：9 个在各表中都出现的模型</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>模型</th><th>ImgEdit<br>Overall</th><th>GEdit-EN<br>G_O</th><th>GEdit-CN<br>G_O</th><th>REDEdit-CN<br>Overall</th><th>REDEdit-EN<br>Overall</th><th>REDEdit 文字<br>SuccessEdit</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">闭源</td></tr>
+        <tr><td>Nano-Banana</td><td>4.29</td><td>7.291</td><td>7.399</td><td>4.13</td><td>4.15</td><td>7.93</td></tr>
+        <tr><td>Seedream4.0</td><td>4.30</td><td>7.701</td><td>7.692</td><td>4.15</td><td>4.18</td><td>8.59</td></tr>
+        <tr><td>Seedream4.5</td><td>4.32</td><td>7.820</td><td>7.800</td><td>4.18</td><td>4.20</td><td>8.61</td></tr>
+        <tr><td>Nano-Banana-Pro</td><td>4.37</td><td>7.738</td><td>7.799</td><td class="best">4.48</td><td class="best">4.42</td><td>9.54</td></tr>
+        <tr class="grp"><td colspan="7">开源</td></tr>
+        <tr><td>FLUX.2 [Dev]</td><td>4.35</td><td>7.413</td><td>7.278</td><td>4.05</td><td>4.07</td><td>7.93</td></tr>
+        <tr><td>Qwen-Image-Edit-2509</td><td>4.31</td><td>7.480</td><td>7.467</td><td>4.00</td><td>3.99</td><td>8.35</td></tr>
+        <tr><td>LongCat-Image-Edit</td><td>4.45</td><td>7.748</td><td>7.731</td><td>4.12</td><td>4.12</td><td>8.60</td></tr>
+        <tr><td>Qwen-Image-Edit-2511</td><td>4.51</td><td>7.877</td><td>7.819</td><td>4.18</td><td>4.23</td><td>9.42</td></tr>
+        <tr class="hl"><td>FireRed-Image-Edit</td><td class="best">4.56</td><td class="best">7.943</td><td class="best">7.887</td><td>4.33</td><td>4.26</td><td class="best">9.57</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="scroll-hint">← 左右滑动查看 →</p>
+  <p class="tbl-note wide">来源：表 3（ImgEdit）、表 4（GEdit）、表 5/6（REDEdit-CN/EN）、表 7（文字）。REDEdit 由 Gemini 3 Flash 自动评分<span class="src">§4.2</span>；ImgEdit / GEdit 的评分模型原文未说明。分数口径：ImgEdit 与 REDEdit 为 1–5 分制，GEdit 与文字 VLM Judge 为 10 分制（按表中数值范围判断）。</p>
+
+  <div class="grid2 wide">
+    <div class="card mod"><h4>强项 <span class="tag ok-tag">可核对</span></h4><ul>
+      <li>ImgEdit Extract 4.34，列内最高；Qwen-Image-Edit-2511 为 4.13<span class="src">表 3</span></li>
+      <li>GEdit-EN 语义一致性 G_SC 8.363 最高<span class="src">表 4</span></li>
+      <li>文字编辑 SuccessEdit 9.57 为表内最高，OCR 0.983 仅比 Nano-Banana-Pro 低 0.001<span class="src">表 7</span></li>
+    </ul></div>
+    <div class="card mod"><h4>弱项 <span class="tag nd-tag">同样来自原表</span></h4><ul>
+      <li>GEdit 感知质量 G_PQ：EN 8.245 / CN 8.227，低于 Nano-Banana 的 8.454 / 8.424<span class="src">表 4</span></li>
+      <li>REDEdit Viewpoint：CN 3.14、EN 2.78，EN 为 9 个模型中最低<span class="src">表 5/6</span></li>
+      <li>新引入的 Beauty（美颜）：CN 3.69 / EN 3.55，Nano-Banana 为 4.37 / 4.37<span class="src">表 5/6</span></li>
+      <li>ImgEdit Action 4.71，低于 Nano-Banana 4.83<span class="src">表 3</span></li>
+    </ul></div>
+  </div>
+
+  <h3 class="wide">REDEdit-Bench 是什么</h3>
+  <div class="grid2 wide">
+    <div class="card mod"><h4>构建 <span class="tag">§4.1</span></h4><p>从互联网与合法采购渠道收集 3,000+ 张真实图片（风景、建筑、物体、动物、人像），技术人员选图并写指令，最终 1,673 对中英双语编辑样本，多专家复核。15 类，含新加的 Beauty（美颜）与 Low-level（画质增强）。</p></div>
+    <div class="card mod"><h4>评分 <span class="tag">§4.2</span></h4><p>通用维度：Prompt Compliance、Visual Naturalness、Physical &amp; Detail Coherence，Gemini 3 Flash 评分。文字子集另加 <b>OCR</b>（Levenshtein、完成率、词准确率加权归一）与 <b>VLM Judge</b>（SuccessEdit、OverEdit、Style、Consistency）。</p></div>
+  </div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准</th><th>规模</th><th>真实图</th><th>人工筛选</th><th>子任务</th><th>双语</th><th>任务专属评测 prompt</th></tr></thead>
+      <tbody>
+        <tr><td>MagicBrush</td><td>1,053</td><td>✔</td><td>✔</td><td>7</td><td>✘</td><td>✘</td></tr>
+        <tr><td>AnyEdit</td><td>1,250</td><td>✔</td><td>✘</td><td>25</td><td>✘</td><td>✘</td></tr>
+        <tr><td>ImgEdit</td><td>811</td><td>✔</td><td>✔</td><td>14</td><td>✘</td><td>✔</td></tr>
+        <tr><td>GEdit-Bench</td><td>606</td><td>✔</td><td>✔</td><td>11</td><td>✔</td><td>✘</td></tr>
+        <tr class="hl"><td>REDEdit-Bench</td><td>1,673</td><td>✔</td><td>✔</td><td>15</td><td>✔</td><td>✔</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">来源：表 2（照录原表）。</p>
+
+  <h3 class="wide">人评</h3>
+  <div class="card mod wide"><h4>多模型盲评 <span class="tag">§5.1 图 10</span></h4>
+    <p>同一输入的多个模型输出随机顺序同时展示，隐藏模型名；维度为 <b>Prompt Following</b> 与 <b>Consistency Preservation</b>。对手：LongCat、Nano-Banana-Pro、Qwen-Image-Edit-2511、Seedream4.5。</p>
+    <p>图 10 每个维度给 4 组两两比例：Prompt Following 为 65.7 / 57.4 / 55.3 / 44.3%（FireRed 一侧，按图读），Consistency 为 56.1 / 61.1 / 55.0 / 51.2%。图注称 FireRed 一致性最高，Prompt Following 被 Nano-Pro 略超。样本数、标注人数、一致性系数<span class="nd">原文未披露</span>；哪一组对应哪个对手，正文没写明。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig0-teaser.jpg" alt="论文首页图局部：三个面板的柱状图，FireRed 红色柱分别为 4.56、7.92、4.29" loading="lazy"></div>
+    <figcaption><b>首页对比图（裁去上缘与图例）。</b>三个面板依次对应 ImgEdit、GEdit、REDEdit（题注顺序），红柱为 FireRed：4.56 / 7.92 / 4.29。7.92 与 4.29 看起来是 CN、EN 两套分数的均值（表 4 为 7.943 / 7.887，表 5/6 为 4.33 / 4.26）<span class="src calc">推算</span>，但图上没标口径。纵轴不从 0 起，会放大差距。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+
+  <details class="more wide"><summary>ImgEdit 分类别（节选）<span class="hint">表 3</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>模型</th><th>Add</th><th>Adjust</th><th>Extract</th><th>Replace</th><th>Remove</th><th>BG</th><th>Style</th><th>Hybrid</th><th>Action</th><th>Overall</th></tr></thead>
+        <tbody>
+          <tr><td>Nano-Banana</td><td class="best">4.62</td><td>4.41</td><td>3.68</td><td>4.34</td><td>4.39</td><td>4.40</td><td>4.18</td><td>3.72</td><td class="best">4.83</td><td>4.29</td></tr>
+          <tr><td>Nano-Banana-Pro</td><td>4.44</td><td>4.62</td><td>3.42</td><td>4.60</td><td>4.63</td><td>4.32</td><td class="best">4.97</td><td>3.64</td><td>4.69</td><td>4.37</td></tr>
+          <tr><td>Emu3.5</td><td>4.61</td><td>4.32</td><td>3.96</td><td class="best">4.84</td><td>4.58</td><td>4.35</td><td>4.79</td><td>3.69</td><td>4.57</td><td>4.41</td></tr>
+          <tr><td>ChronoEdit</td><td>4.48</td><td>4.39</td><td>3.49</td><td>4.66</td><td class="best">4.67</td><td class="best">4.57</td><td>4.91</td><td>3.82</td><td class="best">4.83</td><td>4.42</td></tr>
+          <tr><td>LongCat-Image-Edit</td><td>4.44</td><td>4.53</td><td>3.83</td><td>4.80</td><td>4.60</td><td>4.33</td><td>4.92</td><td>3.75</td><td>4.82</td><td>4.45</td></tr>
+          <tr><td>Qwen-Image-Edit-2511</td><td>4.54</td><td>4.57</td><td>4.13</td><td>4.70</td><td>4.46</td><td>4.36</td><td>4.89</td><td class="best">4.16</td><td>4.81</td><td>4.51</td></tr>
+          <tr class="hl"><td>FireRed-Image-Edit</td><td>4.55</td><td class="best">4.66</td><td class="best">4.34</td><td>4.75</td><td>4.58</td><td>4.45</td><td class="best">4.97</td><td>4.07</td><td>4.71</td><td class="best">4.56</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">● 为原表 23 个模型中的列最佳（按数值重新判定；Style 两家并列 4.97）。</p>
+  </div></details>
+
+  <details class="more wide"><summary>REDEdit-Bench 分类别（CN / EN）<span class="hint">表 5、表 6</span></summary><div class="body">
+<div class="tbl-wrap"><table>
+<thead><tr><th>模型</th><th>Overall</th><th>Add</th><th>Adjust</th><th>BG</th><th>Beauty</th><th>Color</th><th>Compose</th><th>Extract</th><th>Portrait</th><th>Low-level</th><th>Motion</th><th>Remove</th><th>Replace</th><th>Stylize</th><th>Text</th><th>Viewpoint</th></tr></thead><tbody>
+<tr class="grp"><td colspan="17">REDEdit-Bench-CN</td></tr>
+<tr><td>Nano-Banana-Pro</td><td class="best">4.48</td><td class="best">4.66</td><td class="best">4.41</td><td>4.58</td><td>4.35</td><td class="best">4.58</td><td class="best">4.36</td><td>3.42</td><td class="best">4.86</td><td>4.46</td><td class="best">4.91</td><td class="best">4.54</td><td>4.79</td><td>4.85</td><td class="best">4.69</td><td>3.75</td></tr>
+<tr><td>Qwen-Image-Edit-2511</td><td>4.18</td><td>4.50</td><td>4.23</td><td>4.52</td><td>3.61</td><td>4.09</td><td>4.00</td><td>3.22</td><td>4.31</td><td>4.19</td><td>4.66</td><td>4.41</td><td>4.68</td><td>4.83</td><td>4.08</td><td>3.51</td></tr>
+<tr class="hl"><td>FireRed-Image-Edit</td><td>4.33</td><td>4.57</td><td>4.37</td><td class="best">4.64</td><td>3.69</td><td>4.45</td><td>4.29</td><td class="best">3.49</td><td>4.50</td><td class="best">4.56</td><td>4.65</td><td>4.47</td><td class="best">4.81</td><td>4.93</td><td>4.49</td><td>3.14</td></tr>
+<tr class="grp"><td colspan="17">REDEdit-Bench-EN</td></tr>
+<tr><td>Nano-Banana-Pro</td><td class="best">4.42</td><td class="best">4.72</td><td class="best">4.40</td><td class="best">4.64</td><td class="best">4.37</td><td>4.43</td><td class="best">4.32</td><td>3.25</td><td class="best">4.82</td><td>4.36</td><td class="best">4.85</td><td class="best">4.52</td><td class="best">4.75</td><td>4.90</td><td class="best">4.54</td><td>3.51</td></tr>
+<tr><td>Qwen-Image-Edit-2511</td><td>4.23</td><td>4.55</td><td>4.17</td><td>4.56</td><td>3.49</td><td>4.07</td><td>4.07</td><td class="best">3.54</td><td>4.42</td><td class="best">4.52</td><td>4.72</td><td>4.42</td><td>4.65</td><td>4.85</td><td>4.06</td><td>3.38</td></tr>
+<tr class="hl"><td>FireRed-Image-Edit</td><td>4.26</td><td>4.41</td><td>4.33</td><td>4.60</td><td>3.55</td><td class="best">4.47</td><td>4.25</td><td>3.49</td><td>4.50</td><td>4.44</td><td>4.65</td><td>4.46</td><td>4.70</td><td>4.94</td><td>4.44</td><td>2.78</td></tr>
+</tbody></table></div>
+<p class="tbl-note">节选 3 个模型；● 表示该值等于原表全部 9 个模型中的列最高（可能并列）。未展示模型持有的列最高：CN Beauty — Nano-Banana 4.37；CN Stylize — FLUX.2 [Dev] 4.95；CN Viewpoint — FLUX.2 [Dev] 3.88；EN Stylize — Seedream4.0 4.98；EN Viewpoint — FLUX.2 [Dev] 3.84。</p>
+</div></details>
+
+  <details class="more wide"><summary>文字编辑完整表<span class="hint">表 7</span></summary><div class="body">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>模型</th><th>OCR</th><th>SuccessEdit</th><th>OverEdit</th><th>Style</th><th>Consistency</th></tr></thead>
+        <tbody>
+          <tr><td>Nano-Banana</td><td>0.958</td><td>7.93</td><td>9.53</td><td>9.30</td><td>8.04</td></tr>
+          <tr><td>Seedream4</td><td>0.969</td><td>8.59</td><td>9.26</td><td>9.19</td><td>9.15</td></tr>
+          <tr><td>Seedream4.5</td><td>0.975</td><td>8.61</td><td>9.37</td><td>9.00</td><td>8.93</td></tr>
+          <tr><td>Nano-Banana-Pro</td><td class="best">0.984</td><td>9.54</td><td class="best">9.63</td><td class="best">9.68</td><td class="best">9.53</td></tr>
+          <tr><td>FLUX.2 [Dev]</td><td>0.950</td><td>7.93</td><td>8.90</td><td>8.83</td><td>8.33</td></tr>
+          <tr><td>Qwen-Image-Edit-2509</td><td>0.957</td><td>8.35</td><td>9.26</td><td>9.15</td><td>8.15</td></tr>
+          <tr><td>Qwen-Image-Edit-2511</td><td>0.969</td><td>9.42</td><td>9.36</td><td>9.31</td><td>9.27</td></tr>
+          <tr><td>LongCat-Image-Edit</td><td>0.976</td><td>8.60</td><td>8.96</td><td>8.67</td><td>8.50</td></tr>
+          <tr class="hl"><td>FireRed-Image-Edit</td><td>0.983</td><td class="best">9.57</td><td>9.53</td><td>9.49</td><td>9.51</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">OCR 一列 9 个模型集中在 0.950–0.984，区分度有限；VLM Judge 各列拉得更开。</p>
+  </div></details>
+
+  <details class="more wide"><summary>定性示例（论文图 2）<span class="hint">展示图，非定量</span></summary><div class="body">
+    <figure class="fig card">
+      <div class="img-pad"><img src="figures/fig2.jpg" alt="论文图 2：FireRed-Image-Edit 通用编辑效果拼图" loading="lazy"></div>
+      <figcaption><b>通用编辑效果展示。</b>作者挑选的案例，不代表平均水平。<span class="from">来源：论文图 2</span></figcaption>
+    </figure>
+  </div></details>
+</section>
+
+<!-- 07 NOVEL -->
+<section class="sec" id="novel">
+  <div class="sec-head"><div class="sec-num">07 · WHAT'S NEW</div><h2>新在哪：五条可核对的点</h2>
+  <p class="sec-intro">FSDP/HSDP、BF16、EMA、Logit-Normal 加权属于常规工程，不计入。</p></div>
+  <div class="novel wide">
+    <div class="card nv"><h4>分桶时把「输入图张数」也作为桶的维度</h4><p>桶 B<sub>r,n</sub> 由宽高比 r 和参考图数 n 共同决定，每卡视觉 token 总长约束为常数<span class="src">§3.2 式 1</span>。</p><p class="why">多图编辑与 T2I 混训时，单按分辨率分桶会让不同卡序列长度差很多。</p></div>
+    <div class="card nv"><h4>打乱参考图顺序时同步重写指令里的「Fig N」</h4><p>Collate 阶段对参考图随机丢弃、重排，并把文本中的图号重新编号<span class="src">§3.2</span>。</p><p class="why">让模型学会按语义而不是按位置对应参考图。</p></div>
+    <div class="card nv"><h4>DPO 中的正样本强化（PSR）</h4><p>针对 Win/Lose Diff 同步上升，放大 Win Diff（ω&gt;1）并加 SFT 正则<span class="src">§3.6.1 式 2</span>；配合 Mix-Policy（正例来自专家 / 美学模型，负例来自基座）。</p><p class="why">只有现象描述，没有给出改动前后的曲线或分数。</p></div>
+    <div class="card nv"><h4>版面感知 OCR 奖励</h4><p>逐字符比对位置与尺度，门控后叠加到编辑距离奖励上，针对「放大字号骗 OCR」<span class="src">§3.6.2 式 5</span>。</p><p class="why">文字编辑 RL 的 reward hacking 是真实问题，这一项针对性强。</p></div>
+    <div class="card nv"><h4>按噪声水平调度的人脸身份损失</h4><p>在一步估计 x̂₀ 上算人脸识别余弦距离，权重 η·σ²、σ≥0.9 时关闭<span class="src">§3.7 式 6</span>。</p><p class="why">与之配套的还有 REDEdit-Bench 新加的 Beauty / Low-level 两类评测<span class="src">§6</span>。</p></div>
+  </div>
+</section>
+
+<!-- 08 IMPLICATIONS -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDIT DATA / EVAL / CAPTION</div>
+    <h2>对图像编辑数据、评测与 caption 的启示</h2>
+    <p class="sec-intro">每条先写论文做法（带出处），再给一条可迁移做法。绿色框内都是<b>迁移建议，不是论文内容</b>。</p>
+
+    <div class="impl-group">数据构建</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>编辑对级去重：看 src 与 tgt 像不像</h4>
+        <p class="paper">论文：L2 用 CLIP + 内部 embedding 算源图与目标图相似度，去掉近似恒等映射；L3 再叠 PSNR / SSIM / ISC21 / CLIP 去掉「几乎没改」的样本<span class="src">§2.2.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>按编辑类型分别定 src–tgt 相似度的上下界（局部消除类本应很高，风格迁移类本应较低），每条被淘汰的样本记下原因码，方便回查误杀。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>质检模型的负例：改指令，不改图</h4>
+        <p class="paper">论文：50K 真实三元组做正例，LLM 对指令做语义扰动得到 50K 负例，人工双盲标对齐与质量，SFT Qwen3-VL-8B，再筛超过一亿条样本<span class="src">§2.6</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>指令扰动负例成本低，可按「方位反转 / 数量改变 / 对象替换」等扰动类型分桶，各类单独报召回；再留一份人工标的 held-out 集，公开所用阈值下的准确率——论文只写了“strong correlation”。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>任务反转与拆分</h4>
+        <p class="paper">论文：可逆编辑交换 src/tgt 以减少指令方向偏置；多操作编辑拆成原子步骤迭代生成<span class="src">§2.3</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>反转后的样本单独打标、单独控比例；「删除 → 反转为添加」时目标是真实原图，可优先保留。拆分出的中间步要过同一套质检，避免误差累积。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>长尾缺口用检索补，而不是盲目扩量</h4>
+        <p class="paper">论文：训练指令入向量库；评测发现某域弱时先查样本密度，不足即检索底图送引擎补数<span class="src">§2.4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>把「评测失败类别 → 指令库密度 → 补数量 → 复评分数」做成一张固定看板，每轮补数前后对比，才知道补数有没有用。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>AIGC 检测与合成数据并存</h4>
+        <p class="paper">论文：预过滤用内部 AIGC 检测去掉生成图<span class="src">§2.2.5</span>；同时 CT 阶段合成数据（10M）多于互联网数据（5M）<span class="src">表 1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>AIGC 检测只对<b>源图</b>严格执行，目标图允许是专家模型输出；在数据卡里按阶段记录合成占比，与画质类指标一起看。</p></div>
+    </div>
+
+    <div class="impl-group">Caption / 指令</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>一条样本存三种指令</h4>
+        <p class="paper">论文：微调 VLM 写详细差异描述（重点左右、视角）→ 随机 VLM 精简改写（倒装、无主语等句式）→ 口语化求助式改写；与详细描述混训<span class="src">§2.5.2 图 6</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>三种写法都落盘，训练时按步采样，而不是预先二选一；另建一个「左右 / 视角」专项小集，定期抽查 caption VLM 在这两项上的错误率。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>caption 类型配比是阶段超参</h4>
+        <p class="paper">论文：原始 / 结构化 / 指令型 caption 从 55/40/5%（预训练）调到 10/30/60%（DPO、NFT）<span class="src">表 1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>把这组比例写进训练配置并随 checkpoint 记录；论文没做这组比例的消融，自己复现时值得先扫两三档。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>多参考图指令里的图号要结构化</h4>
+        <p class="paper">论文：参考图打乱 / 丢弃后同步重写提示里的「Fig N」<span class="src">§3.2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>caption 中的图号存成占位槽（如 <code>{ref_1}</code>）而非纯文本，重排时才能安全替换；参考图被丢弃时如何改写对应句子，论文没说，需要自己定规则。</p></div>
+    </div>
+
+    <div class="impl-group">评测 / 奖励</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>文字编辑：OCR + VLM Judge 双轨</h4>
+        <p class="paper">论文：OCR 分（Levenshtein、完成率、词准确率加权）+ VLM Judge（SuccessEdit、OverEdit、Style、Consistency）<span class="src">§4.2 表 7</span>。表 7 中 9 个模型 OCR 都在 0.950–0.984。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>OCR 只当准入门槛，排序靠 OverEdit / Style / Consistency；把训练用的版面感知 OCR 奖励（式 5）同时作为评测指标，能直接暴露「字变大」类 hacking。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>VLM 打分取概率期望</h4>
+        <p class="paper">论文：CoT 后取评分 token 的 softmax 期望，K 次推理取平均，作为连续奖励<span class="src">§3.6.2 式 4</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>同样的软分数也可用于数据过滤与自动评测：整数分大量并列时，连续分便于定阈值和看分布漂移。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>自建基准要交代评分器</h4>
+        <p class="paper">论文：REDEdit-Bench 1,673 对、15 类、中英双语、任务专属评测 prompt，Gemini 3 Flash 单一评分器<span class="src">§4 表 2</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>内部评测集固定评分模型版本与每类 prompt，并至少用第二个评分器复跑一次报告排序是否一致；新增类别（如美颜）先用小规模人评校准评分器。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>人评只看两件事</h4>
+        <p class="paper">论文：多模型同屏盲评，只评 Prompt Following 与 Consistency Preservation<span class="src">§5.1</span>。</p>
+        <p class="do"><b>迁移建议，不是论文内容：</b>两维足够做快速盲评，但要同时报样本数、标注人数、胜 / 平 / 负和一致性——这些论文都没给，结果就难以复核。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 09 LIMITS -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">09 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>没有任何消融。</b>PSR-DPO、版面感知 OCR 奖励、Consistency Loss、多条件分桶、Stochastic Instruction Alignment、timestep 策略、caption 配比，全文都没有去掉某项后的对比，贡献无法拆分。</li>
+    <li class="key"><b>数据规模前后说法不一。</b>摘要：收集 1.6B、保留 100M+<span class="src">摘要 §2</span>；引言：约 1 亿<span class="src">§1</span>；§3.1 与结论：约 10 亿图文对<span class="src">§3.1 §6</span>；表 1 预训练为 100M 互联网 + 5M 合成。</li>
+    <li><b>表 4 疑似抄错行。</b>Qwen-Image-Edit-2509 与 Step1X-Edit-v1.2 六列数值完全相同（7.974 / 7.714 / 7.480 / 7.988 / 7.679 / 7.467）<span class="src">表 4</span>。</li>
+    <li><b>人评协议与图不符，且缺样本量。</b>正文说“不是两两比较”，图 10 却是每组加起来 100% 的两方比例；样本数、标注人数、一致性都没有；正文称 Prompt Following 领先，图注又说 Nano-Pro 略胜<span class="src">§5.1 图 10</span>。</li>
+    <li><b>REDEdit-Bench 自建自评。</b>作者团队构建，Gemini 3 Flash 单一评分器，正文未给评分 prompt；结论虽称会发布基准，但在发布前外部无法复现表 5–7。</li>
+    <li><b>图 3 子类加总低于父类。</b>图 3 外圈子类百分比加总与内圈 100% 不完全对得上（读图），可能是四舍五入或细类标注未完全可读，正文未列表给出。各来源占比、15 个子任务在各阶段的配比也未披露。</li>
+    <li><b>质检模型没有量化指标。</b>Qwen3-VL-8B 评估器只说与人评“strong correlation”，没给相关系数或准确率；过滤阈值和淘汰率也没给<span class="src">§2.6</span>。</li>
+    <li><b>关键超参缺失。</b>学习率、batch size、算力规模、ω / λ / β / η / K、EMA 衰减都没给；参数量与许可证原文未写。</li>
+    <li><b>文中前后不一致的小处。</b>「Annotation Prompt 7」被引用但正文找不到<span class="src">§2.5.1</span>；EMA 被同时描述为指数滑动平均和「参数的算术平均」<span class="src">§3.8</span>；结论列出的「Multi-Image DPO」正文没有对应小节<span class="src">§6</span>。</li>
+    <li><b>新增类别反而是弱项。</b>REDEdit Viewpoint EN 2.78 为 9 个模型中最低；新加的 Beauty 为 3.69 / 3.55，低于 Nano-Banana 系列的 4.35–4.37<span class="src">表 5/6</span>。</li>
+  </ul>
+</section>
+
+<!-- 10 INDEX -->
+<section class="sec" id="figs">
+  <div class="sec-head"><div class="sec-num">10 · INDEX</div><h2>图表索引</h2></div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>首页三基准对比柱状图（文件 fig0-teaser.jpg，已裁去上缘与图例）</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>图 2</td><td>通用编辑效果展示</td><td><a href="#eval">评测 · 折叠</a></td></tr>
+        <tr><td>图 3</td><td>T2I / I2I 数据分布旭日图</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>图 4</td><td>数据过滤总览（局部：去重 + 统计过滤）</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>图 5</td><td>数据生产引擎（局部：免模型模板合成）</td><td><a href="#data">数据</a></td></tr>
+        <tr><td>图 7</td><td>架构总览：分桶、Shuffle &amp; Drop、MMDiT、一致性损失</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>表 1</td><td>各阶段数据量、caption 配比、分辨率、步数、优化器</td><td><a href="#data">数据</a> · <a href="#train">训练</a></td></tr>
+        <tr><td>表 2</td><td>开源编辑基准属性对比</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 3</td><td>ImgEdit 分类别结果</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 4</td><td>GEdit-EN / CN 结果</td><td><a href="#eval">评测</a></td></tr>
+        <tr><td>表 5 / 6</td><td>REDEdit-Bench CN / EN 分类别结果</td><td><a href="#eval">评测 · 折叠</a></td></tr>
+        <tr><td>表 7</td><td>REDEdit 文字编辑：OCR + VLM Judge</td><td><a href="#eval">评测 · 折叠</a></td></tr>
+        <tr><td>示意</td><td>3D Unified RoPE 坐标（本页自绘，非原图）</td><td><a href="#arch">架构</a></td></tr>
+        <tr><td>柱状图</td><td>ImgEdit / GEdit-EN / REDEdit-CN 总分（本页据表 3–5 绘制）</td><td><a href="#eval">评测</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">论文图 6（指令 caption 示例）、图 8（训练流程）、图 9（REDEdit 类别分布）、图 10（人评）、图 11–17（定性对比）未提供裁图，本页以文字转述。</p>
+</section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="in">
+    本文基于 <a href="https://arxiv.org/abs/2602.13344" target="_blank" rel="noopener">FireRed-Image-Edit-1.0 Technical Report（arXiv:2602.13344）</a>，v1 发布于 2026-02-12，本页依据 v2 全文核对。文中数字均来自原文，标注 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，非论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回 前沿模型技术报告</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

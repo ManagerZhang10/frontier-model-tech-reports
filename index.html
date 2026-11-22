@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前沿模型技术报告 · 中文深读</title>
+<meta name="description" content="各大厂前沿模型技术报告中文深读（LLM / VLM / 图像生成 / 视频生成），图文并茂，持续更新。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+<script>
+  (function () {
+    try { var t = localStorage.getItem("ftr-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker">FRONTIER MODEL TECH REPORTS</div>
+    <h1>前沿模型技术报告 <span class="sub">中文深读 · 图文并茂 · 持续更新</span></h1>
+    <p class="lede">
+      覆盖各大厂近一年的模型技术报告：大语言模型、视觉语言模型、图像生成与视频生成。每篇都按同一套格式深读——架构、数据、训练配方、评测、以及<strong>对图像编辑数据 / 评测 / caption 的启示</strong>。数字均来自原文并标注出处。
+    </p>
+    <div class="badges">
+      <span class="badge acc">公开仓库</span>
+      <span class="badge">LLM</span>
+      <span class="badge">VLM</span>
+      <span class="badge">图像生成</span>
+      <span class="badge">视频生成</span>
+    </div>
+    <div class="links">
+      <a href="https://github.com/ManagerZhang10/frontier-model-tech-reports" target="_blank" rel="noopener">GitHub 仓库</a>
+      <a href="./CHANGELOG.md">更新日志</a>
+      <a href="./README.md">关于本站</a>
+    </div>
+  </div>
+</header>
+
+<div class="home-wrap">
+  <div class="section-label" id="recent">最近更新</div>
+  <div class="recent-list" id="recentList"></div>
+
+  <div class="section-label" id="all" style="margin-top:32px">全部深读</div>
+  <div class="filters">
+    <button class="chip-btn active" type="button" data-cat="all" aria-pressed="true">全部</button>
+    <button class="chip-btn" type="button" data-cat="llm">LLM</button>
+    <button class="chip-btn" type="button" data-cat="vlm">VLM</button>
+    <button class="chip-btn" type="button" data-cat="image">图像生成</button>
+    <button class="chip-btn" type="button" data-cat="video">视频生成</button>
+    <input class="search" id="q" type="search" placeholder="搜索模型、厂商、关键词…" autocomplete="off">
+  </div>
+  <div class="filters" id="vendorFilters" aria-label="按厂商筛选"></div>
+  <div class="card-grid" id="grid"></div>
+  <p class="empty" id="empty" hidden>没有符合条件的报告。</p>
+</div>
+
+<footer>
+  <div class="in">
+    <p style="margin:0 0 6px"><b style="color:var(--ink)">前沿模型技术报告</b>是一个持续更新的公开中文深读站点。数字均摘自原文，并就近标注表号、图号或章节号；标「推算」的是本文计算的。论文图片版权归原作者所有。</p>
+    <p style="margin:0">维护于 <a href="https://github.com/ManagerZhang10/frontier-model-tech-reports" target="_blank" rel="noopener">GitHub</a>。欢迎 Star、提 Issue 或指出事实错误。</p>
+  </div>
+</footer>
+
+<script src="./assets/site.js"></script>
+<script>
+(function () {
+  var CAT = { llm: "LLM", vlm: "VLM", image: "图像生成", video: "视频生成" };
+  var state = { cat: "all", vendor: "all", q: "" };
+  var data = { reports: [] };
+
+  function catClass(c) { return "cat-pill " + (c || ""); }
+  function card(r) {
+    var a = document.createElement("a");
+    a.className = "report-card";
+    a.href = r.path;
+    a.innerHTML =
+      '<div class="rc-top"><span class="' + catClass(r.category) + '">' + (CAT[r.category] || r.category) + '</span>' +
+      '<span class="rc-meta"><span>' + (r.date || "") + '</span></span></div>' +
+      "<h3>" + r.title + "</h3>" +
+      '<p class="lede-s">' + (r.one_liner || "") + "</p>" +
+      '<div class="rc-meta"><span>' + (r.vendor || "") + "</span>" +
+      (r.open_weights ? "<span>开放权重</span>" : "") +
+      (r.arxiv ? "<span>arXiv:" + r.arxiv + "</span>" : "") + "</div>";
+    return a;
+  }
+
+  function filtered() {
+    var q = state.q.trim().toLowerCase();
+    return data.reports.filter(function (r) {
+      if (state.cat !== "all" && r.category !== state.cat) return false;
+      if (state.vendor !== "all" && r.vendor_key !== state.vendor) return false;
+      if (!q) return true;
+      var blob = [r.title, r.subtitle, r.vendor, r.one_liner, r.arxiv, r.params].join(" ").toLowerCase();
+      return blob.indexOf(q) !== -1;
+    }).slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  }
+
+  function render() {
+    var list = filtered();
+    var grid = document.getElementById("grid");
+    grid.innerHTML = "";
+    list.forEach(function (r) { grid.appendChild(card(r)); });
+    document.getElementById("empty").hidden = list.length > 0;
+
+    var recent = data.reports.slice().sort(function (a, b) {
+      return (b.added || b.date || "").localeCompare(a.added || a.date || "");
+    }).slice(0, 6);
+    var box = document.getElementById("recentList");
+    box.innerHTML = "";
+    recent.forEach(function (r) {
+      var div = document.createElement("div");
+      div.className = "recent-item";
+      div.innerHTML = '<span class="' + catClass(r.category) + '">' + (CAT[r.category] || r.category) + "</span>" +
+        '<a href="' + r.path + '"><b>' + r.title + "</b></a>" +
+        '<span class="rc-meta">' + (r.added || r.date || "") + " · " + (r.vendor || "") + "</span>";
+      box.appendChild(div);
+    });
+  }
+
+  function buildVendors() {
+    var map = {};
+    data.reports.forEach(function (r) {
+      if (!r.vendor_key) return;
+      map[r.vendor_key] = r.vendor || r.vendor_key;
+    });
+    var wrap = document.getElementById("vendorFilters");
+    wrap.innerHTML = "";
+    if (Object.keys(map).length < 2) return;
+    function add(key, label) {
+      var b = document.createElement("button");
+      b.className = "chip-btn" + (state.vendor === key ? " active" : "");
+      b.type = "button";
+      b.setAttribute("aria-pressed", state.vendor === key ? "true" : "false");
+      b.textContent = label;
+      b.addEventListener("click", function () {
+        state.vendor = key;
+        Array.prototype.forEach.call(wrap.querySelectorAll(".chip-btn"), function (x) {
+          var on = x === b;
+          x.classList.toggle("active", on);
+          x.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        render();
+      });
+      wrap.appendChild(b);
+    }
+    add("all", "全部厂商");
+    Object.keys(map).sort().forEach(function (k) { add(k, map[k]); });
+  }
+
+  document.querySelectorAll(".filters .chip-btn[data-cat]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      state.cat = b.getAttribute("data-cat");
+      document.querySelectorAll(".filters .chip-btn[data-cat]").forEach(function (x) {
+        var on = x === b;
+        x.classList.toggle("active", on);
+        x.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      render();
+    });
+  });
+  document.getElementById("q").addEventListener("input", function (e) {
+    state.q = e.target.value;
+    render();
+  });
+
+  fetch("./reports.json").then(function (r) { return r.json(); }).then(function (j) {
+    data = j;
+    buildVendors();
+    render();
+  }).catch(function () {
+    document.getElementById("empty").hidden = false;
+    document.getElementById("empty").textContent = "无法加载 reports.json。";
+  });
+})();
+</script>
+</body>
+</html>

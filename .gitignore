@@ -1,0 +1,9 @@
+*.DS_Store
+.DS_Store
+*.log
+html.start
+html.end
+html.exit
+__pycache__/
+*.pyc
+.claude/
