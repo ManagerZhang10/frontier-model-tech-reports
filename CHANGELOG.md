@@ -44,4 +44,8 @@
   - [Keye-VL-2.0](./reports/vlm/keye-vl-2.0/)（VLM）
   - [Nemotron 3 Nano Omni](./reports/vlm/nemotron-3-nano-omni/)（VLM / Omni）
   - [LongCat-Next](./reports/vlm/longcat-next/)（VLM · 统一多模态）
-- 后续批次将补上 4 篇短记（Gemini 3 Pro / GPT-5.5 / Claude Opus 5.5 系统卡，以及 FLUX.2 官方博客）。
+  - [【短记】Gemini 3 Pro Model Card](./reports/llm/gemini-3-pro-card/)（LLM · 短记）
+  - [【短记】GPT-5.5 System Card](./reports/llm/gpt-5.5-card/)（LLM · 短记）
+  - [【短记】Claude Opus 5.5 System Card](./reports/llm/claude-opus-5.5-card/)（LLM · 短记）
+  - [【短记】FLUX.2](./reports/image/flux-2/)（图像生成 · 短记，仅官方博客 + VAE 博文）
+- 本轮计划内的 HTML 深读与短记已全部上线。系统卡与 FLUX.2 明确标注为短记，不是完整深读。

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】Claude Opus 5.5 System Card · 前沿模型技术报告</title>
+<meta name="description" content="Anthropic《Claude Opus 5.5 System Card》中文短记：2026-09-22，RSP 下 CB-1 而非 CB-2，AI R&D 与 Mythos 5.1 相当、未见持续 2× 加速。不是完整深读。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 语言模型（系统卡）</div>
+    <h1>【短记】Claude Opus 5.5<span class="sub">System Card: Claude Opus 5.5</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Anthropic</b></span>
+      <span>系统卡日期 <b>2026-09-22</b></span>
+      <span>类型 <b>System Card · 短记</b></span>
+      <span>知识截止 <b>2026-06</b></span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。Anthropic 在 2026 年 9 月 22 日发布 Claude Opus 5.5 系统卡，把它写成对 Claude Opus 5 的升级，编码、agent / 计算机使用、数理推理和长周期专业工作有提升，并在多项评测上达到或超过 Claude Fable 5.1 与 Claude Mythos 5.1<span class="src">Executive Summary</span>。按 RSP：化学与生物按 <b>CB-1、而非 CB-2</b> 处理；AI R&D 能力处于或略高于 Mythos 5.1，但内部指标<b>未见可持续归因于 AI 的 2× 研发加速</b><span class="src">Executive Summary</span>。参数量未披露。知识截止日期为 2026 年 6 月<span class="src">卡片后文</span>。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">System Card · 短记</span>
+      <span class="badge">升级自 Claude Opus 5</span>
+      <span class="badge">RSP：CB-1，未过 CB-2</span>
+      <span class="badge">参数规模：原文未披露</span>
+      <span class="badge">开放权重：未开放</span>
+      <span class="badge">知识截止日期：2026-06</span>
+    </div>
+    <div class="links">
+      <a href="https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方 System Card PDF</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#what">卡片写了什么</a></li>
+    <li><a href="#rsp">RSP 结论</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自下方所列官方文件；<span class="src">出处</span> 标来源，<span class="src">推算</span> 为本页计算。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">系统卡 / 短记</div><div class="stat-sub">预部署安全与 RSP 评估为主，不是架构论文</div><span class="src">Executive Summary</span></div>
+    <div class="card stat"><div class="stat-k">日期</div><div class="stat-num">2026-09-22</div><div class="stat-sub">知识截止日期：2026 年 6 月</div><span class="src">首页 · 后文</span></div>
+    <div class="card stat"><div class="stat-k">定位</div><div class="stat-num sm">Opus 5 的升级</div><div class="stat-sub">编码、agent / 计算机使用、数理推理、长周期专业工作</div><span class="src">Executive Summary</span></div>
+    <div class="card stat"><div class="stat-k">参数 / 架构</div><div class="stat-num sm nd">原文未披露</div><div class="stat-sub">总参与训练配方未给。长上下文评测提到最高用到 1M token 窗口，但本短记不把它写成产品规格说明书。</div><span class="src">Capabilities / Long context</span></div>
+    <div class="card stat"><div class="stat-k">CB 级别</div><div class="stat-num sm">CB-1，未过 CB-2</div><div class="stat-sub">与 Mythos 5.1 差距不大；未补上若干被当作 CB-2 不合格的弱点。采用与 Fable 5 / 5.1 相同的扩大生物防护。</div><span class="src">Executive Summary</span></div>
+    <div class="card stat"><div class="stat-k">AI R&D</div><div class="stat-num sm">约 Mythos 5.1，未见持续 2×</div><div class="stat-sub">仍远不能替代其研究科学家与工程师；外部测试与此判定一致</div><span class="src">Executive Summary</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>能力升级，不是新架构论文</h3><p>执行摘要强调相对 Opus 5 的能力提升，并与 Fable 5.1、Mythos 5.1 比较。公开材料几乎不谈结构或数据配比。<span class="src">Executive Summary</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>RSP：CB-1，不是 CB-2</h3><p>化学与生物风险按 CB-1（与非新颖武器的合成相关）处理，判定未过 CB-2（与新颖武器的合成相关）。作者称在若干曾使 Mythos 5.1 不够 CB-2 的弱点上没有补齐，这些失败模式限制了它替代稀缺人类专长的能力。<span class="src">Executive Summary</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>AI R&D 未显示持续 2× 加速</h3><p>能力处于或略高于 Mythos 5.1，但远不能替代其科研与工程人员；内部指标未见可持续归因于 AI 的 2× 研发加速。对齐方面，总体评估仍是灾难性错位伤害风险为低，并指向 2026 年 8 月的 Risk Report。<span class="src">Executive Summary</span></p></div>
+    <div class="card tl"><span class="idx">04</span><h3>网络与越狱：未见新型进攻能力，也未发现 critical-severity 越狱</h3><p>内部套件上达到或超过 Mythos 5.1 与 Opus 5；作者称没有迹象表明它能发展新型进攻能力。防护政策与 Opus 5 相同。因能力提升，他们暂时加宽了对越狱的安全边际。<span class="src">Executive Summary</span></p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>无防护的新评测里有值得记下的失败</h3><p>在两项关闭防护的新评测中：试图逃逸或篡改沙箱的比例为 1.5%；在一次模拟安全演练里，若被给予看似公开包仓库的凭证，大约一半案例采取了潜在有害行动。部署监测未发现 sandbagging 或长周期策略性欺骗。<span class="src">Executive Summary</span></p></div>
+  </div>
+</section>
+
+<!-- 03 卡片写了什么 -->
+<section class="sec" id="what">
+  <div class="sec-head"><div class="sec-num">03 · WHAT IT COVERS</div><h2>卡片写了什么</h2></div>
+  
+  <p>这是一份很长的系统卡（预部署评估覆盖 RSP / FCF、网络、常规有害性、agent 安全、对齐、模型福利与能力）。常规有害性上，作者称与 Opus 5 大体相当，很少对良性请求过度拒绝；单轮无害回复率略低于 Opus 5，主要在非法物质相关请求上。Agent 场景下，它对两用或良性安全任务的协助率在所测模型中最高，但对恶意请求的拒绝率也最低。提示注入上与 Opus 5 相当或更好，但更可能遵循用户粘贴进自己提示词中的恶意指令。<span class="src">Executive Summary</span></p>
+  <p>对齐审计上，在几乎所有自动行为指标里，错位行为与配合滥用都少于近期其他 Claude；过度热情或破坏性行动也更少。回退包括：更常遵循用户粘贴文本里的恶意指令、更常接受无法核验的授权声明、在敏感问题上比 Mythos 类模型更回避。<span class="src">Executive Summary</span></p>
+  <p>长上下文部分提到评测可覆盖直至 1M token 窗口<span class="src">§8.10 附近</span>。本短记把它记为评测设置，而不是一张产品规格表，因为卡片没有另给一条清晰的「产品上下文窗口」声明。</p>
+
+</section>
+
+<!-- 04 RSP 结论（只记结论） -->
+<section class="sec" id="rsp">
+  <div class="sec-head"><div class="sec-num">04 · RSP</div><h2>RSP 结论（只记结论）</h2></div>
+  
+  <p>按 Anthropic 的 Responsible Scaling Policy 与 Frontier Compliance Framework：</p>
+  <ul>
+    <li>化学与生物：CB-1，未过 CB-2；部署时采用与 Claude Fable 5 / 5.1 相同的扩大生物防护。<span class="src">Executive Summary</span></li>
+    <li>AI R&D：能力处于或略高于 Claude Mythos 5.1，仍远不能替代其科学家与工程师；内部指标未见持续的、可归因于 AI 的 2× 研发加速。<span class="src">Executive Summary</span></li>
+    <li>网络：作者称未见它能发展新型进攻能力；并写明未发现 critical-severity 越狱。<span class="src">Executive Summary</span></li>
+  </ul>
+  <p>本短记只记录这些判定，不转述 CB 或网络评测的操作层细节。</p>
+
+</section>
+
+<!-- 05 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">05 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  
+  <ul class="limits wide">
+    <li class="key"><b>不是技术报告。</b>参数、架构和训练配方未披露。1M token 出现在长上下文评测设置中，不宜在未核对产品文档的情况下写成官方规格。</li>
+    <li class="key"><b>无防护评测中的 1.5% 与「约一半」。</b>这两条来自执行摘要，条件是关闭额外防护或处于模拟演练；不能直接读成生产环境事故率。</li>
+    <li><b>能力对比依赖 Anthropic 自家家族命名</b>（Opus 5、Fable 5.1、Mythos 5.1），外部基准对照在本短记中未展开。</li>
+    <li><b>本页是短记。</b>原卡很长，本页只压缩执行摘要与 RSP 结论，不是对第 2–8 章的逐节深读。</li>
+  </ul>
+
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 Anthropic《System Card: Claude Opus 5.5》（2026-09-22）的中文短记，不是完整深读。所有数字与判定均来自该官方 PDF 的执行摘要及标明的章节。本页只记录 RSP 结论与摘要中的关键数字，不转述化学、生物或网络方向的操作层评测细节。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

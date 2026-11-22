@@ -44,7 +44,11 @@
 | VLM | [Keye-VL-2.0](./reports/vlm/keye-vl-2.0/) | Keye Team, Kuaishou Group | 2026-06-09 | [arXiv:2606.10651](https://arxiv.org/abs/2606.10651) |
 | VLM（Omni） | [Nemotron 3 Nano Omni](./reports/vlm/nemotron-3-nano-omni/) | NVIDIA | 2026-04-27 | [arXiv:2604.24954](https://arxiv.org/abs/2604.24954) |
 | VLM（统一多模态） | [LongCat-Next](./reports/vlm/longcat-next/) | Meituan LongCat Team | 2026-03-29 | [arXiv:2603.27538](https://arxiv.org/abs/2603.27538) |
+| LLM（短记） | [【短记】Gemini 3 Pro Model Card](./reports/llm/gemini-3-pro-card/) | Google DeepMind | 2025-11（目录取 2025-11-01） | [官方 PDF](https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-3-Pro-Model-Card.pdf) |
+| LLM（短记） | [【短记】GPT-5.5 System Card](./reports/llm/gpt-5.5-card/) | OpenAI | 2026-04-23 | [官方 PDF](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf) |
+| LLM（短记） | [【短记】Claude Opus 5.5 System Card](./reports/llm/claude-opus-5.5-card/) | Anthropic | 2026-09-22 | [官方 PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
+| 图像生成（短记） | [【短记】FLUX.2](./reports/image/flux-2/) | Black Forest Labs | 2025-11-25 | [官方博客](https://bfl.ai/blog/flux-2) · [VAE 博文](https://bfl.ai/techblog/representation-comparison) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |
 | 图像生成 / 编辑 | [Qwen-Image-2.0](./reports/image/qwen-image-2.0/) | Qwen Team | 2026-05-11 | [arXiv:2605.10730](https://arxiv.org/abs/2605.10730) |
 | 图像生成 / 编辑 | [Wan-Image](./reports/image/wan-image/) | Wan Team, Alibaba Group | 2026-04-21 | [arXiv:2604.19858](https://arxiv.org/abs/2604.19858) |

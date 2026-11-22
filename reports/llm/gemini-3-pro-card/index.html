@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】Gemini 3 Pro Model Card · 前沿模型技术报告</title>
+<meta name="description" content="Google DeepMind《Gemini 3 Pro Model Card》中文短记：发布与更新日期、稀疏 MoE、1M/64K 上下文、Deep Think，以及 Frontier Safety Framework 结论。不是完整深读。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 语言模型（系统卡）</div>
+    <h1>【短记】Gemini 3 Pro<span class="sub">Gemini 3 Pro Model Card</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Google DeepMind</b></span>
+      <span>卡片标注发布 <b>2025-11</b>（未给具体日）</span>
+      <span>最后更新 <b>2026-05</b></span>
+      <span>类型 <b>Model Card · 短记</b></span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。材料只有官方《Gemini 3 Pro Model Card》：发布于 2025 年 11 月，最后更新 2026 年 5 月<span class="src">卡片首页</span>。卡片把 Gemini 3 Pro 写成新一代原生多模态稀疏 MoE，输入最长 1M token、输出 64K，并带可选的 Deep Think 模式<span class="src">Model Information</span>。参数量未披露。按 2025 年 9 月版 Frontier Safety Framework 评估，<b>未达到任何 Critical Capability Level</b><span class="src">Frontier Safety</span>。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">Model Card · 短记</span>
+      <span class="badge">稀疏 MoE · 原生多模态</span>
+      <span class="badge">输入 1M / 输出 64K</span>
+      <span class="badge">参数规模：原文未披露</span>
+      <span class="badge">开放权重：未开放（API / 产品分发）</span>
+      <span class="badge">知识截止日期：2025-01</span>
+    </div>
+    <div class="links">
+      <a href="https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-3-Pro-Model-Card.pdf" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方 Model Card PDF</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#what">卡片写了什么</a></li>
+    <li><a href="#safety">安全结论</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自下方所列官方文件；<span class="src">出处</span> 标来源，<span class="src">推算</span> 为本页计算。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">系统卡 / 短记</div><div class="stat-sub">不是技术报告；架构与数据只给定性描述</div><span class="src">卡片首页</span></div>
+    <div class="card stat"><div class="stat-k">发布 / 更新</div><div class="stat-num sm">2025-11 / 2026-05</div><div class="stat-sub">卡片只写月份，未给具体日。本站目录日期取 2025-11-01，并在脚注标明。</div><span class="src">卡片首页</span></div>
+    <div class="card stat"><div class="stat-k">架构</div><div class="stat-num sm">稀疏 MoE Transformer</div><div class="stat-sub">原生支持文本、视觉、音频输入；输出为文本。声明不是先前模型的修改或微调。</div><span class="src">Architecture · Description</span></div>
+    <div class="card stat"><div class="stat-k">上下文</div><div class="stat-num">1M / 64K</div><div class="stat-sub">输入最长 1M token，输出 64K token。</div><span class="src">Inputs / Outputs</span></div>
+    <div class="card stat"><div class="stat-k">参数 / 训练量</div><div class="stat-num sm nd">原文未披露</div><div class="stat-sub">专家数、激活量、预训练 token 均未给。</div><span class="src">—</span></div>
+    <div class="card stat"><div class="stat-k">知识截止</div><div class="stat-num">2025-01</div><div class="stat-sub">卡片写 knowledge cutoff 为 January 2025。</div><span class="src">Known Limitations</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>这是模型卡，不是论文</h3><p>公开的是能力定位、数据类别、分发渠道和安全评估，不是可复现的架构或配方。参数、专家数、数据配比和训练阶段都没有数字。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>原生多模态稀疏 MoE + Deep Think</h3><p>卡片称 Gemini 3 Pro 为稀疏 MoE Transformer，原生多模态；Deep Think 是可选的推理时增强模式，用于更难的解题。家族还包括 Gemini 3 Pro Image、Gemini 3 Flash、Gemini 3.1 系列等，需看各自的卡。<span class="src">Description · Architecture</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>1M 输入、64K 输出，知识截止 2025 年 1 月</h3><p>上下文窗口与截止日是卡片里少数可核对的硬数字。已知局限包括幻觉，以及偶尔的迟缓或超时。<span class="src">Inputs / Outputs · Known Limitations</span></p></div>
+    <div class="card tl"><span class="idx">04</span><h3>FSF：未达到任何 Critical Capability Level</h3><p>按 2025 年 9 月版 Frontier Safety Framework 评估，卡片结论是未达到表中任何 CCL。CBRN 一行写明 Uplift Level 1、CCL not reached。本短记不展开各域操作细节。<span class="src">Frontier Safety</span></p></div>
+    <div class="card tl caveat"><span class="idx">05</span><h3>开发期自动安全评测有一处回退，但作者做了人工复核</h3><p>相对 Gemini 2.5 Pro，Text to Text Safety 自动评测为 −10.4%；Multilingual / Image-to-Text / Tone / Unjustified-refusals 为正。作者称人工复核后，回退 overwhelmingly 是假阳性或非严重内容；Deep Think 模式的安全评估与原评估一致。<span class="src">Training and Development Evaluation Results</span></p></div>
+  </div>
+</section>
+
+<!-- 03 卡片写了什么 -->
+<section class="sec" id="what">
+  <div class="sec-head"><div class="sec-num">03 · WHAT IT COVERS</div><h2>卡片写了什么</h2></div>
+  
+  <p>数据部分只给类别，不给规模：预训练是大规模、跨域、多模态集合，包括公开网页与文档、文本、代码、图像、音频（含语音及其他）和视频；后训练包括指令微调、强化学习和人类偏好数据，并提到可利用多步推理、解题与定理证明数据的 RL 技术。还列出可下载的公开数据集、爬虫、商业授权、按政策与用户控制使用的 Google 产品用户数据、业务或员工产生的数据，以及合成数据。处理手段包括去重、遵守 robots.txt、安全过滤与质量过滤。<span class="src">Model Data</span></p>
+  <p>适用场景写的是 agent 表现、高级编程、长上下文和/或多模态理解、算法开发。分发渠道包括 Gemini App、Google Cloud / Vertex AI、Google AI Studio、Gemini API、Google AI Mode、Google Antigravity；家族中其他模型也可能经 Notebook LM 提供。<span class="src">Benefit and Intended Usage · Distribution</span></p>
+  <p>主要风险被概括为：越狱（相对 Gemini 2.5 Pro 有改进，但仍是未解研究问题），以及多轮对话中可能的退化。<span class="src">卡片安全叙述</span></p>
+
+</section>
+
+<!-- 04 安全结论（只记结论） -->
+<section class="sec" id="safety">
+  <div class="sec-head"><div class="sec-num">04 · SAFETY</div><h2>安全结论（只记结论）</h2></div>
+  
+  <p>卡片单独一节写 Frontier Safety：按 2025 年 9 月版 FSF 评估 Gemini 3 Pro，<b>未达到表中任何 Critical Capability Level</b>。CBRN 一行的判定是 Uplift Level 1、CCL not reached。更细的评测设计与分数请直接看原卡与其引用的 Frontier Safety Framework Report，本短记不转述操作层细节。<span class="src">Frontier Safety</span></p>
+
+</section>
+
+<!-- 05 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">05 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  
+  <ul class="limits wide">
+    <li class="key"><b>发布日期只有月份。</b>卡片写 Model Release: November 2025，Last Updated: May 2026，没有具体日。本站目录为了排序取 2025-11-01，不能把它读成经核对的发布日。</li>
+    <li class="key"><b>几乎没有可复现的技术细节。</b>总参、激活量、专家数、层数、预训练 token、配比和配方均未披露；「不是先前模型的微调」无法从外部核验。</li>
+    <li><b>Text to Text Safety 自动指标回退 10.4%。</b>作者以人工复核解释为假阳性或非严重内容，且称评测集已改进、不可与旧卡直接对比。读者应把这条当作「自动指标与人工结论不一致」，而不是已经消失的问题。</li>
+    <li><b>本页是短记。</b>没有把卡片里的安全政策清单、评测表或家族中其他模型（3 Flash、3.1 等）做成完整深读；那些模型各有自己的卡。</li>
+  </ul>
+
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 Google DeepMind《Gemini 3 Pro Model Card》的中文短记（官方 PDF），不是完整深读。卡片标注发布于 2025 年 11 月、最后更新于 2026 年 5 月。所有数字均来自该卡片正文；本站目录日期 2025-11-01 只为排序，卡片本身未给具体日。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

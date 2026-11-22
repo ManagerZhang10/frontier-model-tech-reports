@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】FLUX.2 · 前沿模型技术报告</title>
+<meta name="description" content="Black Forest Labs FLUX.2 中文短记：仅依据 2025-11-25 官方发布博客与官方 VAE 技术博文，不编造未写出的结构超参。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 图像生成</div>
+    <h1>【短记】FLUX.2<span class="sub">Frontier Visual Intelligence（官方博客 + VAE 技术博文）</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Black Forest Labs</b></span>
+      <span>官方博文日期 <b>2025-11-25</b></span>
+      <span>类型 <b>官方博客 / VAE 博文 · 短记</b></span>
+      <span>没有技术报告 PDF</span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。FLUX.2 没有公开的技术报告 PDF。本页只依据 2025 年 11 月 25 日的官方发布博客与同期官方 VAE 技术博文，不引入第三方转述，也不编造博文没写的结构超参（例如未写明的下采样倍数）。产品家族是 [pro]、[flex]、开放权重的 [dev]（32B）以及博文当时「即将推出」、Apache 2.0 的 [klein]；另有从零重训、Apache 2.0 发布的 FLUX.2 VAE<span class="src">官方博客</span>。架构被写成潜空间流匹配，并把 Mistral-3 24B 视觉语言模型与一个 rectified flow Transformer 耦合在一起<span class="src">官方博客 · VAE 博文 Architecture</span>。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">官方博客 + VAE 博文 · 短记</span>
+      <span class="badge">无技术报告 PDF</span>
+      <span class="badge">[dev] 32B 开放权重</span>
+      <span class="badge">VAE：Apache 2.0</span>
+      <span class="badge">[klein]：博文称即将推出（Apache 2.0，尺寸蒸馏）</span>
+    </div>
+    <div class="links">
+      <a href="https://bfl.ai/blog/flux-2" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方发布博客</a>
+      <a href="https://bfl.ai/techblog/representation-comparison" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方 VAE 技术博文</a>
+      <a href="https://bfl.ai/research/representation-comparison" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>同一 VAE 文的 Research 入口</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#family">产品家族</a></li>
+    <li><a href="#arch">架构与 VAE</a></li>
+    <li><a href="#eval">博文中的数字</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自下方所列官方文件；<span class="src">出处</span> 标来源，<span class="src">推算</span> 为本页计算。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">官方博客 + VAE 博文</div><div class="stat-sub">没有技术报告 PDF；本页不引用第三方评测或后来的产品页</div><span class="src">2025-11-25 两篇官方文</span></div>
+    <div class="card stat"><div class="stat-k">[dev]</div><div class="stat-num">32B 开放权重</div><div class="stat-sub">由 FLUX.2 基座派生；文本生成与多图编辑放在同一个 checkpoint。商业许可需另询。</div><span class="src">官方博客 Available Now</span></div>
+    <div class="card stat"><div class="stat-k">VAE</div><div class="stat-num sm">从零重训，Apache 2.0</div><div class="stat-sub">博客称重训潜空间以同时改善可学习性与质量；权重在 Hugging Face，Apache 2.0</div><span class="src">官方博客</span></div>
+    <div class="card stat"><div class="stat-k">[pro] / [flex]</div><div class="stat-num sm">托管 API</div><div class="stat-sub">[pro] 主打质量与成本；[flex] 可调步数与 guidance，强调文字与细节</div><span class="src">官方博客</span></div>
+    <div class="card stat"><div class="stat-k">[klein]</div><div class="stat-num sm">博文称即将推出</div><div class="stat-sub">Apache 2.0，从基座做尺寸蒸馏。本页不臆测它此后是否已经发布。</div><span class="src">官方博客</span></div>
+    <div class="card stat"><div class="stat-k">编辑 / 参考图</div><div class="stat-num sm">最高 4MP；最多 10 张参考</div><div class="stat-sub">家族各变体都把文生图与多参考编辑放在同一模型里（博客原话）</div><span class="src">官方博客 What's New</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>只有博客，没有技术报告</h3><p>能核对的是产品定位、家族分档、开放情况，以及 VAE 博文里的实验设置与表格。训练数据、完整结构超参和全面基准表都不在这两篇里。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>流匹配 + Mistral-3 24B VLM + rectified flow Transformer</h3><p>博客与 VAE 博文的 Architecture 一节一致：在新的 FLUX.2 VAE 潜空间上做 latent flow matching；VLM 提供世界知识与上下文，Transformer 负责空间关系、材料与构图。VAE 博文还写了 SwiGLU，以及更节省计算的全局调制机制（引 Chen et al. 2025）。<span class="src">官方博客 How It Works · VAE 博文 Architecture</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>VAE 瞄准可学习性—质量—压缩的三难</h3><p>相对 SD-VAE，FLUX.1 把潜空间维度扩大 4 倍并减弱正则，换重建、但可学习性下降；FLUX.2 相对 SD-VAE 扩大 8 倍，并加入语义正则，声称重建与可学习性同时好于 FLUX.1。在为把序列长度对齐到 256 token 的实验配置里（SD / FLUX.1 / FLUX.2 对 latent 做 2×2 patch，RAE 不 patch），SD、FLUX.1、FLUX.2、RAE 每个 token 的通道数分别是 16、64、128、768。<span class="src">VAE 博文 Autoencoders</span></p></div>
+    <div class="card tl"><span class="idx">04</span><h3>ImageNet 重建与 [dev] 人工偏好是博文里可引用的硬数字</h3><p>表 1（ImageNet validation）：FLUX.2 AE 的 LPIPS 0.2668、SSIM 0.9038、PSNR 31.4632、rFID 0.1124，四项都优于文中的 FLUX.1 / SD / RAE。图 3 对 FLUX.2 [dev] 的人工偏好胜率：文生图 66.6%，多参考 63.6%，单参考 59.8%。<span class="src">VAE 博文表 1 · 图 3</span></p></div>
+  </div>
+</section>
+
+<!-- 03 产品家族（以 2025-11-25 博客为准） -->
+<section class="sec" id="family">
+  <div class="sec-head"><div class="sec-num">03 · FAMILY</div><h2>产品家族（以 2025-11-25 博客为准）</h2></div>
+  
+  <p>博客把 FLUX.2 写成面向真实生产工作流：多参考一致性、复杂文字、品牌与排版、产品级光照，以及最高 4MP 的图像编辑。所有变体都在同一模型里做文本编辑与多参考编辑。<span class="src">官方博客</span></p>
+  <ul>
+    <li><b>FLUX.2 [pro]</b>：托管，强调在提示遵循与视觉保真上接近闭源前沿，同时更快、更便宜。<span class="src">Available Now</span></li>
+    <li><b>FLUX.2 [flex]</b>：可调步数与 guidance；博客用 6 / 20 / 50 步的示例说明文字准确率和细节与延迟的折中。<span class="src">Available Now</span></li>
+    <li><b>FLUX.2 [dev]</b>：32B 开放权重，Hugging Face 可下载，并提供参考推理代码；与 NVIDIA、ComfyUI 合作的 fp8 实现可在消费级 GeForce RTX 上跑。也可经多家 API 调用。商业许可需访问其网站。<span class="src">Available Now</span></li>
+    <li><b>FLUX.2 [klein]</b>：博文当时写 coming soon，Apache 2.0，从基座做尺寸蒸馏。本短记不根据 2026 年的后来页面去改写这一条。<span class="src">Available Now</span></li>
+    <li><b>FLUX.2 VAE</b>：新的变分自编码器，Apache 2.0 在 Hugging Face 发布，并配有技术博文。<span class="src">Available Now</span></li>
+  </ul>
+
+</section>
+
+<!-- 04 架构与 VAE（只写官方博文里有的） -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">04 · VAE</div><h2>架构与 VAE（只写官方博文里有的）</h2></div>
+  
+  <p>VAE 博文的主线是可学习性（语义空间是否容易被生成模型学习）、重建质量（LPIPS 等）和压缩率之间的三难。作者在不同自编码器的潜空间里训练设置尽量对齐的 flow matching 模型（DiT-XL、ImageNet、分辨率 256×256、batch 256 等）来比较。<span class="src">VAE 博文 Experiments · Trade-off</span></p>
+  <p>FLUX.1 VAE 被写成：为了满足 Kontext 一类编辑对高保真重建的需求，把信息瓶颈放宽——潜空间维度是 SD-VAE 的 4 倍，并降低正则权重；重建变好，可学习性下降。FLUX.2 VAE 则把维度放到 SD-VAE 的 8 倍，并引入语义正则（文中回顾了与视觉基础模型对齐、REPA 等路线），声称在编辑所需的高保真和可学习性上同时改进。<span class="src">VAE 博文 Autoencoders</span></p>
+  <p>关于通道数：官方原文写的是上述 256 token 对齐配置下「每个 token 的通道数」为 16 / 64 / 128 / 768，同时明确 SD、FLUX.1、FLUX.2 使用 2×2 latent patch、RAE 不 patch。本页按原句转述，不额外反推「未做 patch 时的卷积通道数」，也不编造下采样倍数（博文没有单独给出 f8 / f16 这类说法）。</p>
+  <p>局限一节还说：牺牲重建的 VAE 往往仍然更好学，他们希望继续缩小这个缺口；并提到初步的文生图实验里，一种不依赖外部表征模型（如 DINOv2 / REPA）的替代做法看起来更好，且预告 FLUX.3。这些都是前瞻，不是 FLUX.2 的已发布规格。<span class="src">VAE 博文 Limitations</span></p>
+
+</section>
+
+<!-- 05 博文中可以引用的数字 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">05 · NUMBERS</div><h2>博文中可以引用的数字</h2></div>
+  
+  <p>表 1，ImageNet validation 重建（均值 ±；RAE / SD 的 rFID 括号内为 Yu et al. 2025 原报道）：</p>
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th>模型</th><th>LPIPS ↓</th><th>SSIM ↑</th><th>PSNR ↑</th><th>rFID ↓</th></tr></thead>
+    <tbody>
+      <tr><td>RAE</td><td>1.6737 ± 0.0057</td><td>0.4962 ± 0.0026</td><td>18.8272 ± 0.0429</td><td>0.6107 (0.57)</td></tr>
+      <tr><td>SD</td><td>0.9519 ± 0.0054</td><td>0.6976 ± 0.0121</td><td>25.0520 ± 0.0673</td><td>0.6451 (0.62)</td></tr>
+      <tr><td>FLUX.1</td><td>0.3380 ± 0.0026</td><td>0.8893 ± 0.0058</td><td>31.1312 ± 0.0745</td><td>0.1761</td></tr>
+      <tr><td>FLUX.2</td><td>0.2668 ± 0.0017</td><td>0.9038 ± 0.0049</td><td>31.4632 ± 0.0633</td><td>0.1124</td></tr>
+    </tbody>
+  </table></div>
+  <p class="footnote"><span class="src">VAE 博文表 1</span> 这些是自编码器重建指标，不是 FLUX.2 生成模型在 MS-COCO 等基准上的 FID。</p>
+  <p>图 3：对 FLUX.2 [dev] 与其他开源权重模型的人工偏好评估，三项任务的胜率分别为文生图 66.6%、多参考条件 63.6%、单参考条件 59.8%；作者称三类都最高。对照集与样本量未在摘录的图注里给全，本页不做额外推断。<span class="src">VAE 博文图 3</span></p>
+
+</section>
+
+<!-- 06 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">06 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  
+  <ul class="limits wide">
+    <li class="key"><b>没有技术报告 PDF。</b>训练数据、完整结构超参、全面自动基准和许可正文都不在这两篇官方博文里。本页故意不引用第三方复现或后来的产品页，以免把未核对的数字写进目录。</li>
+    <li class="key"><b>不要把「每 token 通道数」直接写成裸的 VAE 通道数。</b>128 这个数字出现在「256 token 对齐 + 2×2 patch」的实验配置里。相对 SD-VAE「8 倍维度」与「128 channels per token」可以互相印证，但博文没有另写一句「卷积潜空间为 128 通道、下采样为 f×」。未写的就不写。</li>
+    <li><b>[klein] 在博文发布时尚未推出。</b>本短记冻结在 2025-11-25 的官方表述。若后来已经发布，应以当时的官方说明为准，而不是改写这篇短记里的「即将推出」。</li>
+    <li><b>[dev] 的「最强开放权重」是厂商自评</b>（博客与图 3 人工偏好）。图 3 的对照模型名单与评测协议需看原图，本页未转绘。</li>
+    <li><b>本页是短记。</b>没有把官方博文里的示例图或 VAE 博文中的交互式图表搬进站点。</li>
+  </ul>
+
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 Black Forest Labs 官方文章的中文短记，不是完整深读。依据仅为 2025-11-25 的发布博客（https://bfl.ai/blog/flux-2）与官方 VAE 技术博文（https://bfl.ai/techblog/representation-comparison；Research 入口为 https://bfl.ai/research/representation-comparison）。所有数字均来自这两篇原文；未在原文出现的结构超参一律不写。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

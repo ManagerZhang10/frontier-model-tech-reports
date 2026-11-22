@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】GPT-5.5 System Card · 前沿模型技术报告</title>
+<meta name="description" content="OpenAI《GPT-5.5 System Card》中文短记：2026-04-23 发布、04-24 与 08-19 更正，以及 Preparedness 框架下的高阶结论。不是完整深读。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 语言模型（系统卡）</div>
+    <h1>【短记】GPT-5.5<span class="sub">GPT-5.5 System Card</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>OpenAI</b></span>
+      <span>系统卡日期 <b>2026-04-23</b></span>
+      <span>另有更新 <b>2026-04-24</b>、<b>2026-08-19</b></span>
+      <span>类型 <b>System Card · 短记</b></span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。OpenAI 在 2026 年 4 月 23 日发布《GPT-5.5 System Card》，把 GPT-5.5 定位为面向复杂实际工作（写代码、上网研究、分析信息、做文档和表格、跨工具把事做完）的新模型<span class="src">§1</span>。架构、参数和上下文窗口均未披露。按 Preparedness Framework：生物/化学按 High 处理；网络安全为 High、但低于 Critical；AI 自改进没有达到 High 的合理可能<span class="src">§9</span>。卡片随后于 4 月 24 日补充 API 部署的防护说明，并于 8 月 19 日更正一处 pass@4 分数<span class="src">Change log · §1</span>。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">System Card · 短记</span>
+      <span class="badge">参数 / 架构 / 上下文：原文未披露</span>
+      <span class="badge">开放权重：未开放</span>
+      <span class="badge">Preparedness：Bio/Chem High；Cyber High（低于 Critical）</span>
+    </div>
+    <div class="links">
+      <a href="https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方 System Card PDF</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#what">卡片写了什么</a></li>
+    <li><a href="#prep">Preparedness 结论</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自下方所列官方文件；<span class="src">出处</span> 标来源，<span class="src">推算</span> 为本页计算。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">系统卡 / 短记</div><div class="stat-sub">安全与准备度评估为主，不是架构论文</div><span class="src">§1</span></div>
+    <div class="card stat"><div class="stat-k">日期</div><div class="stat-num sm">2026-04-23</div><div class="stat-sub">4 月 24 日补充 API 防护说明；8 月 19 日更正一处分数</div><span class="src">首页 · Change log · §1</span></div>
+    <div class="card stat"><div class="stat-k">架构 / 参数 / 上下文</div><div class="stat-num sm nd">原文未披露</div><div class="stat-sub">卡片未给总参、层数或上下文窗口</div><span class="src">—</span></div>
+    <div class="card stat"><div class="stat-k">训练（定性）</div><div class="stat-num sm">多样数据 + 推理 RL</div><div class="stat-sub">公开网页、第三方合作、用户与训练人员提供或生成的数据；推理模型用 RL 先想再答</div><span class="src">§2</span></div>
+    <div class="card stat"><div class="stat-k">Bio / Chem</div><div class="stat-num sm">按 High 处理</div><div class="stat-sub">沿用 GPT-5.4 Thinking 的处理级别，并启用相应防护</div><span class="src">§9</span></div>
+    <div class="card stat"><div class="stat-k">Cyber / 自改进</div><div class="stat-num sm">High（低于 Critical） / 未到 High</div><div class="stat-sub">卡片写明未达到其 Critical 阈值；自改进与前代一样没有达到 High 的合理可能</div><span class="src">§9</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>面向复杂实际工作，细节很少</h3><p>引言强调更早理解任务、少问引导、更会用工具、会检查并做到做完。训练与数据只有定性描述，没有配方或规模数字。<span class="src">§1 · §2</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>GPT-5.5 Pro 被当作同一底座的并行测试时计算设置</h3><p>卡片一般把 GPT-5.5 的安全结果视为 GPT-5.5 Pro 的强代理；若判断该设置会实质影响风险或防护姿态，会另行评估。除另说明外，结果来自离线评估。发布前做了完整的预部署安全评估与 Preparedness 评估，并收集了近 200 家早期访问合作方的反馈。<span class="src">§1</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>Preparedness：Bio/Chem High，Cyber High 但低于 Critical</h3><p>生物/化学沿用对 GPT-5.4 Thinking 的 High 处理；网络能力相对 5.4 有提升，防护也加强，但作者判断未达到其定义的 Critical 阈值。AI 自改进：最终 checkpoint 评估显示，与前代一样没有达到 High 的合理可能。<span class="src">§9</span></p></div>
+    <div class="card tl caveat"><span class="idx">04</span><h3>8 月 19 日更正了 hard-negative protein binding 的 pass@4</h3><p>更正说明：原先公布的 0.4% 其实是 pass@1；pass@4 应为 1.48%。本短记只记录这处勘误，不展开该评测的方法细节。<span class="src">Change log · 后文勘误段</span></p></div>
+  </div>
+</section>
+
+<!-- 03 卡片写了什么 -->
+<section class="sec" id="what">
+  <div class="sec-head"><div class="sec-num">03 · WHAT IT COVERS</div><h2>卡片写了什么</h2></div>
+  
+  <p>§2 对数据只做类别描述：公开互联网信息、与第三方合作获得的信息，以及用户或人类训练人员/研究人员提供或生成的信息；处理管线包括质量过滤、减少个人信息和安全分类器。推理模型通过强化学习训练，先产生较长的内部思维链再回答。<span class="src">§2</span></p>
+  <p>其后大部是安全评测：不允许内容、视觉、避免误删除数据、计算机使用中的用户确认、越狱与提示注入、健康、幻觉、对齐、偏见，以及 Preparedness。本短记不逐表转载分数，尤其不展开生物或网络方向的操作层评测。</p>
+  <p>4 月 24 日的更新是为 GPT-5.5 与 GPT-5.5 Pro 在 API 中的部署补充防护说明，不是改发布日。<span class="src">§1</span></p>
+
+</section>
+
+<!-- 04 Preparedness 结论（只记结论） -->
+<section class="sec" id="prep">
+  <div class="sec-head"><div class="sec-num">04 · PREPAREDNESS</div><h2>Preparedness 结论（只记结论）</h2></div>
+  
+  <p>OpenAI 的 Preparedness Framework 用于跟踪可能造成严重伤害的前沿能力，并为高能力模型配备其认为足够的防护。对 GPT-5.5，卡片给出的级别是：</p>
+  <ul>
+    <li>生物与化学：按 High 处理，启用相应防护（与 GPT-5.4 Thinking 相同）。<span class="src">§9</span></li>
+    <li>网络安全：按 High 处理，但低于 Critical；相对 5.4 能力有提升，本次发布的网络防护也有加强。<span class="src">§9</span></li>
+    <li>AI 自改进：对最终 checkpoint 的评估表明，与前代一样，没有达到 High 阈值的合理可能。<span class="src">§9</span></li>
+  </ul>
+  <p>卡片也提醒：评测是能力的下界，额外的提示、微调、更长 rollout 或不同脚手架可能引出未见行为。<span class="src">§9.1</span></p>
+
+</section>
+
+<!-- 05 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">05 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  
+  <ul class="limits wide">
+    <li class="key"><b>不是技术报告。</b>架构、参数、上下文窗口、训练规模与配方均未披露，无法从这张卡复原模型本身。</li>
+    <li class="key"><b>发布后改过一处关键分数。</b>2026-08-19 把 hard-negative protein binding 的 pass@4 从 0.4% 更正为 1.48%，并说明 0.4% 实为 pass@1。引用该表时必须用更正后的数字。</li>
+    <li><b>Pro 与基础模型的关系靠作者陈述。</b>「同一底层模型 + 并行测试时计算」无法从卡外独立核对；部分评估会单独做 Pro。</li>
+    <li><b>本页是短记。</b>没有把不允许内容、越狱、健康或 Preparedness 分项评测做成完整深读，也不转述生物/网络方向的操作层细节。</li>
+  </ul>
+
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 OpenAI《GPT-5.5 System Card》（2026-04-23）的中文短记，不是完整深读。卡片于 2026-04-24 补充了 API 部署防护说明，并于 2026-08-19 更正一处 pass@4 分数。所有数字均来自该官方 PDF；本页只记录准备度结论与勘误，不转述操作层评测细节。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>
