@@ -32,4 +32,6 @@
   - [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/)（VLM / Omni）
   - [Kimi K3](./reports/llm/kimi-k3/)（LLM）
   - [DeepSeek-V4](./reports/llm/deepseek-v4/)（LLM）
+  - [DeepSeek-V4.1-Flash](./reports/llm/deepseek-v4.1-flash/)（LLM）
+  - [MiniMax-M2 Series](./reports/llm/minimax-m2/)（LLM）
 - 后续批次将补上其余已有候选（包括其余 LLM / VLM 技术报告的 HTML 重做）。

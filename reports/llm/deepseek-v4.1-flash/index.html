@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek-V4.1-Flash 中文深读 · 每 token 890 字节全局 KV 的多模态 MoE | 前沿模型技术报告</title>
+<meta name="description" content="DeepSeek arXiv 2609.19969 中文深读：552B 骨干 + 196B Engram 的多模态 MoE，Causal Encoder-Decoder 让 prefill 只激活 8B、decode 激活 16B；CSA2 跨层 KV 复用 + FP4 KV 把全局 KV 压到 890 bytes/token，SWA Bounded Replay 把持久化 KV 压到 V4-Flash 的约 1/8。45T token 多模态预训练，文本:多模态 = 7:1。附数据构建、训练配方、评测口径，以及对图像编辑数据 / 评测 / caption 的启示。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+<script>try{var t=localStorage.getItem("ftr-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<style>
+/* page-specific: layer strip, LR timeline, small helpers */
+.archsvg .t { font: 700 13px var(--f-body); fill: var(--ink); }
+.archsvg .s { font: 500 11px var(--f-body); fill: var(--muted); }
+.archsvg .m { font: 600 10.5px var(--f-mono); fill: var(--accent-ink); }
+.archsvg .w { font: 600 10.5px var(--f-mono); fill: var(--warm); }
+.archsvg .ln { stroke: var(--muted); stroke-width: 1.3; fill: none; }
+.archsvg .ln-acc { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+.archsvg .ln-warm { stroke: var(--warm); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.archsvg .ah { fill: var(--muted); }
+.archsvg .ah-acc { fill: var(--accent); }
+.archsvg .c-swa { fill: var(--bar-other); }
+.archsvg .c-full { fill: var(--accent); }
+.archsvg .c-reidx { fill: var(--warm); }
+.archsvg .c-reuse { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 45%, var(--line)); stroke-width: 1; }
+.archsvg .eng { fill: var(--good); }
+.archsvg .grpline { stroke: var(--line); stroke-width: 1; }
+.archsvg .band { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 40%, var(--line)); stroke-width: 1; }
+.archsvg .band2 { fill: var(--warm-soft); stroke: color-mix(in srgb, var(--warm) 40%, var(--line)); stroke-width: 1; }
+.archsvg .band3 { fill: var(--bg-accent); stroke: var(--line); stroke-width: 1; }
+.archsvg .band4 { fill: var(--good-soft); stroke: color-mix(in srgb, var(--good) 40%, var(--line)); stroke-width: 1; }
+.archsvg .grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
+.layer-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .82rem; color: var(--muted); margin-top: 6px; }
+.layer-legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
+.layer-legend .ls::before { background: var(--bar-other); }
+.layer-legend .lf::before { background: var(--accent); }
+.layer-legend .lr::before { background: var(--warm); }
+.layer-legend .lu::before { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.layer-legend .le::before { background: var(--good); border-radius: 50%; width: 9px; height: 9px; vertical-align: 0; }
+table.txt th, table.txt td { text-align: left; white-space: normal; vertical-align: top; }
+table.txt td:first-child { white-space: nowrap; font-weight: 600; }
+table.txt { min-width: 680px; }
+.flow .stage p { font-size: .84rem; line-height: 1.55; margin: .4rem 0 0; color: var(--ink-2); }
+.algo { font: 500 .8rem/1.7 var(--f-mono); background: var(--bg-accent); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: 10px 0; }
+.rd { font: 600 .68rem/1.5 var(--f-mono); padding: 0 .45em; border-radius: 6px; background: var(--bg-accent); color: var(--muted); border: 1px dashed var(--line); margin-left: 3px; white-space: nowrap; }
+.mini-h { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 26px 0 8px; }
+.mod ul { font-size: .92rem; line-height: 1.65; padding-left: 1.1em; margin: .3rem 0 0; }
+.mod li { margin: .15rem 0; }
+.mod p { font-size: .92rem; }
+.chart-legend .l4::before { background: var(--bar-other2); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero" id="top">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文深读 · 语言模型（多模态 MoE）</div>
+    <h1>DeepSeek-V4.1-Flash<span class="sub">Pushing the Limits of KV Cache Compression：全局 KV 压到每 token 890 字节的多模态 MoE</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>DeepSeek-AI</b></span>
+      <span>发布 <b>2026-09-17</b>（arXiv v1）</span>
+      <span>arXiv <b>2609.19969</b></span>
+      <span>前代 <b>DeepSeek-V4-Flash</b></span>
+    </div>
+    <p class="lede">一句话：瞄准「输入重」的长程 Agent 负载，把瓶颈从<b>算力</b>挪到 <b>KV 存储与搬运</b>上来优化。Causal Encoder-Decoder（CED）让 prefill 只激活 <b>8B</b>、decode 激活 <b>16B</b><span class="src">摘要 · §2.1</span>；CSA2 跨层共享 KV + FP4 KV 把全局 KV 压到 <b>890 bytes/token</b>，约为 V4-Flash 的 1/4<span class="src">摘要 · 图 1(b)</span>；SWA Bounded Replay 让持久化 KV 只剩 V4-Flash 的约 <b>1/8</b><span class="src">摘要 · §3.2.1</span>。在 45T token 多模态语料上预训练<span class="src">§4.2.2</span>，后训练没有算法创新，涨分几乎全来自数据与环境流水线<span class="src">§5.1</span>。</p>
+    <div class="badges">
+      <span class="badge acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>开放权重（摘要给出 HF 地址）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>许可证：原文未披露</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>552B 骨干 + 196B Engram · 激活 8B（prefill）/ 16B（decode）</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 17-5-5-8 7"/></svg>图文输入 · 文本输出 · 1M 上下文</span>
+      <span class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>LLM · 多模态 MoE · Agent</span>
+    </div>
+    <div class="links">
+      <a href="https://arxiv.org/abs/2609.19969" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>arXiv 2609.19969</a>
+      <a href="https://arxiv.org/pdf/2609.19969" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>PDF</a>
+      <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/></svg>Hugging Face 权重</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>返回站点首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构 · CED + CSA2</a></li>
+    <li><a href="#data">数据</a></li>
+    <li><a href="#train">训练配方</a></li>
+    <li><a href="#eval">评测</a></li>
+    <li><a href="#novel">新在哪</a></li>
+    <li><a href="#impl">对图像编辑的启示</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+    <li><a href="#index">图表索引</a></li>
+  </ol>
+  <div class="toc-foot">数字均出自 arXiv v1 原文；<span class="src calc">推算</span> 为本页自行计算。</div>
+</nav>
+
+<main>
+
+<!-- ============ 1 速览 ============ -->
+<section class="sec" id="glance">
+  <div class="sec-head">
+    <div class="sec-num">01 · AT A GLANCE</div>
+    <h2>速览</h2>
+    <p class="sec-intro">比 V4-Flash 大（284B → 552B 骨干），但 KV 小 4 倍、prefill 激活更少。</p>
+  </div>
+  <div class="glance wide">
+    <div class="card stat"><span class="stat-k">参数规模</span><span class="stat-num sm">552B 骨干 + 196B Engram</span><span class="stat-sub">Engram 均分在两个模块里</span><span class="src">§2.1 · §2.4.2</span></div>
+    <div class="card stat"><span class="stat-k">每 token 激活</span><span class="stat-num sm">8B prefill / 16B decode</span><span class="stat-sub">V4-Flash 13B，V4-Pro 49B</span><span class="src">§2.1 · 表 1</span></div>
+    <div class="card stat"><span class="stat-k">骨干结构</span><span class="stat-num sm">40 层 = 20 enc + 20 dec</span><span class="stat-sub">hidden 5120；全部层用 DeepSeekMoE</span><span class="src">§4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">MoE</span><span class="stat-num sm">1 共享 + 384 路由，选 6</span><span class="stat-sub">每专家中间维 2304</span><span class="src">§4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">全局 KV（常驻 HBM）</span><span class="stat-num">890 B/token</span><span class="stat-sub">V4-Flash 3,514；约 1/4，较 V1 小 437 倍</span><span class="src">摘要 · 图 1(b)</span></div>
+    <div class="card stat"><span class="stat-k">持久化 KV（SSD / 主存）</span><span class="stat-num sm">≈ 1/8 V4-Flash</span><span class="stat-sub">不再持久化 SWA KV × 全局 KV 降到 1/4</span><span class="src">§3.2.1</span></div>
+    <div class="card stat"><span class="stat-k">上下文</span><span class="stat-num">1M</span><span class="stat-sub">64K 起训稀疏注意力，34T token 处扩到 1M</span><span class="src">§4.2.2</span></div>
+    <div class="card stat"><span class="stat-k">预训练语料</span><span class="stat-num sm">45T token · 文本:多模态 = 7:1</span><span class="stat-sub">7:1 是按 token 计的配比</span><span class="src">§4.1 · §4.2.2</span></div>
+    <div class="card stat"><span class="stat-k">视觉编码器</span><span class="stat-num sm">自研 DeepSeek-ViT</span><span class="stat-sub">32 层、patch 14、3×3 pixel-unshuffle，最高约 1344×1344</span><span class="src">§2.1.1 · §4.2.1</span></div>
+    <div class="card stat"><span class="stat-k">后训练</span><span class="stat-num sm">SFT → RL → OPD</span><span class="stat-sub">OPD 用超过 40 个教师模型；无算法改动</span><span class="src">§5.1 · §5.2.4</span></div>
+    <div class="card stat"><span class="stat-k">代表成绩（Max 档）</span><span class="stat-num sm">DeepSWE 74.2 · TB 2.1 90.6</span><span class="stat-sub">Opus-5 分别为 74.0 / 89.1</span><span class="src">表 3</span></div>
+    <div class="card stat"><span class="stat-k">版本</span><span class="stat-num sm">v1 · 2026-09-17</span><span class="stat-sub">本页依据的 PDF 即 v1（首页水印 2609.19969v1）</span><span class="src">首页</span></div>
+  </div>
+</section>
+
+<!-- ============ 2 TL;DR ============ -->
+<section class="sec" id="tldr">
+  <div class="sec-head">
+    <div class="sec-num">02 · TL;DR</div>
+    <h2>五条要点</h2>
+  </div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>KV 三层压缩：层、精度、部署</h3><p>CSA2 让多层共享同一份全局 KV 和 indexer K，主 KV 用 FP4 存，两者合起来把全局 KV 压到 890 B/token（V4-Flash 3,514）<span class="src">§1 · 图 1(b)</span>。部署侧不再把 SWA KV 写进 SSD 持久缓存，miss 时只重放最近 n<sub>win</sub>=128 个 token 近似重建，持久化 KV 降到约 1/8<span class="src">§3.2 · §4.2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">02</span><h3>CED：prefill 只跑一半层</h3><p>后 20 层（decoder）的全局 KV 直接由第 20 层隐状态投影得到，prefill 只需跑 encoder，计算从 O(NL) 降到约 O(NL/2)<span class="src">§2.2</span>。于是 prefill 激活 8B、decode 激活 16B，照顾工具调用多、prefill 频繁的 Agent 场景<span class="src">§2.1</span>。</p></div>
+    <div class="card tl"><span class="idx">03</span><h3>多模态从预训练第一天加入</h3><p>45T token 多模态语料，文本:多模态 = 7:1<span class="src">§4.1</span>；稀疏注意力在 64K 序列上从头训，没有稠密 warm-up<span class="src">§1 · §4.2.2</span>。ViT 先单独训：47B 对 alt-text 图文做 SigLIP 对比学习，再接 4B MoE LLM 在 236B token 上做自回归微调<span class="src">§4.2.2</span>。</p></div>
+    <div class="card tl"><span class="idx">04</span><h3>后训练：配方照旧，数据和环境是全部变量</h3><p>SFT → RL → OPD，「没有超出既有做法的算法修改」<span class="src">§5.1</span>；功夫花在任务合成、Agent 环境自动构建和百万级并发沙箱上<span class="src">§5.1.1 · §5.1.3</span>。另加可控推理强度 b∈[1,100]，API 的 max / high / low 对应 100 / 75 / 50<span class="src">表 2</span>。</p></div>
+    <div class="card tl"><span class="idx">05</span><h3>常规 Agent 榜追平闭源，难题仍有差距</h3><p>DeepSWE v1.1 74.2（Opus-5 74.0）、Terminal-Bench 2.1 90.6（89.1）、Codeforces 3471（V4-Pro 3348）<span class="src">表 3</span>；但 Terminal-Bench 4.0 只有 31.2，Opus-5 是 51.8；三个视觉 Agent 基准都低于 Opus-5<span class="src">表 3</span>。</p></div>
+    <div class="card tl caveat"><span class="idx">!</span><h3>读之前先知道</h3><p>架构改动（CED、Bounded Replay、FP4、Single-Pass mHC）都只说「退化可忽略」，没有给消融数字；数据除 7:1 外没有配比；许可证未写；结论里出现了表 3 没有的对比模型（见 <a href="#limits">局限</a>）。</p></div>
+  </div>
+</section>
+
+<!-- ============ 3 架构 ============ -->
+<section class="sec" id="arch">
+  <div class="sec-head">
+    <div class="sec-num">03 · ARCHITECTURE</div>
+    <h2>架构：Causal Encoder-Decoder + 纯 CSA2</h2>
+    <p class="sec-intro">图文输入、文本自回归输出。语言骨干 40 层因果 Transformer，前 2 层只有 SWA，其余每层「全局注意力（CSA2）+ SWA」并行<span class="src">§2.1</span>。</p>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig3.jpg" alt="DeepSeek-V4.1-Flash 总体架构：左侧 Causal Encoder 由 SWA、CSA2(2, Full)、CSA2(2, Reuse) 层组成，右侧 Decoder 由 CSA2(1, Full/Reindex/Reuse) 层组成，底部为文本与视觉嵌入、Engram，顶部 DSpark" loading="lazy"></div>
+    <figcaption><b>总体架构。</b>40 层网络分为各 20 层的 causal encoder 与 decoder；前馈层全部是标准 DeepSeekMoE。encoder 前两层用 SWA，其余用 CSA2(ratio, mode)：ratio 为压缩率，mode 为 Full / Reindex / Reuse。另含 Single-Pass mHC、Engram、DSpark 与 Hierarchical Sparse Indexer。<span class="from">来源：论文图 3</span></figcaption>
+  </figure>
+
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 880 210" role="img" aria-label="40 层逐层模式排布示意">
+      <defs>
+        <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah-acc" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <text class="t" x="20" y="22">Causal Encoder · 第 0–19 层</text>
+      <text class="s" x="20" y="38">CSA2 压缩率 m = 2 · 3 组 ×（1 Full + 5 Reuse）</text>
+      <text class="t" x="460" y="22">Decoder · 第 20–39 层</text>
+      <text class="s" x="460" y="38">CSA2 压缩率 m = 1 · 首组 Full+3 Reuse，其余 4 组 Reindex+3 Reuse</text>
+      <!-- encoder cells: x = 20 + i*20 -->
+      <rect class="c-swa" x="20" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-swa" x="40" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-full" x="60" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="80" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="100" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="120" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="140" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="160" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-full" x="180" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="200" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="220" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="240" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="260" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="280" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-full" x="300" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="320" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="340" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="360" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="380" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="400" y="60" width="18" height="44" rx="3"/>
+      <!-- decoder cells: x = 460 + j*20 -->
+      <rect class="c-full" x="460" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="480" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="500" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="520" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reidx" x="540" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="560" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="580" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="600" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reidx" x="620" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="640" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="660" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="680" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reidx" x="700" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="720" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="740" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="760" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reidx" x="780" y="60" width="18" height="44" rx="3"/>
+      <rect class="c-reuse" x="800" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="820" y="60" width="18" height="44" rx="3"/><rect class="c-reuse" x="840" y="60" width="18" height="44" rx="3"/>
+      <!-- engram markers at layer 1 and 14 -->
+      <circle class="eng" cx="49" cy="116" r="4.5"/><circle class="eng" cx="309" cy="116" r="4.5"/>
+      <text class="s" x="49" y="134" text-anchor="middle">L1</text><text class="s" x="309" y="134" text-anchor="middle">L14</text>
+      <text class="s" x="29" y="54" text-anchor="middle">0</text><text class="s" x="409" y="54" text-anchor="middle">19</text>
+      <text class="s" x="469" y="54" text-anchor="middle">20</text><text class="s" x="849" y="54" text-anchor="middle">39</text>
+      <!-- H(L/2) -> decoder KV -->
+      <path class="ln-acc" d="M418 82 C438 82 438 82 456 82" marker-end="url(#aha)"/>
+      <text class="m" x="438" y="150" text-anchor="middle">H(L/2)</text>
+      <path class="ln" d="M438 140 V108"/>
+      <!-- HSI candidate pool -->
+      <path class="ln-warm" d="M469 108 C469 160 549 160 549 108"/>
+      <path class="ln-warm" d="M469 108 C469 172 629 172 629 108"/>
+      <path class="ln-warm" d="M469 108 C469 184 789 184 789 108"/>
+      <text class="w" x="650" y="200" text-anchor="middle">HSI：第 20 层建候选池，Reindex 层只在池内选 Top-512</text>
+      <text class="s" x="150" y="160">● Engram 模块（第 1、14 层）</text>
+      <text class="s" x="150" y="178">Decoder 全局 KV 由第 20 层输出 H(L/2) 投影</text>
+    </svg>
+    <div class="layer-legend"><span class="ls">只有 SWA</span><span class="lf">Full：自算全局 KV + 索引</span><span class="lr">Reindex：复用 KV，重新选 Top-K</span><span class="lu">Reuse：KV 与 Top-K 都复用</span><span class="le">Engram</span></div>
+    <p class="cap"><b>示意</b>：逐层模式按 §4.2.1 的文字配置画出，与图 3 一致；Engram 层位按 §2.4.2（零起编号）。所有层都各自计算 Q 和 SWA KV<span class="src">§2.3.1</span>。由此只有 4 层（encoder 3 层 + decoder 1 层）自产全局 KV，4 层 Reindex 重新打分，其余 30 层直接复用<span class="src calc">推算</span>。虚线只示意「候选池由第一个 Full 层构建、供后续 Reindex 层使用」<span class="src">§2.3.2</span>，不代表具体张量流。</p>
+  </div>
+
+  <h3 class="prose">3.1 相对 DeepSeek-V4-Flash 改了什么</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>部件</th><th>V4-Flash</th><th>V4.1-Flash</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>规模</td><td>284B 骨干 / 13B 激活</td><td>552B 骨干 + 196B Engram / 8B（prefill）· 16B（decode）</td><td><span class="src">表 1 · §2.1</span></td></tr>
+        <tr><td>模态</td><td>文本</td><td>原生多模态（图像 + 文本输入），预训练第一天加入</td><td><span class="src">§2.1 · §4.3.2</span></td></tr>
+        <tr><td>层组织</td><td>每层自产 KV</td><td>CED：decoder 全局 KV 由第 L/2 层隐状态按层投影；SWA 仍逐层计算</td><td><span class="src">§2.2 式 (1)</span></td></tr>
+        <tr><td>全局注意力</td><td>CSA 与 HCA 混合</td><td>纯 CSA2：跨层共享主 KV / indexer K，可复用 Top-K；压缩器去掉 2m 重叠窗口和绝对位置编码；indexer K 由主 KV 投影得到</td><td><span class="src">§1 · §2.3</span></td></tr>
+        <tr><td>decoder 索引</td><td>—</td><td>Hierarchical Sparse Indexer：最多 2,048 块 × 8 位置 = 16,384 候选</td><td><span class="src">§2.3.2 · §4.2.1</span></td></tr>
+        <tr><td>主 KV 精度</td><td>FP8</td><td>FP4（E2M1 + 每 16 通道一个 E4M3 scale），SWA KV 仍 FP8</td><td><span class="src">§2.4.4</span></td></tr>
+        <tr><td>mHC</td><td>多 pass，三个 kernel</td><td>Single-Pass mHC + Mega-mHC kernel，激活读写减半</td><td><span class="src">§2.4.1</span></td></tr>
+        <tr><td>条件记忆</td><td>—</td><td>Engram（去掉短因果卷积）</td><td><span class="src">§2.4.2</span></td></tr>
+        <tr><td>多 token</td><td>MTP 与骨干联合预训练（V3 起）</td><td>预训练不带 MTP；骨干训完后单独训 DSpark 做投机解码</td><td><span class="src">§2.1 · §2.4.3</span></td></tr>
+        <tr><td>SWA 持久化</td><td>SWA KV 约占持久缓存一半；精确重建需重放 L×n<sub>win</sub></td><td>SWA KV 移出持久缓存；Bounded Replay 只重放 n<sub>win</sub> 个 token</td><td><span class="src">§3.2.1 · §3.2.2</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">3.2 两张原图：CSA2 三种模式与分层索引</h3>
+  <div class="grid2 wide">
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig4.jpg" alt="CSA2 的 Full、Reindex、Reuse 三种模式：绿色为本层计算，黄色为复用的主 KV 与 indexer K，红色为复用的 Top-K 索引" loading="lazy"></div>
+      <figcaption><b>CSA2 三种模式。</b>绿：本层计算；黄：复用最近一个 Full 层的主 KV 与 indexer K；红：复用最近一个产出索引层（Full 或 Reindex）的 Top-K。三种模式都在本层计算 main Q 与 SWA KV。<span class="from">来源：论文图 4</span></figcaption>
+    </figure>
+    <figure class="fig card" style="margin:0">
+      <div class="img-pad"><img src="figures/fig5.jpg" alt="Hierarchical Sparse Indexer：Full 层在全位置打分并选块构建共享候选池，Reindex 层只在候选位置打分选 Top-512" loading="lazy"></div>
+      <figcaption><b>Hierarchical Sparse Indexer。</b>decoder 第一个 Full 层在全部位置上选 Top-512，同时按块最大分数挑块，组成共享候选池；后续 Reindex 层只在池内打分、各自选 Top-512。<span class="from">来源：论文图 5</span></figcaption>
+    </figure>
+  </div>
+
+  <h3 class="prose">3.3 部件逐个看</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>CED：借 YOCO 的思路，SWA 不共享 <span class="tag">§2.2</span></h4>
+<div class="algo"># decoder 层 l &gt; L/2 的全局 KV 与压缩权重
+C_l = H(L/2) · W_l^KV ,  Z_l = H(L/2) · W_l^Z
+# prefill 复杂度（N ≫ n_win）
+O(N·L)  →  O(N·L/2 + n_win·L/2) ≈ O(N·L/2)</div>
+      <ul>
+        <li>与 YOCO 的区别：每个 decoder 层用自己的投影权重，且 SWA 的 KV 仍按本层隐状态逐层算，增加局部 KV 的计算深度<span class="src">§2.2</span>。</li>
+        <li>代价是 decoder 的 SWA KV 要额外重放 n<sub>win</sub>×L/2 个 token；用 Decoder SWA Bounded Replay 只重放最后 n<sub>win</sub> 个<span class="src">§2.2 · §3.2.2</span>。</li>
+        <li>「与基线性能相当」只有文字，<span class="nd">无对照数字</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>CSA2：把「共享缓存」和「复用索引」拆开 <span class="tag">§2.3</span></h4>
+      <ul>
+        <li>KV 成本拆成三个可相乘的维度：条目大小（GQA / MLA）、序列维（每 m 个 token 压成一条）、层维（跨层复用）。作者认为已有方法都没同时覆盖三者<span class="src">§2.3</span>。</li>
+        <li>Full：自算主 KV、indexer Q，indexer K 由主 KV 投影，选新 Top-K。Reindex：复用 KV 与 indexer K，用自己的 indexer Q 重选。Reuse：KV 和 Top-K 都复用，不算 indexer<span class="src">§2.3.1</span>。</li>
+        <li>配置：indexer 32 头 × 128 维；attention top-k = 512；64 个 query 头、头维 512、query 压缩维 1280；SWA 窗口 n<sub>win</sub> = 128<span class="src">§4.2.1</span>。</li>
+        <li>Reuse 层推理只需 prefill 15 个 / decode 11 个 kernel<span class="src">§3.2</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Hierarchical Sparse Indexer <span class="tag">§2.3.2</span></h4>
+      <ul>
+        <li>只用于 decoder。第一个 Full 层扫完整可见范围，再以块内最大分数选块；例：2,048 块 × 8 位置 = 16,384 候选<span class="src">§2.3.2</span>。</li>
+        <li>候选池大小固定时，后续 indexer 每个 query 的打分量与上下文长度无关（线性 → 常数）。</li>
+        <li><b>训练感知</b>：在后训练阶段引入，训练与推理用同样的候选限制<span class="src">§2.3.2</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>FP4 主 KV：为什么可以不要全局 scale <span class="tag">§2.4.4</span></h4>
+      <ul>
+        <li>格式：E2M1，每 16 通道一个 E4M3 scale，参考 NVFP4 但去掉二级全局 scale；可表示到 448 × 6 = 2688。</li>
+        <li>上界论证：RMSNorm 权重最大约 1，512 通道 latent 的 L2 范数至多约 √512，RoPE 保范数，单通道绝对值上界约 22.6；训练中实测最大约 10。</li>
+        <li>在 RoPE 之后量化（之前量化只有微小提升，还会增加解码开销）；后训练阶段做 QAT。相对 V4 的 FP8 主 KV，存储近乎减半。</li>
+        <li>索引侧沿用 V4 的 MXFP4 QAT（为跨硬件兼容，尽管别的格式在实验里更准）。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Single-Pass mHC <span class="tag">§2.4.1</span></h4>
+      <ul>
+        <li>把输入混合系数整体后移一层：第 l 块用 A<sub>l−1</sub> 而不是 A<sub>l</sub>，去掉「等全维归约完才能混合」的依赖。</li>
+        <li>激活读写：V4 多 pass 实现 (4n+4)d，理论下界 (2n+2)d；Mega-mHC 达到下界，即减半。</li>
+        <li>预训练仍用多 kernel 实现，只在部署时融合；「性能退化可忽略」<span class="nd">无数字</span>。配置：扩展因子 4，Sinkhorn-Knopp 20 次<span class="src">§4.2.1</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>Engram · DSpark · 视觉通路 <span class="tag">§2.1.1 · §2.4.2 · §2.4.3</span></h4>
+      <ul>
+        <li><b>Engram</b>：196B 参数分两个模块，放在第 1、14 层；N-gram 阶 {2,3,4}，8 个哈希头，每阶嵌入总维 2048，每头约 16M 条表项（取不同素数）；表与 KV 投影用 FP8；推理时可从主存 RDMA 预取。</li>
+        <li><b>DSpark</b>：3 个 Transformer 块、128 token 滑窗，一次前向出 5 个草稿位置；置信度头 + 吞吐曲线动态决定验证长度。骨干冻结单独训一段，后训练中继续训但不回传梯度。</li>
+        <li><b>视觉</b>：ViT 用 2D-RoPE、线性 patch embedding（兼容 Muon）、RMSNorm、SwiGLU；32 层、hidden 1024、16 头、patch 14；3×3 pixel-unshuffle 把视觉 token 减 9 倍，再经 2 层 MLP（hidden 5120）投影<span class="src">§4.2.1</span>。1344×1344 输入约 96×96 = 9,216 个 patch → 1,024 个视觉 token<span class="src calc">推算</span>。</li>
+        <li><b>多模态负载均衡</b>：无辅助损失负载均衡对图像和文本各维护一套专家偏置，各自按本模态负载更新<span class="src">§2.1.1</span>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img style="max-width:760px;margin:0 auto;display:block" src="figures/fig2.jpg" alt="几代 DeepSeek 模型的单 token Decode FLOPs 随上下文长度变化，V4.1-Flash 曲线几乎平坦" loading="lazy"></div>
+    <figcaption><b>单 token Decode FLOPs 随上下文长度。</b>按精度加权（BF16 / FP8 / FP4 记 1 / 0.5 / 0.25）。正文：上下文从 4K 拉到 1M（256 倍），V4.1-Flash 的 Decode FLOPs 只增加 1/4，增幅明显小于 V4-Flash<span class="src">§1</span>。<span class="from">来源：论文图 2（p.5）</span></figcaption>
+  </figure>
+</section>
+
+<!-- ============ 4 数据 ============ -->
+<section class="sec" id="data">
+  <div class="sec-head">
+    <div class="sec-num">04 · DATA</div>
+    <h2>数据：清洗流程写得细，数量只给了几个</h2>
+    <p class="sec-intro">原文唯一的比例是「文本 : 多模态 = 7:1（按 token）」，下面只画这一条。其他子集都没有比例，用「已披露规模」表列出，未给的标明<span class="nd">原文未披露</span>。</p>
+  </div>
+
+  <h3 class="prose">4.1 唯一给出的配比</h3>
+  <div class="card wide" style="padding:14px 18px">
+    <div class="ratio">
+      <div class="rlab"><span><b>预训练语料（合计 45T token）</b> <span class="src">§4.1 · §4.2.2</span></span><span>文本:多模态 = 7:1 → 87.5% : 12.5% <span class="src calc">推算</span></span></div>
+      <div class="rbar"><span class="a" style="width:87.5%">纯文本 · 7</span><span class="b" style="width:12.5%">多模态 · 1</span></div>
+    </div>
+    <p class="tbl-note" style="margin:8px 0 0">这是去重合并<b>之后</b>的配比：文本和多模态两条流水线分开处理，重叠样本用多模态版本替换纯文本版本，epoch 数取两者中较大者<span class="src">§4.1</span>。45T × 1/8 ≈ 5.6T 多模态 token <span class="src calc">推算</span>（假设 7:1 指全部 45T，原文未明说）。</p>
+  </div>
+
+  <h3 class="prose">4.2 已披露规模一览</h3>
+  <div class="tbl-wrap wide">
+    <table class="txt">
+      <thead><tr><th>数据</th><th>已披露内容</th><th>规模</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="4">预训练（语言骨干）</td></tr>
+        <tr><td>总量</td><td>多模态语料，训练全程无不稳定</td><td>45T token</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>文本 / 多模态</td><td>合并后按 token 计</td><td>7 : 1</td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>文本子集</td><td>过滤低信息量的模型生成内容；新增新开源仓库、commit、库与框架代码</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>图文对</td><td>网页图片 + alt text，相关性阈值过滤，按图像语义去重</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>图文交错</td><td>主要来自网页与 PDF，分级过滤 + SmolVLM 严格打分</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>领域数据</td><td>grounding / pointing、OCR、长尾知识；图像-代码对、computer-use 轨迹</td><td><span class="nd">原文未披露</span></td><td><span class="src">§4.1</span></td></tr>
+        <tr><td>打包</td><td>改进 best-fit packing；超长文档混合前确定性预切分</td><td>padding 率 ≤ 10<sup>−4</sup></td><td><span class="src">§4.1</span></td></tr>
+        <tr class="grp"><td colspan="4">视觉编码器（DeepSeek-ViT，单独训练）</td></tr>
+        <tr><td>对比预训练</td><td>SigLIP sigmoid 损失，alt-text 来源，最大 224×224（保比例缩小）</td><td>约 47B 图文对</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr><td>自回归微调</td><td>接 4B MoE LLM，图像 caption、alt text、图表、OCR；分辨率 544–1344</td><td>236B token</td><td><span class="src">§4.2.2</span></td></tr>
+        <tr class="grp"><td colspan="4">后训练</td></tr>
+        <tr><td>SFT 数据</td><td>—</td><td><span class="nd">原文未披露</span></td><td><span class="src">§5.1</span></td></tr>
+        <tr><td>RL 任务 / 环境</td><td>通用 Agent、编码 Agent 两条生产线（见 4.4）</td><td>任务数<span class="nd">原文未披露</span>；沙箱「数百万并发」</td><td><span class="src">§5.1.1 · §5.1.3</span></td></tr>
+        <tr><td>OPD</td><td>全词表 OPD，覆盖所有领域</td><td>超过 40 个教师模型</td><td><span class="src">§5.2.4</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="prose">4.3 多模态与文本清洗流水线</h3>
+  <div class="legend-dots wide"><span>来源</span><span class="m">清洗 / 打分</span><span class="o">产出与回收</span></div>
+  <div class="pipe wide">
+    <div class="pipe-head"><span></span><span>来源</span><span>清洗 / 打分</span><span>产出与回收</span></div>
+    <div class="pipe-row"><span class="lbl">爬虫纠偏</span>
+      <span class="chip">早期发现爬虫系统偏向文字为主的网页</span>
+      <span class="chip m">从 Common Crawl 重新 bootstrap，补多模态来源覆盖</span>
+      <span class="chip o">更多含图网页进入后续各流水线<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">图文对</span>
+      <span class="chip">网页图片 + alt text</span>
+      <span class="chip m">图文相关性阈值过滤；按<b>图像语义</b>去重</span>
+      <span class="chip o">图文对子集；不做大规模合成，「优先清洗和使用原生形态数据」<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">图文交错</span>
+      <span class="chip">网页、PDF</span>
+      <span class="chip m">按成本递增分级：取图前先做启发式 / 统计过滤、去重、质量模型选文档 → 拼成图文序列后再做<b>图像感知</b>的过滤与去重 → SmolVLM 严格质量打分</span>
+      <span class="chip o">高质量交错数据；被筛掉的文档部分经筛选重组<b>回收为图文对</b><span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">领域数据</span>
+      <span class="chip">补网页数据的天然短板</span>
+      <span class="chip m">grounding / pointing、OCR、长尾知识专门数据集</span>
+      <span class="chip o">另收大量图像-代码对与 computer-use 轨迹，用于多模态 Agent 理解<span class="src">§4.1</span></span></div>
+    <div class="pipe-row"><span class="lbl">文本</span>
+      <span class="chip">多语料；新增近期代码</span>
+      <span class="chip m">用参数 × 数据的 scaling ladder 指导大规模训练；更多领域专家设计细粒度质量维度</span>
+      <span class="chip o">过滤弱模型输出和低质机翻，视作「隐式重复」；探索 model-in-the-loop 数据迭代<span class="src">§4.1</span></span></div>
+  </div>
+  <p class="tbl-note wide">caption 相关：预训练图文对用的是网页原生 <b>alt text</b>，正文没有提到给预训练图像重写 caption；只在 ViT 自回归微调阶段明确列出了「image captions」数据集<span class="src">§4.1 · §4.2.2</span>。caption 由谁、用什么模型生成，<span class="nd">原文未披露</span>。</p>
+
+  <h3 class="prose">4.4 后训练数据：任务合成与环境自动构建</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>任务 = (问题, 环境, 验证系统) <span class="tag">§5.1.1</span></h4>
+      <ul>
+        <li>质量看两维：<b>难度</b>（不平凡）与<b>正确性</b>（三件套无关键缺陷），二者作为奖励，迭代训练模型自己造任务。</li>
+        <li>全生命周期监控：任务每被一个新 RL run 使用，产生的轨迹就作为再审计证据。</li>
+        <li>流水线整体做严格过滤、去重和难度校准，保证质量与课程平衡<span class="src">§5.1</span>。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>通用 Agent：从真实工作流反推 <span class="tag">§5.1.1</span></h4>
+      <ul>
+        <li>内部员工与外部伙伴自愿回传日常使用数据与反馈；据其中出现的接口构造大批 mock 工具，复刻输入格式、输出结构、API schema 与行为约束（SaaS、企业应用、业务后端）。</li>
+        <li>大规模收集员工提交的负反馈和失败案例，重建工具上下文与失败条件，生成单轮 / 多轮环境，对已观察到的弱点做定向 RL。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>编码 Agent：多 Agent 协作造环境 <span class="tag">§5.1.1</span></h4>
+      <ul>
+        <li>来源：员工与伙伴的编码 Agent 会话（只留高复杂度或模型表现差的任务，按轨迹去重）+ 过 star 数阈值的 GitHub 仓库。</li>
+        <li>流程：判断能否容器内构建运行并自动验证 → 选起点 commit、设计实现方向、写 fail-to-pass 与 pass-to-pass 评测点 → 另一 Agent 配依赖、写测试与描述、<b>清除泄题痕迹</b>、打包镜像层 → 多个 Agent 试做 → 独立质检 Agent 检查环境问题、事实错误、评测点与描述不一致、可 hack 风险 → 不过则修复 Agent 修正并调整过易 / 过难评测点，重新验证。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>沙箱规模与防 hack <span class="tag">§5.1.3</span></h4>
+      <ul>
+        <li>DSec 支撑数百万并发沙箱；自研放置引擎换取最终一致性；sub-NUMA 绑定让单物理节点并发容器从约 1,000 提到 2,500 以上。</li>
+        <li>RL 中观察到 Agent 利用 XFS 权限、AppArmor 非法内存访问、包镜像服务泄露答案等漏洞，或删除关键二进制、文件系统。用逐沙箱 AppArmor 与 eBPF 网络策略防护；环境被搞崩记为失败轨迹，并回报「repercussion」信号。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 训练 ============ -->
+<section class="sec" id="train">
+  <div class="sec-head">
+    <div class="sec-num">05 · TRAINING RECIPE</div>
+    <h2>训练配方</h2>
+    <p class="sec-intro">预训练超参写得很全；后训练只给流程和机制，RL / OPD 的学习率、batch、组大小、k<sub>0</sub>、τ 等<span class="nd">原文未披露</span>。</p>
+  </div>
+
+  <h3 class="prose">5.1 预训练时间线（按 token）</h3>
+  <div class="diagram card wide">
+    <svg class="archsvg" viewBox="0 0 860 230" role="img" aria-label="预训练学习率、序列长度、视觉编码器冻结时间线">
+      <line class="grid" x1="532.9" y1="30" x2="532.9" y2="200"/>
+      <line class="grid" x1="634.2" y1="30" x2="634.2" y2="200"/>
+      <line class="grid" x1="735.6" y1="30" x2="735.6" y2="200"/>
+      <text class="s" x="0" y="52">学习率</text>
+      <path class="ln-acc" d="M70 96 L78 40 L532.9 40 C634 40 634 94 735.6 94 L820 94"/>
+      <text class="m" x="300" y="34" text-anchor="middle">2.6e-4（前 2000 步线性 warm-up）</text>
+      <text class="m" x="634" y="62" text-anchor="middle">cosine</text>
+      <text class="m" x="778" y="88" text-anchor="middle">2.6e-5</text>
+      <text class="s" x="0" y="137">序列长度</text>
+      <rect class="band" x="70" y="122" width="564.2" height="24" rx="5"/><text class="t" x="352" y="139" text-anchor="middle">64K（稀疏注意力从头训，无稠密 warm-up）</text>
+      <rect class="band2" x="634.2" y="122" width="185.8" height="24" rx="5"/><text class="t" x="727" y="139" text-anchor="middle">1M</text>
+      <text class="s" x="0" y="177">视觉编码器</text>
+      <rect class="band3" x="70" y="162" width="462.9" height="24" rx="5"/><text class="t" x="301" y="179" text-anchor="middle">ViT 冻结（末层 norm 与 VL 投影器可训）</text>
+      <rect class="band4" x="532.9" y="162" width="287.1" height="24" rx="5"/><text class="t" x="676" y="179" text-anchor="middle">解冻，较小 LR 联合训</text>
+      <line class="axis" x1="70" y1="206" x2="820" y2="206"/>
+      <text class="ch-ax" x="70" y="222" text-anchor="middle">0</text>
+      <text class="ch-ax" x="532.9" y="222" text-anchor="middle">28T</text>
+      <text class="ch-ax" x="634.2" y="222" text-anchor="middle">34T</text>
+      <text class="ch-ax" x="735.6" y="222" text-anchor="middle">40T</text>
+      <text class="ch-ax" x="820" y="222" text-anchor="middle">45T</text>
+    </svg>
+    <p class="cap"><b>示意</b>：横轴按 token 线性；节点数值来自 §4.2.2，ViT 冻结 / 解冻时点（学习率衰减开始时）来自 §2.5。曲线形状为示意，warm-up 段宽度未按比例。batch 全程固定 1.006 亿 token<span class="src">§4.2.2</span>。</p>
+  </div>
+
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>优化器分工 <span class="tag">§2.5 · §4.2.2</span></h4>
+      <ul>
+        <li><b>Muon</b>：骨干线性层、Engram 投影、VL 投影器；Q / K 权重用<b>按头切分的 head-wise Muon</b>。momentum 0.95、wd 0.1，更新 RMS 缩放到 0.18 以复用 AdamW 学习率。</li>
+        <li><b>AdamW</b>：RMSNorm 权重和其他非矩阵参数；β = (0.9, 0.95)，ε = 10<sup>−20</sup>，wd 0.1。</li>
+        <li><b>Sinkhorn 平衡更新</b>（新）：Engram 表、token embedding、预测头。Nesterov 动量后交替做行 / 列归一（K = 11 步，τ = 10<sup>−3</sup>），lr 乘 γ = 0.18 对齐 Adam；只需动量缓冲，「经验上优于 Adam」。</li>
+        <li>Engram 学习率 ×5。</li>
+      </ul>
+    </div>
+    <div class="card mod">
+      <h4>其他预训练设置 <span class="tag">§4.2.2</span></h4>
+      <ul>
+        <li>负载均衡：图像、文本 token 的偏置更新速度都设为 0.001；另保留权重 0.0001 的序列级平衡损失。</li>
+        <li>样本级 attention mask（同 V4）。</li>
+        <li>训练序列最长 1M，预训练和后训练都有相当比例在超长序列上；图像按 CP rank 负载均衡分片，每张图只读一次<span class="src">§3.1.1</span>。</li>
+        <li>训练基础设施：ViT 拆到 LLM 参数树外，每步分三段（ViT 前向 → LLM 前后向 → ViT 反向）；CSA2 跨流水线阶段共享靠 shadow indexer 与 payload 扩展<span class="src">§3.1</span>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 class="prose">5.2 从 ViT 到最终模型</h3>
+  <div class="flow wide">
+    <div class="card stage"><span class="sid">STAGE 0</span><h4>ViT 对比预训练</h4>
+      <dl><dt>损失</dt><dd>SigLIP sigmoid</dd><dt>数据</dt><dd>约 47B 图文对</dd><dt>分辨率</dt><dd>≤ 224×224</dd></dl>
+      <p>高分辨率在这一阶段涨点明显，但对最终模型贡献很小，故不做<span class="src">§4.2.2</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 0'</span><h4>ViT 自回归微调</h4>
+      <dl><dt>接</dt><dd>4B MoE LLM</dd><dt>数据</dt><dd>236B token</dd><dt>分辨率</dt><dd>544–1344</dd></dl>
+      <p>caption、alt text、图表、OCR；结束后丢掉这个 LLM，只留 ViT<span class="src">§4.2.2</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 1</span><h4>骨干预训练</h4>
+      <dl><dt>数据</dt><dd>45T token</dd><dt>序列</dt><dd>64K → 1M</dd><dt>MTP</dt><dd>不带</dd></dl>
+      <p>多模态数据从第一天起混入；分辨率策略与 ViT 阶段一致<span class="src">§2.1 · §4.2.2</span>。</p></div>
+    <div class="card stage"><span class="sid">STAGE 2</span><h4>DSpark 单独训练</h4>
+      <dl><dt>骨干</dt><dd>冻结</dd><dt>草稿</dt><dd>5 位置</dd></dl>
+      <p>后训练中继续随策略更新，但不向骨干回传梯度，用于加速线上服务和 RL / OPD rollout<span class="src">§2.4.3</span>。</p></div>
+  </div>
+
+  <div class="post-flow wide">
+    <div class="card stage"><span class="sid">POST · SFT → RL → OPD</span><h4>标准三段，无算法改动</h4>
+      <ul>
+        <li>RL 在合成任务上大规模异步进行，按训练算力和 scaffold 数两个维度扩展<span class="src">§5.1.2</span>。</li>
+        <li>跨 scaffold 训练：Agent sandbox 跑 scaffold 与工具，worker 容器把异构交互归一为统一轨迹格式。</li>
+        <li>用 <b>model merging</b> 重新初始化后续 RL run，合并不同 scaffold / 配置的 checkpoint<span class="src">§5.1.2</span>。</li>
+        <li>最后一段：全词表 OPD，覆盖所有领域，超过 40 个结构各异的教师<span class="src">§5.2.4</span>。</li>
+      </ul></div>
+    <div class="card stage"><span class="sid">POST · 后训练中引入的架构部件</span><h4>训练与推理保持一致</h4>
+      <ul>
+        <li>Hierarchical Sparse Indexer 的候选限制<span class="src">§2.3.2</span></li>
+        <li>FP4 主 KV 的 QAT<span class="src">§2.4.4</span></li>
+        <li>模拟 Decoder SWA Bounded Replay，做训练感知适配<span class="src">§3.2.2</span></li>
+        <li>DSpark 随策略继续训<span class="src">§2.4.3</span></li>
+      </ul></div>
+    <div class="card stage"><span class="sid">POST · 可控推理强度</span><h4>b ∈ {1,…,100} 写进 system prompt</h4>
+      <ul>
+        <li>每个 prompt 在多个 b 上各采 M<sub>b</sub> 条；同一 (x, b) 组内均值中心化求优势，不跨 b 比较<span class="src">§5.1.4</span>。</li>
+        <li>长度惩罚 r = −min(C<sub>max</sub>, k(b)·ℓ/L<sub>norm</sub>)，k(b) = k<sub>0</sub>·exp(−(b−b<sub>min</sub>)/τ)，τ = λΔb<span class="src">式 (9)(10)</span>。具体取值<span class="nd">原文未披露</span>。</li>
+        <li>API（2026 年 9 月上线）：max / high / low = 100 / 75 / 50<span class="src">表 2</span>。</li>
+      </ul></div>
+  </div>
+
+  <details class="more wide">
+    <summary>异步 RL 基础设施细节 <span class="hint">§5.2，可跳过</span></summary>
+    <div class="body">
+      <ul>
+        <li>rollout 与训练同卡分时；每个任务设在途样本上限。试过 batch 级（指标振荡）和 prompt 级（被组内长尾卡住）派发，最终用<b>样本级派发</b>：新完成样本数凑够下一个 prompt 的 GRPO 组大小就派发<span class="src">§5.2.1</span>。</li>
+        <li>跨 checkpoint 的样本用拼接式 routing replay，拼接各段的专家路由<span class="src">§5.2.1</span>。</li>
+        <li>长度偏置：按数据集限并发；可丢弃早返回的短样本。离策略：限制最大离策略比例；对过旧 token 做 loss mask<span class="src">§5.2.2</span>。</li>
+        <li>token 级中断，KV cache 与路由按 token 粒度持久化，换 checkpoint 后直接续跑，不再 re-prefill<span class="src">§5.2.3</span>。</li>
+        <li>多 Agent（Agent Team）RL 奖励 = 任务表现 + 协作奖励 + 由 DAG 关键路径算出的派生延迟惩罚<span class="src">§5.3.5</span>。</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 6 评测 ============ -->
+<section class="sec" id="eval">
+  <div class="sec-head">
+    <div class="sec-num">06 · EVALUATION</div>
+    <h2>评测</h2>
+    <p class="sec-intro">Base 只和自家 V4-Flash-Base / V4-Pro-Base 比（表 1，内部框架同设置）；后训练模型在 Max 推理档与 Opus-5、GPT-5.6 Sol、Kimi K3、GLM-5.3 等对比（表 3）。</p>
+  </div>
+
+  <h3 class="prose">6.1 Base 模型（表 1 节选）</h3>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准（指标，shots）</th><th>V4-Flash-Base</th><th>V4-Pro-Base</th><th>V4.1-Flash-Base</th></tr></thead>
+      <tbody>
+        <tr><td>激活 / 骨干参数</td><td>13B / 284B</td><td>49B / 1.6T</td><td>8B·16B / 552B</td></tr>
+        <tr><td>MMLU-Pro（EM，5）</td><td>68.3</td><td>73.5</td><td class="best">74.1</td></tr>
+        <tr><td>SimpleQA-verified（EM，25）</td><td>30.1</td><td class="best">55.2</td><td>42.3</td></tr>
+        <tr><td>SuperGPQA（EM，5）</td><td>46.5</td><td class="best">53.9</td><td>53.1</td></tr>
+        <tr><td>HumanEval（Pass@1，0）</td><td>69.5</td><td>76.8</td><td class="best">79.4</td></tr>
+        <tr><td>BigCodeBench（Pass@1，3）</td><td>56.8</td><td>59.2</td><td class="best">60.6</td></tr>
+        <tr><td>MATH（EM，4）</td><td>57.4</td><td class="best">64.5</td><td>61.1</td></tr>
+        <tr><td>MGSM（EM，8）</td><td class="best">85.7</td><td>84.4</td><td>80.2</td></tr>
+        <tr><td>LongBench-V2（EM，1）</td><td>44.7</td><td class="best">51.5</td><td>45.2</td></tr>
+        <tr class="hl"><td>MMMU-Pro / CVBench / DocVQA / RefCOCO-avg</td><td>–</td><td>–</td><td>56.5 / 77.9 / 95.6 / 86.0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note wide">表 1 规定差距 ≤ 0.3 视为同一水平。多模态四项只有 V4.1 有分（前代为纯文本），<b>没有外部多模态对照</b>。正文称「整体与 V4-Pro-Base 相当」，但 SimpleQA、MultiLoKo、LongBench-V2 明显低于 V4-Pro-Base。另报内部 held-out 语料 BPB（图 6，本页未裁），称在所有任务上 BPB 最低<span class="src">§4.3.2</span>。</p>
+
+  <details class="more wide">
+    <summary>表 1 全部文本基准 <span class="hint">20 行</span></summary>
+    <div class="body">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>类别</th><th>基准（指标，shots）</th><th>V4-Flash</th><th>V4-Pro</th><th>V4.1-Flash</th></tr></thead>
+          <tbody>
+            <tr><td>知识</td><td>AGIEval（EM，3-5）</td><td>83.9</td><td class="best">84.4</td><td>83.4</td></tr>
+            <tr><td>知识</td><td>MMLU-Pro（EM，5）</td><td>68.3</td><td>73.5</td><td class="best">74.1</td></tr>
+            <tr><td>知识</td><td>C-Eval（EM，5）</td><td>92.1</td><td class="best">93.1</td><td>92.1</td></tr>
+            <tr><td>知识</td><td>MultiLoKo（LLM-Judge，5）</td><td>42.6</td><td class="best">50.9</td><td>45.5</td></tr>
+            <tr><td>知识</td><td>SimpleQA-verified（EM，25）</td><td>30.1</td><td class="best">55.2</td><td>42.3</td></tr>
+            <tr><td>知识</td><td>SuperGPQA（EM，5）</td><td>46.5</td><td class="best">53.9</td><td>53.1</td></tr>
+            <tr><td>语言推理</td><td>BBH（EM，3）</td><td>86.9</td><td class="best">87.5</td><td>86.1</td></tr>
+            <tr><td>语言推理</td><td>BBEH（EM，1）</td><td>25.4</td><td class="best">29.8</td><td>27.2</td></tr>
+            <tr><td>语言推理</td><td>DROP（F1，1）</td><td>88.6</td><td class="best">88.7</td><td>87.9</td></tr>
+            <tr><td>语言推理</td><td>HellaSwag（EM，0）</td><td>85.7</td><td class="best">88.0</td><td>87.2</td></tr>
+            <tr><td>代码数学</td><td>BigCodeBench（Pass@1，3）</td><td>56.8</td><td>59.2</td><td class="best">60.6</td></tr>
+            <tr><td>代码数学</td><td>HumanEval（Pass@1，0）</td><td>69.5</td><td>76.8</td><td class="best">79.4</td></tr>
+            <tr><td>代码数学</td><td>GSM8K（EM，8）</td><td>90.8</td><td>92.6</td><td class="best">93.0</td></tr>
+            <tr><td>代码数学</td><td>MATH（EM，4）</td><td>57.4</td><td class="best">64.5</td><td>61.1</td></tr>
+            <tr><td>代码数学</td><td>MGSM（EM，8）</td><td class="best">85.7</td><td>84.4</td><td>80.2</td></tr>
+            <tr><td>长上下文</td><td>LongBench-V2（EM，1）</td><td>44.7</td><td class="best">51.5</td><td>45.2</td></tr>
+            <tr><td>多模态</td><td>MMMU-Pro（EM，4）</td><td>–</td><td>–</td><td>56.5</td></tr>
+            <tr><td>多模态</td><td>CVBench（EM，4）</td><td>–</td><td>–</td><td>77.9</td></tr>
+            <tr><td>多模态</td><td>DocVQA（LLM-Judge，4）</td><td>–</td><td>–</td><td>95.6</td></tr>
+            <tr><td>多模态</td><td>RefCOCO-avg（Acc@0.5，0）</td><td>–</td><td>–</td><td>86.0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tbl-note">粗体圆点 = 本页标出的行内最高分（不考虑 0.3 容差）。</p>
+    </div>
+  </details>
+
+  <h3 class="prose">6.2 后训练模型（表 3，全部为 Max 档）</h3>
+  <div class="chart-legend wide"><span class="l1">DS-V4.1-Flash</span><span class="l4">Opus-5</span><span class="l3">Kimi K3</span></div>
+  <div class="chart-grid wide">
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 264" role="img" aria-label="常规 Agent 基准：V4.1-Flash、Opus-5、Kimi K3">
+        <text class="ch-t" x="0" y="14">常规 Agent / 工具</text><text class="ch-src" x="360" y="14" text-anchor="end">表 3</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="246"/>
+        <text class="ch-lbl" x="94" y="49" text-anchor="end">Terminal-Bench 2.1</text>
+        <rect class="bar-q" x="100" y="32" width="181.2" height="10" rx="2"/><text class="ch-val" x="286" y="41">90.6</text>
+        <rect class="bar-o2" x="100" y="44" width="178.2" height="10" rx="2"/><text class="ch-val" x="283" y="53">89.1</text>
+        <rect class="bar-o" x="100" y="56" width="176.6" height="10" rx="2"/><text class="ch-val" x="282" y="65">88.3</text>
+        <text class="ch-lbl" x="94" y="93" text-anchor="end">DeepSWE v1.1</text>
+        <rect class="bar-q" x="100" y="76" width="148.4" height="10" rx="2"/><text class="ch-val" x="253" y="85">74.2</text>
+        <rect class="bar-o2" x="100" y="88" width="148" height="10" rx="2"/><text class="ch-val" x="253" y="97">74.0</text>
+        <rect class="bar-o" x="100" y="100" width="135" height="10" rx="2"/><text class="ch-val" x="240" y="109">67.5</text>
+        <text class="ch-lbl" x="94" y="137" text-anchor="end">HLE w/ tools</text>
+        <rect class="bar-q" x="100" y="120" width="127.8" height="10" rx="2"/><text class="ch-val" x="233" y="129">63.9</text>
+        <rect class="bar-o2" x="100" y="132" width="127.2" height="10" rx="2"/><text class="ch-val" x="232" y="141">63.6</text>
+        <rect class="bar-o" x="100" y="144" width="119.6" height="10" rx="2"/><text class="ch-val" x="225" y="153">59.8</text>
+        <text class="ch-lbl" x="94" y="181" text-anchor="end">AutomationBench</text>
+        <rect class="bar-q" x="100" y="164" width="109.6" height="10" rx="2"/><text class="ch-val" x="215" y="173">54.8</text>
+        <rect class="bar-o2" x="100" y="176" width="100.6" height="10" rx="2"/><text class="ch-val" x="206" y="185">50.3</text>
+        <rect class="bar-o" x="100" y="188" width="93.4" height="10" rx="2"/><text class="ch-val" x="198" y="197">46.7</text>
+        <text class="ch-lbl" x="94" y="225" text-anchor="end">Agents' Last Exam</text>
+        <rect class="bar-q" x="100" y="208" width="63.6" height="10" rx="2"/><text class="ch-val" x="169" y="217">31.8</text>
+        <rect class="bar-o2" x="100" y="220" width="57.2" height="10" rx="2"/><text class="ch-val" x="162" y="229">28.6</text>
+        <rect class="bar-o" x="100" y="232" width="55.2" height="10" rx="2"/><text class="ch-val" x="160" y="241">27.6</text>
+        <text class="ch-ax" x="100" y="259">0</text><text class="ch-ax" x="300" y="259" text-anchor="end">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 220" role="img" aria-label="高难度编码 Agent 基准：V4.1-Flash、Opus-5、Kimi K3">
+        <text class="ch-t" x="0" y="14">高难度编码 Agent</text><text class="ch-src" x="360" y="14" text-anchor="end">表 3</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="202"/>
+        <text class="ch-lbl" x="94" y="49" text-anchor="end">Terminal-Bench 3.0</text>
+        <rect class="bar-q" x="100" y="32" width="60" height="10" rx="2"/><text class="ch-val" x="165" y="41">30.0</text>
+        <rect class="bar-o2" x="100" y="44" width="86.6" height="10" rx="2"/><text class="ch-val" x="192" y="53">43.3</text>
+        <rect class="bar-o" x="100" y="56" width="35.4" height="10" rx="2"/><text class="ch-val" x="141" y="65">17.7</text>
+        <text class="ch-lbl" x="94" y="93" text-anchor="end">Terminal-Bench 4.0</text>
+        <rect class="bar-q" x="100" y="76" width="62.4" height="10" rx="2"/><text class="ch-val" x="168" y="85">31.2</text>
+        <rect class="bar-o2" x="100" y="88" width="103.6" height="10" rx="2"/><text class="ch-val" x="209" y="97">51.8</text>
+        <rect class="bar-o" x="100" y="100" width="25.2" height="10" rx="2"/><text class="ch-val" x="130" y="109">12.6</text>
+        <text class="ch-lbl" x="94" y="137" text-anchor="end">ProgramBench</text>
+        <rect class="bar-q" x="100" y="120" width="40.6" height="10" rx="2"/><text class="ch-val" x="146" y="129">20.3</text>
+        <rect class="bar-o2" x="100" y="132" width="74" height="10" rx="2"/><text class="ch-val" x="179" y="141">37.0</text>
+        <rect class="bar-o" x="100" y="144" width="35" height="10" rx="2"/><text class="ch-val" x="140" y="153">17.5</text>
+        <text class="ch-lbl" x="94" y="181" text-anchor="end">NL2Repo-Bench</text>
+        <rect class="bar-q" x="100" y="164" width="130.8" height="10" rx="2"/><text class="ch-val" x="236" y="173">65.4</text>
+        <rect class="bar-o2" x="100" y="176" width="150.6" height="10" rx="2"/><text class="ch-val" x="256" y="185">75.3</text>
+        <rect class="bar-o" x="100" y="188" width="116" height="10" rx="2"/><text class="ch-val" x="221" y="197">58.0</text>
+        <text class="ch-ax" x="100" y="215">0</text><text class="ch-ax" x="300" y="215" text-anchor="end">100</text>
+      </svg>
+    </div>
+    <div class="chart-cell">
+      <svg class="chart" viewBox="0 0 360 176" role="img" aria-label="视觉 Agent 基准：V4.1-Flash、Opus-5、Kimi K3">
+        <text class="ch-t" x="0" y="14">视觉 Agent（w/ tools）</text><text class="ch-src" x="360" y="14" text-anchor="end">表 3</text>
+        <line class="axis" x1="100" y1="26" x2="100" y2="158"/>
+        <text class="ch-lbl" x="94" y="49" text-anchor="end">Chartography</text>
+        <rect class="bar-q" x="100" y="32" width="157.8" height="10" rx="2"/><text class="ch-val" x="263" y="41">78.9</text>
+        <rect class="bar-o2" x="100" y="44" width="168" height="10" rx="2"/><text class="ch-val" x="273" y="53">84.0</text>
+        <rect class="bar-o" x="100" y="56" width="136.2" height="10" rx="2"/><text class="ch-val" x="241" y="65">68.1</text>
+        <text class="ch-lbl" x="94" y="93" text-anchor="end">BabyVision</text>
+        <rect class="bar-q" x="100" y="76" width="179.2" height="10" rx="2"/><text class="ch-val" x="284" y="85">89.6</text>
+        <rect class="bar-o2" x="100" y="88" width="188.2" height="10" rx="2"/><text class="ch-val" x="293" y="97">94.1</text>
+        <rect class="bar-o" x="100" y="100" width="171.4" height="10" rx="2"/><text class="ch-val" x="276" y="109">85.7</text>
+        <text class="ch-lbl" x="94" y="137" text-anchor="end">ZeroBench (Pass@5)</text>
+        <rect class="bar-q" x="100" y="120" width="98" height="10" rx="2"/><text class="ch-val" x="203" y="129">49.0</text>
+        <rect class="bar-o2" x="100" y="132" width="104" height="10" rx="2"/><text class="ch-val" x="209" y="141">52.0</text>
+        <rect class="bar-o" x="100" y="144" width="82" height="10" rx="2"/><text class="ch-val" x="187" y="153">41.0</text>
+        <text class="ch-ax" x="100" y="171">0</text><text class="ch-ax" x="300" y="171" text-anchor="end">100</text>
+      </svg>
+    </div>
+  </div>
+  <p class="tbl-note wide">三张图横轴都从 0 到 100，顺序为 V4.1-Flash（紫）/ Opus-5（深灰）/ Kimi K3（浅灰）。指标默认 Pass@1，DeepSWE 为 Resolved，ProgramBench 为 Almost@1，NL2Repo 为 Score，ZeroBench 为 Pass@5<span class="src">表 3</span>。</p>
+
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>基准（指标）</th><th>Opus-5</th><th>GPT-5.6 Sol</th><th>K3</th><th>GLM-5.3</th><th>DS-V4-Pro</th><th>DS-V4-Flash</th><th>DS-V4.1-Flash</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="8">推理</td></tr>
+        <tr><td>GPQA Diamond</td><td>93.4</td><td class="best">94.1</td><td>92.9</td><td>88.1</td><td>92.4</td><td>89.9</td><td>90.9</td></tr>
+        <tr><td>HLE</td><td class="best">56.3</td><td>44.5</td><td>43.5</td><td>42.0†</td><td>42.7†</td><td>37.8†</td><td>36.8（39.1†）</td></tr>
+        <tr><td>Codeforces（Rating，内部）</td><td>–</td><td>–</td><td>–</td><td>–</td><td>3348</td><td>3289</td><td class="best">3471</td></tr>
+        <tr><td>MathArena Apex</td><td>–</td><td>–</td><td class="best">65.6</td><td>–</td><td>65.3</td><td>58.6</td><td class="best">65.6</td></tr>
+        <tr class="grp"><td colspan="8">编码 Agent</td></tr>
+        <tr class="hl"><td>Terminal-Bench 2.1</td><td>89.1</td><td>88.8</td><td>88.3</td><td>88.2</td><td>87.9</td><td>82.7</td><td class="best">90.6</td></tr>
+        <tr><td>Terminal-Bench 3.0</td><td class="best">43.3</td><td>34.4</td><td>17.7</td><td>28.3</td><td>11.8</td><td>7.6</td><td>30.0</td></tr>
+        <tr><td>Terminal-Bench 4.0</td><td class="best">51.8</td><td>39.9</td><td>12.6</td><td>37.9</td><td>12.4</td><td>7.0</td><td>31.2</td></tr>
+        <tr class="hl"><td>DeepSWE v1.1（Resolved）</td><td>74.0</td><td>73.0</td><td>67.5</td><td>66.9</td><td>62.7</td><td>54.4</td><td class="best">74.2</td></tr>
+        <tr><td>ProgramBench（Almost@1）</td><td class="best">37.0</td><td>23.0</td><td>17.5</td><td>19.0</td><td>15.5</td><td>–</td><td>20.3</td></tr>
+        <tr><td>NL2Repo-Bench（Score）</td><td class="best">75.3</td><td>56.8</td><td>58.0</td><td>58.0</td><td>61.5</td><td>54.2</td><td>65.4</td></tr>
+        <tr class="grp"><td colspan="8">网络安全</td></tr>
+        <tr><td>CyberGym</td><td>–</td><td>84.5</td><td>80.0</td><td>84.5</td><td>83.3</td><td>76.7</td><td class="best">88.1</td></tr>
+        <tr><td>SEC-Bench Pro</td><td>–</td><td class="best">74.3</td><td>–</td><td>–</td><td>56.4</td><td>30.9</td><td>62.8</td></tr>
+        <tr><td>ExploitGym</td><td>22.1</td><td class="best">33.7</td><td>–</td><td>15.0</td><td>5.4</td><td>1.8</td><td>15.3</td></tr>
+        <tr class="grp"><td colspan="8">通用 Agent</td></tr>
+        <tr><td>HLE w/ tools</td><td>63.6</td><td>–</td><td>59.8</td><td>62.5</td><td>60.0</td><td>51.5</td><td class="best">63.9</td></tr>
+        <tr><td>AutomationBench</td><td>50.3</td><td>45.8</td><td>46.7</td><td>48.8</td><td>43.2</td><td>37.7</td><td class="best">54.8</td></tr>
+        <tr><td>Agents' Last Exam</td><td>28.6</td><td>26.7</td><td>27.6</td><td>28.5</td><td>25.7</td><td>25.2</td><td class="best">31.8</td></tr>
+        <tr class="grp"><td colspan="8">视觉 Agent</td></tr>
+        <tr><td>Chartography w/ tools</td><td class="best">84.0</td><td>79.9</td><td>68.1</td><td>–</td><td>–</td><td>–</td><td>78.9</td></tr>
+        <tr><td>BabyVision w/ tools</td><td class="best">94.1</td><td>88.9</td><td>85.7</td><td>–</td><td>–</td><td>–</td><td>89.6</td></tr>
+        <tr><td>ZeroBench-main w/ tools（Pass@5）</td><td>52.0</td><td class="best">53.0</td><td>41.0</td><td>–</td><td>–</td><td>–</td><td>49.0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="keybox wide"><span class="k-best">本页标出的行内最高</span><span>† = HLE 纯文本子集（原文表注）</span><span>– = 原文空缺</span></div>
+  <p class="tbl-note wide"><b>记号说明：</b>HLE 一行中带 † 的是纯文本子集分数，V4.1-Flash 同时给了全集 36.8 和纯文本 39.1†；纯文本口径下它低于 GLM-5.3（42.0†）和 V4-Pro（42.7†）<span class="src">表 3</span>。表注只定义了 †，「w/ tools」指带工具评测。<b>评测设置</b>：推理题温度与 top-p 均为 1.0；编码 Agent 用 DeepSeek Harness 的 Minimal 模式、1M 上下文、温度 1.0、top-p 0.95；DeepSWE 用 mini-SWE harness（对齐官方要求），SEC-Bench Pro 用 Claude Code harness；视觉 Agent 用 Claude Code harness、512K 上下文；ALE 与 AutomationBench 用官方 scaffold<span class="src">§5.3.1</span>。<b>对手分数是自测还是引用，原文未说明。</b></p>
+
+  <h3 class="prose">6.3 换 scaffold 与调推理强度</h3>
+  <div class="grid2 wide">
+    <div class="card mod">
+      <h4>8 种 harness 配置（Max 档）<span class="tag">表 4</span></h4>
+      <div class="tbl-wrap" style="margin:6px 0">
+        <table>
+          <thead><tr><th>Scaffold</th><th>DeepSWE v1.1</th><th>TB 2.1</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code（v2.1.251）</td><td>69.8</td><td>88.0</td></tr>
+            <tr><td>Codex</td><td>65.6</td><td>84.1</td></tr>
+            <tr><td>OpenCode</td><td>65.5</td><td>85.0</td></tr>
+            <tr><td>Pi</td><td>66.2</td><td>86.1</td></tr>
+            <tr class="hl"><td>mini-SWE</td><td class="best">74.2</td><td>90.3</td></tr>
+            <tr class="hl"><td>DSH Minimal</td><td>72.6</td><td class="best">90.6</td></tr>
+            <tr><td>DSH Standard</td><td>70.5</td><td>85.8</td></tr>
+            <tr><td>DSH PTC</td><td>67.6</td><td>85.8</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>同一 checkpoint、解码设置、任务集，只换 harness。DeepSWE 跨度 65.5–74.2（8.7 分），TB 2.1 跨度 84.1–90.6（6.5 分）<span class="src calc">推算</span>。<b>表 3 报的正好是各自最高的那个 harness。</b>每任务采样 DeepSWE N = 8、TB 2.1 N = 3；max_steps = 500<span class="src">表 4 注</span>。四个 Claude Code 版本均值 68.9 / 87.8<span class="src">表 5</span>。</p>
+    </div>
+    <div class="card mod">
+      <h4>推理强度 25 → 100 <span class="tag">§5.3.2 · 图 9</span></h4>
+      <ul>
+        <li>8 个推理基准平均 Pass@1：67.1 → 76.3</li>
+        <li>DeepSWE v1.1：66.0 → 74.2</li>
+        <li>Terminal-Bench 2.1：82.4 → 90.6</li>
+        <li>代价：输出 token 约 2.5 倍；逐基准为 2.0–3.1 倍（如 AIME 2026 每条 4.6k → 11.4k）<span class="src">附录 B.3</span>。</li>
+        <li>收益前置：60–80 档用不到一半 token 拿回大部分精度；最后一步升到 100，Agent 轨迹变长 1.6–1.8 倍，提升很小<span class="src">§5.3.2</span>。</li>
+        <li>跨 scaffold 看，强度与轨迹长度单调相关，与 Pass@1 只是松相关，中间档常有平台和回落<span class="src">附录 B.2</span>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <details class="more wide">
+    <summary>多 Agent 初步实验 <span class="hint">§5.3.5 · 图 10（未裁）</span></summary>
+    <div class="body">
+      <ul>
+        <li>DeepSeek Harness 的 Agent Team 模式：lead 异步 spawn 持久队友，共享一份代码 checkout，通过邮箱通信、共享任务板协调。</li>
+        <li>ProgramBench 只保留参考解在隐藏测试上通过率 ≥ 95% 的任务，得 172 个「golden」任务；每任务至多 3 次 rollout，计划 516 次。</li>
+        <li>ProgramBench Almost@1：多 Agent 从 1 小时 13.59% 升到 8 小时峰值 30.04%；单 Agent 对应 12.79% 和 20.39%。</li>
+        <li>FrontierSWE v2（排除需 GPU 的任务）Mean@5：多 Agent 1 小时 13.50% → 20 小时 32.90%；单 Agent 10.50% → 28.20%。</li>
+        <li>作者明说是初步结果，比较的是「观察到的最强多 Agent 配置」对「可用的最强单 Agent 基线」。</li>
+      </ul>
+    </div>
+  </details>
+
+  <figure class="fig card wide">
+    <div class="img-pad"><img src="figures/fig1.jpg" alt="左：V4.1-Flash 与对手在四个 Agent 基准上的柱状图；右：各代 DeepSeek 模型每 token 全局 KV 字节数，V1 389,120、V3.2 48,068、V4-Flash 3,514、V4.1-Flash 890" loading="lazy"></div>
+    <figcaption><b>(a) Agent 基准对比；(b) 各代模型每 token 全局 KV 字节数。</b>(b) 中 V1 389,120 → V3.2 48,068 → V4-Flash 3,514 → V4.1-Flash 890；相对 V4-Flash 约 4 倍、相对 V1 约 437 倍<span class="src">图 1 题注</span>。本裁图 (a) 缺图例与横轴标签，柱值以表 3 为准。<span class="from">来源：论文图 1</span></figcaption>
+  </figure>
+</section>
+
+<!-- ============ 7 新在哪 ============ -->
+<section class="sec" id="novel">
+  <div class="sec-head">
+    <div class="sec-num">07 · WHAT'S NEW</div>
+    <h2>新在哪</h2>
+    <p class="sec-intro">DeepSeekMoE、Engram、DSpark、head-wise Muon 都是已有工作（后者 GLM-5、Kimi-K3 也在用）；后训练作者自己说没有算法创新。可核对的新内容是下面五点。</p>
+  </div>
+  <div class="novel wide">
+    <div class="card nv"><h4>CED：在因果 LM 里拆出 encoder / decoder</h4><p>受 YOCO 启发，但 decoder 每层用自己的投影从 H<sub>L/2</sub> 生成全局 KV，SWA 仍逐层计算；配合 Decoder SWA Bounded Replay，prefill 计算近乎减半，prefill / decode 激活解耦为 8B / 16B<span class="src">§2.2 · §3.2.2</span>。</p><p class="why">可核对：公式与复杂度推导齐全。缺：与 YOCO 或普通 decoder-only 的效果对照数字。</p></div>
+    <div class="card nv"><h4>CSA2：缓存共享与索引复用解耦</h4><p>三种静态模式让「共享 KV 但重选 Top-K」成为可能（Reindex）；压缩器去重叠、去绝对位置编码，indexer K 由主 KV 投影；V4 的 CSA + HCA 混合换成纯 CSA2<span class="src">§2.3</span>。</p><p class="why">逐层模式配置全部公开（§4.2.1）。缺：Reindex 层数、组大小的消融。</p></div>
+    <div class="card nv"><h4>训练感知的 Hierarchical Sparse Indexer</h4><p>decoder 首个 Full 层的块级选择结果作为后续 indexer 的候选池，后续打分量与上下文长度无关；在后训练中引入，训练和推理同一搜索域<span class="src">§2.3.2</span>。</p><p class="why">不增加额外状态；只给机制和参数（2,048 块 × 8），没有召回率或精度对照。</p></div>
+    <div class="card nv"><h4>FP4 主 KV + SWA Bounded Replay：把持久缓存砍到 1/8</h4><p>FP4 主 KV（去全局 scale，有上界论证）；SWA KV 移出 SSD 持久缓存，放进占各机 10% 主存、TTL 数分钟的分布式内存池；miss 时只重放 n<sub>win</sub> 个 token 近似重建，全局 KV 保证至少 72 小时<span class="src">§2.4.4 · §3.2.1</span>。</p><p class="why">这是部署与模型联合设计的新取舍；质量影响只有「几乎不影响」的描述。</p></div>
+    <div class="card nv"><h4>Single-Pass mHC 与 Sinkhorn 平衡更新</h4><p>输入混合系数后移一层即可单 kernel 融合，激活读写从 (4n+4)d 降到 (2n+2)d<span class="src">§2.4.1</span>；Engram 表、embedding、预测头用「动量 + Sinkhorn 行列归一」替代 Adam，省掉二阶矩状态<span class="src">§2.5 · 算法 1</span>。</p><p class="why">两者都只有「退化可忽略 / 经验上优于 Adam」的结论，无曲线。</p></div>
+  </div>
+</section>
+
+<!-- ============ 8 启示 ============ -->
+<section class="sec" id="impl">
+  <div class="impl-wrap wide">
+    <div class="sec-num">08 · FOR IMAGE-EDITING TEAMS</div>
+    <h2>对图像编辑数据 / 评测 / caption 的启示</h2>
+    <p class="sec-intro">这不是图像编辑模型，但它的多模态预训练清洗流水线、ViT 训练策略、Agent 任务的「造任务 + 造验证 + 质检」流程，以及 harness 敏感性实验，都能直接对照编辑数据和评测。每条先写论文怎么做，再给一条<b>迁移建议（不是论文内容）</b>。</p>
+    <div class="impl-group">数据构建与过滤</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">D1</span>按成本分级：便宜的过滤放前面，VLM 打分放最后</h4><p class="paper">论文：交错数据先做启发式 / 统计过滤、去重和质量模型，再取图拼序列、做图像感知过滤与去重，最后才用 SmolVLM 严格打分<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑对的清洗也排成漏斗：分辨率 / 格式 / 哈希去重 → 源图与目标图差异量、mask 面积等统计量 → 小 VLM 判「指令与变化是否对应」→ 最后才上贵的大模型判细节。每一级记下淘汰率，方便定位哪一级在丢好数据。</p></div>
+      <div class="impl"><h4><span class="ix">D2</span>相关性阈值 + 语义去重</h4><p class="paper">论文：图文对按图文相关性阈值过滤，并按<b>图像语义</b>去重，而不是只按像素或 URL<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑数据按源图 embedding 做语义去重（同一场景的多次拍摄、同一模板的生成图），再在每个语义簇内限量。指令与「源→目标变化」之间也设一个相关性阈值，低于阈值的直接丢，而不是靠加权分数救回来。</p></div>
+      <div class="impl"><h4><span class="ix">D3</span>弱模型的输出算「隐式重复」</h4><p class="paper">论文：过滤较弱模型的生成内容和低质机翻，认为它们只是改写已有信息，长训练下可能有害<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>合成编辑目标图要记录生成器版本；老版本或明显更弱的编辑器产出的目标图设占比上限，或只作为负样本 / 偏好对的「差」侧。新版模型上线后回头清一遍老生成器的样本。</p></div>
+      <div class="impl"><h4><span class="ix">D4</span>被淘汰的数据回收成别的用途</h4><p class="paper">论文：交错数据流水线里被筛掉的文档，部分经筛选重组回收为图文对<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑对因目标图质量差被丢时，源图本身往往还好：回收进 caption / 理解数据池，或者保留 (源图, 指令) 作为 RL 指令池，用当前模型重新生成目标。</p></div>
+      <div class="impl"><h4><span class="ix">D5</span>定期审计来源覆盖</h4><p class="paper">论文：发现爬虫系统偏向文字为主的网页，于是从 Common Crawl 重新 bootstrap 补多模态来源<span class="src">§4.1</span>；跨流水线重叠样本用信息更全的版本替换<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>按场景（人像 / 商品 / 含文字图 / 风景）和编辑类型统计每个数据版本的覆盖，对照线上指令分布找缺口；同一源图出现在多个子集时只保留标注最全的一份，并记录 epoch 数。</p></div>
+      <div class="impl"><h4><span class="ix">D6</span>任务 = (输入, 环境, 验证器)，难度与正确性分开评</h4><p class="paper">论文：每个 Agent 任务按「难度」和「正确性」两维评估；编码环境由独立质检 Agent 检查评测点与任务描述是否一致、是否可 hack，不过就交修复 Agent，并调整过易 / 过难的评测点<span class="src">§5.1.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑 RL 指令池里每条存成 (源图, 指令, 检查项清单)。另起一个质检 VLM，只看指令和检查项，判断两者是否一致、检查项是否能被「原图不动」之类的捷径骗过；任务被新一轮 RL 用过后，用新轨迹再审一遍。</p></div>
+    </div>
+    <div class="impl-group">caption 与视觉编码</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">C1</span>低分辨率做粗对齐，高分辨率留给细粒度 caption</h4><p class="paper">论文：ViT 对比预训练只用 ≤224 分辨率，因为高分辨率在这一阶段虽涨点，但对最终模型贡献很小；高分辨率外推交给接 LLM 的自回归阶段，用 caption、图表、OCR 数据学细粒度特征<span class="src">§4.2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>训练编辑用的 captioner / 差异描述器时，别在粗对齐阶段堆分辨率；把高分辨率算力留给「描述局部差异、文字、细小物体」这类细粒度 caption 数据，并用下游编辑指标（而非对齐阶段指标）决定分辨率投入。</p></div>
+      <div class="impl"><h4><span class="ix">C2</span>分辨率策略在各阶段保持一致</h4><p class="paper">论文：ViT 自回归阶段把输入限制在 544–1344，后续骨干预训练「沿用相同的输入分辨率策略」；3×3 pixel-unshuffle 把视觉 token 减 9 倍<span class="src">§2.1.1 · §4.2.2</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>caption 生成、训练、评测三处的输入分辨率和缩放规则写成同一份配置。打 caption 时用的分辨率如果比训练时高，caption 里会出现模型实际看不清的细节，变成指令里的「幻觉要求」。</p></div>
+      <div class="impl"><h4><span class="ix">C3</span>保留原生描述，不急着大规模合成</h4><p class="paper">论文：多模态预训练「刻意不做大规模数据合成」，优先清洗、使用网页原生形态的数据（alt text、交错文档）<span class="src">§4.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑指令池里保留一部分真实用户原话（脱敏后），不全部改写成规范 caption；评测集按「原话 / 改写」分桶报分，检查模型是不是只会听规范句式。</p></div>
+    </div>
+    <div class="impl-group">评测协议</div>
+    <div class="impl-grid">
+      <div class="impl"><h4><span class="ix">E1</span>固定模型，只换外壳，报波动范围</h4><p class="paper">论文：同一 checkpoint、解码设置、任务集，只换 harness，DeepSWE 在 65.5–74.2 之间变化<span class="src">表 4</span>；而表 3 用的正是最高的 mini-SWE 结果<span class="src">§5.3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑评测里，「判官模型 + 打分 prompt + 输入分辨率」就是 harness。主分数之外，固定被测模型换 2–3 套判官配置各跑一次，报区间；对比表里所有模型用同一套配置。</p></div>
+      <div class="impl"><h4><span class="ix">E2</span>先清掉泄题通道，再测</h4><p class="paper">论文：编码 Agent 评测断网、删 Git 历史、清构建与依赖缓存，仍观察到模型反编译系统包找漏洞<span class="src">§5.3.1</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>评测输入里去掉 EXIF、文件名、路径等可能泄露目标的元数据；判官只看图像和指令。另外专门测「直接输出原图」「只做全局调色」这类捷径的得分，作为保持类指标的下限参考。</p></div>
+      <div class="impl"><h4><span class="ix">E3</span>只留参考答案能稳定通过的题</h4><p class="paper">论文：ProgramBench 只保留参考解在隐藏测试上通过率 ≥ 95% 的任务，得到 172 个「golden」任务再比较单 / 多 Agent<span class="src">§5.3.5</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑基准里先用参考结果（人工精修图或 GT）跑判官，判官对参考结果都给不了高分的条目，说明指令有歧义或检查项写错，单独剔出复核，不进主分数。</p></div>
+      <div class="impl"><h4><span class="ix">E4</span>报曲线，不报单点</h4><p class="paper">论文：推理强度从 25 到 100 同时报 Pass@1 和输出 token；60–80 档用不到一半 token 拿回大部分精度<span class="src">§5.3.2 · 图 9</span>。</p><p class="do"><b>迁移建议，不是论文内容：</b>编辑模型对比时，画「质量 vs 采样步数 / 单张耗时」曲线，并标出线上实际使用的那一点。只在最高步数或 best-of-N 才领先的版本，单独标注。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9 局限 ============ -->
+<section class="sec" id="limits">
+  <div class="sec-head">
+    <div class="sec-num">09 · LIMITATIONS</div>
+    <h2>局限与存疑</h2>
+  </div>
+  <ul class="limits wide">
+    <li class="key"><b>架构改动缺消融：</b>CED「与基线相当」、Single-Pass mHC「退化可忽略」、FP4 主 KV「仅轻微退化」、Encoder / Decoder Bounded Replay「几乎不影响回复质量」，都没有给对照数字<span class="src">§1 · §2.2 · §2.4 · §3.2.2</span>。</li>
+    <li class="key"><b>数据配比几乎未披露：</b>只有「文本:多模态 = 7:1」；图文对 / 交错 / 领域数据各多少、文本子集各领域比例、SFT 数据量、RL 任务数都没有<span class="src">§4.1 · §5.1</span>。SmolVLM 打分阈值、图文相关性阈值也没给。</li>
+    <li class="key"><b>结论与表格对不上对手：</b>§6 说性能「接近 Fable-5 和 GPT-6 Astra」，但表 3 只列了 Opus-5 和 GPT-5.6 Sol，正文其他地方也没有这两个模型的分数<span class="src">§6 · 表 3</span>。</li>
+    <li><b>「与 V4-Pro-Base 相当」需打折：</b>表 1 中 SimpleQA-verified 42.3 vs 55.2、MultiLoKo 45.5 vs 50.9、LongBench-V2 45.2 vs 51.5，MGSM 80.2 是三者最低<span class="src">表 1</span>。「held-out 提升 5%–10%」对应的是 BPB（图 6），基于内部文档与私有代码库，无法复现<span class="src">§1 · §4.3.2</span>。</li>
+    <li><b>「激活参数 1/4」口径不明：</b>§1 称用 V4-Pro-Base「1/3 的总参数、1/4 的激活参数」；按表 1，552B / 1.6T ≈ 0.35，但 16B / 49B ≈ 0.33、8B / 49B ≈ 0.16，都不是 1/4 <span class="src calc">推算</span>。</li>
+    <li><b>评测口径：</b>Codeforces 是内部基准；表 3 每项取的 harness 不同（DeepSWE 用 mini-SWE，TB 2.1 用 DSH Minimal），恰好是表 4 里各自最高的；对手分数来源未说明<span class="src">§5.3.1 · 表 4</span>。HLE 全集 36.8 是该行数值最低（该行口径混用全集与 †），纯文本 39.1† 也低于 V4-Pro<span class="src">表 3</span>。</li>
+    <li><b>多模态评测偏少：</b>Base 的 4 个多模态基准没有任何外部对照；后训练只有 3 个视觉 Agent 基准，且都低于 Opus-5<span class="src">表 1 · 表 3</span>。</li>
+    <li><b>多 Agent 结果是挑过的：</b>比较的是「观察到的最强多 Agent 配置」与「可用的最强单 Agent 基线」，作者自己标为初步<span class="src">§5.3.5</span>。</li>
+    <li><b>作者自述的风险：</b>CSA2 的选择误差和 Bounded Replay 的近似重建，可能在未测试的边界情况下导致能力退化；在最难的任务上与闭源前沿仍有差距<span class="src">§6</span>。</li>
+    <li><b>小处：</b>§3.2.1 写持久化 KV 是「V4 的 1/8」，摘要与结论写「V4-Flash 的 1/8」；Engram 的引用在 §1 / §2.1 是 Cheng et al. 2026b，在 §2.4.2 是 2026c<span class="src">§2.4.2 · §3.2.1</span>。许可证全文未提及。</li>
+  </ul>
+</section>
+
+<!-- ============ 10 图表索引 ============ -->
+<section class="sec" id="index">
+  <div class="sec-head">
+    <div class="sec-num">10 · INDEX</div>
+    <h2>图表索引</h2>
+  </div>
+  <div class="tbl-wrap wide">
+    <table class="idx-table">
+      <thead><tr><th>编号</th><th>内容</th><th>本页位置</th></tr></thead>
+      <tbody>
+        <tr><td>图 1</td><td>(a) Agent 基准对比；(b) 各代每 token 全局 KV 字节数（<code>figures/fig1.jpg</code>，p.1；(a) 缺图例）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>图 2</td><td>单 token Decode FLOPs 随上下文长度（<code>figures/fig2.jpg</code>，p.5）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 3</td><td>40 层总体架构，Causal Encoder + Decoder（<code>figures/fig3.jpg</code>，p.7）</td><td><a href="#arch">§03</a></td></tr>
+        <tr><td>图 4</td><td>CSA2 的 Full / Reindex / Reuse 三种模式（<code>figures/fig4.jpg</code>，p.10）</td><td><a href="#arch">§03.2</a></td></tr>
+        <tr><td>图 5</td><td>Hierarchical Sparse Indexer（<code>figures/fig5.jpg</code>，p.11）</td><td><a href="#arch">§03.2</a></td></tr>
+        <tr><td>图 6–12</td><td>BPB、RL 扩展曲线、推理强度曲线、多 Agent 时间扩展（未裁图，本页仅文字引用）</td><td><a href="#eval">§06</a></td></tr>
+        <tr><td>表 1</td><td>三代 Base 模型对比</td><td><a href="#eval">§06.1</a></td></tr>
+        <tr><td>表 2</td><td>API 推理强度档位与 b 值</td><td><a href="#train">§05.2</a></td></tr>
+        <tr><td>表 3</td><td>后训练模型与开闭源对比</td><td><a href="#eval">§06.2</a></td></tr>
+        <tr><td>表 4 · 表 5</td><td>跨 scaffold / 跨 Claude Code 版本表现</td><td><a href="#eval">§06.3</a></td></tr>
+        <tr><td>算法 1</td><td>动量 + Sinkhorn 平衡更新</td><td><a href="#train">§05.1</a></td></tr>
+        <tr><td>示意图</td><td>40 层逐层模式排布（据 §4.2.1）；预训练时间线（据 §4.2.2 · §2.5）；三张评测柱状图（据表 3）；7:1 配比条（据 §4.1）</td><td><a href="#arch">§03</a> · <a href="#train">§05</a> · <a href="#eval">§06</a> · <a href="#data">§04</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+</div>
+<footer>
+  <div class="in">
+    本页基于 DeepSeek-AI《DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression》（<a href="https://arxiv.org/abs/2609.19969" target="_blank" rel="noopener">arXiv:2609.19969</a> v1，2026-09-17）撰写。所有数字均来自原文；标 <span class="src calc">推算</span> 的为本页自行计算；「迁移建议」为本页观点，不是论文内容。论文图片版权归原作者所有。<br>
+    <a href="../../../index.html" class="site-nav-back">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

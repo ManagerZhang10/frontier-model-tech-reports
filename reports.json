@@ -448,6 +448,38 @@
       "one_liner": "V4-Pro 1.6T/49B 与 V4-Flash 284B/13B，均支持 1M 上下文。注意力改为 CSA/HCA 交错压缩 KV；1M 时 V4-Pro 单 token 推理 FLOPs 为 V3.2 的 27%、KV cache 为 10%。arXiv 编号是 2606，但 v1 发布日期为 2026-04-26。权重在 HF，许可证原文未披露。",
       "path": "reports/llm/deepseek-v4/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "deepseek-v4.1-flash",
+      "title": "DeepSeek-V4.1-Flash",
+      "subtitle": "DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression",
+      "vendor": "DeepSeek",
+      "vendor_key": "deepseek",
+      "category": "llm",
+      "date": "2026-09-17",
+      "paper": "https://arxiv.org/abs/2609.19969",
+      "arxiv": "2609.19969",
+      "open_weights": true,
+      "params": "552B 骨干 + 196B Engram；prefill 8B / decode 16B 激活",
+      "one_liner": "面向输入重的长程 Agent：CED 让 prefill 激活 8B、decode 激活 16B；CSA2 + FP4 把全局 KV 压到 890 bytes/token（约 V4-Flash 的 1/4），SWA Bounded Replay 让持久化 KV 约为 1/8。45T token 多模态预训练。权重在 HF，许可证原文未披露。图 1(b) 的前代 KV 字节数为读图。",
+      "path": "reports/llm/deepseek-v4.1-flash/",
+      "added": "2026-11-22"
+    },
+    {
+      "slug": "minimax-m2",
+      "title": "MiniMax-M2 Series",
+      "subtitle": "The MiniMax-M2 Series: Mini Activations Unleashing Max Real-World Intelligence",
+      "vendor": "MiniMax",
+      "vendor_key": "minimax",
+      "category": "llm",
+      "date": "2026-05-26",
+      "paper": "https://arxiv.org/abs/2605.26494",
+      "arxiv": "2605.26494",
+      "open_weights": false,
+      "params": "M2：229.9B / 9.8B 激活",
+      "one_liner": "旗舰 M2 为 229.9B 总参 / 9.8B 激活、62 层、256 专家、预训练 29.2T token、192K 上下文；系列从 M2 到 M2.7。后训练重点是可执行环境绑定的 Agent 数据管线与 Forge RL。正文未给出权重仓库或许可证。图 1 柱状图数字为读图。",
+      "path": "reports/llm/minimax-m2/",
+      "added": "2026-11-22"
     }
   ]
 }

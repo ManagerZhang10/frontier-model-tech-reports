@@ -29,6 +29,8 @@
 | LLM（原生多模态） | [ERNIE 5.0](./reports/llm/ernie-5/) | ERNIE Team, Baidu | 2026-02-04 | [arXiv:2602.04705](https://arxiv.org/abs/2602.04705) |
 | LLM | [Kimi K3](./reports/llm/kimi-k3/) | Kimi Team, Moonshot AI | 2026-07-27 | [arXiv:2607.24653](https://arxiv.org/abs/2607.24653) |
 | LLM | [DeepSeek-V4](./reports/llm/deepseek-v4/) | DeepSeek | 2026-04-26 | [arXiv:2606.19348](https://arxiv.org/abs/2606.19348) |
+| LLM | [DeepSeek-V4.1-Flash](./reports/llm/deepseek-v4.1-flash/) | DeepSeek | 2026-09-17 | [arXiv:2609.19969](https://arxiv.org/abs/2609.19969) |
+| LLM | [MiniMax-M2 Series](./reports/llm/minimax-m2/) | MiniMax | 2026-05-26 | [arXiv:2605.26494](https://arxiv.org/abs/2605.26494) |
 | VLM | [Qwen3-VL](./reports/vlm/qwen3-vl/) | Qwen Team | 2025-11-26 | [arXiv:2511.21631](https://arxiv.org/abs/2511.21631) |
 | VLM | [可灵：视频生成背后的多模态理解](./reports/vlm/kling-understanding/) | Kling Team, Kuaishou Technology | 2026-11-03 | [arXiv:2611.04916](https://arxiv.org/abs/2611.04916) |
 | VLM | [Qwen3.5-Omni](./reports/vlm/qwen3.5-omni/) | Qwen Team | 2026-04-17 | [arXiv:2604.15804](https://arxiv.org/abs/2604.15804) |
