@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-22",
+  "updated": "2026-11-23",
   "reports": [
     {
       "slug": "qwen3-vl",
@@ -704,6 +704,54 @@
       "one_liner": "【短记】不是完整深读。无技术报告 PDF，只依据 2025-11-25 官方博客与官方 VAE 技术博文。[dev] 32B 开放权重；VAE 从零重训、Apache 2.0；[klein] 博文当时称即将推出。架构：潜空间流匹配，耦合 Mistral-3 24B VLM 与 rectified flow Transformer。VAE 文在 256 token 对齐配置下称 FLUX.2 为每 token 128 通道；表 1 ImageNet 重建 LPIPS 0.2668 / rFID 0.1124；图 3 [dev] 文生图人工偏好胜率 66.6%。不编造未写出的下采样倍数。",
       "path": "reports/image/flux-2/",
       "added": "2026-11-22"
+    },
+    {
+      "slug": "qwen4-max",
+      "title": "【短记】Qwen4-Max",
+      "subtitle": "Alibaba Unveils Qwen4-Max（官方新闻稿）",
+      "vendor": "Alibaba / Qwen",
+      "vendor_key": "qwen",
+      "category": "llm",
+      "date": "2026-11-16",
+      "paper": "https://www.alibabagroup.com/en-US/document-2060139246777270272",
+      "arxiv": "",
+      "open_weights": false,
+      "params": "2.4T 总参数 MoE，每 token 激活 71B（新闻稿自报）",
+      "one_liner": "【短记】不是完整深读。仅有 2026-11-16 官方新闻稿，没有技术报告或 model card。稀疏 MoE，总参 2.4T、每 token 激活 71B（比 Qwen3.8-Max 少 25%），1M 上下文、原生视觉；Code Arena 第 6；专有基准 Work360 上 High 推理档 token 少 35%、单任务成本约降 60%。Qwen4-Max 未开放权重，小尺寸开放权重 Qwen4 称「即将发布」。所有数字均为厂商自报。",
+      "added": "2026-11-23",
+      "path": "reports/llm/qwen4-max/"
+    },
+    {
+      "slug": "gpt-6.2-card",
+      "title": "【短记】GPT-6.2 Astra / Sol",
+      "subtitle": "GPT-6.2 Astra and Sol System Card",
+      "vendor": "OpenAI",
+      "vendor_key": "openai",
+      "category": "llm",
+      "date": "2026-11-17",
+      "paper": "https://deploymentsafety.openai.com/gpt-6-2-astra-sol/gpt-6-2-astra-sol.pdf",
+      "arxiv": "",
+      "open_weights": false,
+      "params": "原文未披露",
+      "one_liner": "【短记】不是完整深读。2026-11-17 系统卡（119 页），同日有一处措辞更新。两款模型网络安全均达 Critical、生物/化学均达 High；AI 自改进 Astra 达 High（首个对外发布即达该阈值）、Sol 低于。要点：新增 Control Room 管控研究基础设施上的模型工作负载；Blocker Deception 遗漏障碍回归（Astra 22.28% vs GPT-6 Astra 11.09%）；Astra 评估意识更高。架构与参数未披露，评估多为内部集。",
+      "added": "2026-11-23",
+      "path": "reports/llm/gpt-6.2-card/"
+    },
+    {
+      "slug": "gemini-4-neon-card",
+      "title": "【短记】Gemini 4 Neon",
+      "subtitle": "Gemini 4 Neon Model Card",
+      "vendor": "Google DeepMind",
+      "vendor_key": "google",
+      "category": "llm",
+      "date": "2026-11-18",
+      "paper": "https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-4-Neon-Model-Card.pdf",
+      "arxiv": "",
+      "open_weights": false,
+      "params": "原文未披露",
+      "one_liner": "【短记】不是完整深读。模型卡只标 Published: November 2026，目录日期 2026-11-18 取自 Google 官方博客发布日。Neon 由 Gemini 4 Carbon 改造，架构、数据、硬件均指向 Carbon 模型卡；1M 上下文、默认 64K 输出，知识截止 2026 年 3 月。卡内结果表对比 Claude Opus 5.5 与 GPT-6.2 Sol（如 AA Index 61 / 59 / 57），完整安全报告当时尚未发布。",
+      "added": "2026-11-23",
+      "path": "reports/llm/gemini-4-neon-card/"
     }
   ]
 }

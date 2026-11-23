@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】Qwen4-Max · 前沿模型技术报告</title>
+<meta name="description" content="阿里巴巴 Qwen4-Max 新闻稿中文短记：2.4T 总参数 MoE、每 token 激活 71B、1M 上下文、原生视觉；Code Arena 第 6；Work360 自报效率提升。不是完整深读。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 语言模型（新闻稿）</div>
+    <h1>【短记】Qwen4-Max<span class="sub">Alibaba Unveils Qwen4-Max（新闻稿）</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Alibaba / Qwen</b></span>
+      <span>发布日期 <b>2026-11-16</b></span>
+      <span>类型 <b>官方新闻稿 · 短记</b></span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。阿里巴巴 2026 年 11 月 16 日以集团新闻稿发布 Qwen4-Max，称其为 Qwen 家族迄今最强模型：<b>2.4T 总参数</b>的稀疏 MoE、<b>每 token 激活 71B</b>、<b>1M token 上下文</b>、原生视觉<span class="src">新闻稿 首段 · 架构段</span>。新闻稿称它在 Code Arena 排第 6；在自家专有基准 Work360 上整体超过 Qwen3.8-Max，High 推理档 token 少用 35%、单任务平均成本降约 60%<span class="src">新闻稿 基准段</span>。目前通过 QwenCloud 的 Token Plan 与 API 提供；Qwen4 系列<b>更小的开放权重模型</b>只说「即将发布」<span class="src">新闻稿 可用性段</span>。没有技术报告或 model card。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">官方新闻稿 · 短记</span>
+      <span class="badge">无技术报告 / model card</span>
+      <span class="badge">MoE · 2.4T 总参 / 71B 激活</span>
+      <span class="badge">上下文 1M token</span>
+      <span class="badge">开放权重：未开放（小尺寸 Qwen4 称即将发布）</span>
+      <span class="badge">许可证：原文未披露</span>
+    </div>
+    <div class="links">
+      <a href="https://www.alibabagroup.com/en-US/document-2060139246777270272" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方新闻稿</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#arch">架构与效率</a></li>
+    <li><a href="#eval">基准与案例（自报）</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自阿里巴巴官方新闻稿；<span class="src">出处</span> 标来源段落，<span class="src">推算</span> 为本页计算。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">集团新闻稿</div><div class="stat-sub">没有技术报告、model card 或评测明细表；图表数值未提取</div><span class="src">新闻稿</span></div>
+    <div class="card stat"><div class="stat-k">规模</div><div class="stat-num">2.4T / 71B</div><div class="stat-sub">稀疏 MoE，总参 2.4T，每 token 激活 71B；称比同为 2.4T 的 Qwen3.8-Max 激活参数少 25%</div><span class="src">新闻稿 架构段</span></div>
+    <div class="card stat"><div class="stat-k">上下文 / 模态</div><div class="stat-num sm">1M token · 原生视觉</div><div class="stat-sub">输出模态、视觉输入规格原文未披露</div><span class="src">新闻稿 首段</span></div>
+    <div class="card stat"><div class="stat-k">Code Arena</div><div class="stat-num">第 6</div><div class="stat-sub">第三方真实编码榜单；具体分数与对比对象原文图表未提取</div><span class="src">新闻稿 基准段 · 图</span></div>
+    <div class="card stat"><div class="stat-k">Work360（专有）</div><div class="stat-num sm">token −35% · 成本约 −60%</div><div class="stat-sub">相对 Qwen3.8-Max；token 节省限定 High 推理档；覆盖 721 个专业领域</div><span class="src">新闻稿 基准段</span></div>
+    <div class="card stat"><div class="stat-k">可用性 / 权重</div><div class="stat-num sm">API 提供 · 权重未开放</div><div class="stat-sub">QwenCloud Token Plan 与 API，QwenWork、QwenStudio；输入（隐式缓存命中）$0.075 / 1M token；其他价格未披露</div><span class="src">新闻稿 可用性段</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>同样 2.4T 总参，激活从更多降到 71B</h3><p>新闻稿称 Qwen4 架构在注意力、残差连接与 embedding 三处升级了稀疏 MoE 设计；总参与 Qwen3.8-Max 同为 2.4T，但每 token 激活 71B，少 25%，以更低推理成本换更强能力。具体结构改动原文未展开。<span class="src">新闻稿 架构段</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>主打编码、Agent 与视觉推理</h3><p>Code Arena 第 6；另称在 Agents' Last Exam、Vals Index、JobBench、Chartography 上「分数强劲」，但正文未给任何分数。<span class="src">新闻稿 基准段</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>效率数字来自自家专有基准</h3><p>Work360 覆盖 721 个专业领域的行业任务：整体超过 Qwen3.8-Max，High 推理档少用 35% token，单任务平均成本降约 60%。基准不公开，无法外部核对。<span class="src">新闻稿 基准段</span></p></div>
+    <div class="card tl caveat"><span class="idx">04</span><h3>开放权重只是预告</h3><p>Qwen4-Max 本身只通过云 API 与阿里平台提供；「Qwen4 系列更小的开放权重模型将很快发布」，尺寸、许可证、时间均未披露。<span class="src">新闻稿 可用性段</span></p></div>
+  </div>
+</section>
+
+<!-- 03 架构与效率 -->
+<section class="sec" id="arch">
+  <div class="sec-head"><div class="sec-num">03 · ARCHITECTURE</div><h2>架构与效率</h2></div>
+  <p>新闻稿把效率提升归因于新的 Qwen4 架构：沿用稀疏 Mixture-of-Experts，并在<b>注意力、残差连接、embedding</b>三处做了升级。总参数 2.4T，每 token 只激活 71B，比同样 2.4T 规模的 Qwen3.8-Max 少 25% 激活参数。<span class="src">新闻稿 架构段</span></p>
+  <p>按「少 25%」反推，Qwen3.8-Max 每 token 激活约 95B<span class="src calc">推算</span>；新闻稿未直接给出这一数字，此处仅为算术换算。</p>
+  <p>专家数、路由方式、层数、注意力的具体改法、视觉编码器、训练数据与规模、训练配方：<b>原文均未披露</b>。</p>
+  <p>安全方面只有定性陈述：软件工程训练在功能测试之外加入代码安全检查；网络安全方向按任务意图过滤训练数据，保留防御类材料、移除攻击类内容；另用专门安全数据集和后训练加强 CBRN 风险防护。没有给出评测数字。<span class="src">新闻稿 Safety 段</span></p>
+</section>
+
+<!-- 04 基准与案例 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">04 · CLAIMS</div><h2>基准与案例（均为新闻稿自报）</h2></div>
+  <div class="tbl-wrap wide">
+    <table>
+      <thead><tr><th>项目</th><th>新闻稿说法</th><th>来源</th></tr></thead>
+      <tbody>
+        <tr><td>Code Arena</td><td>排名第 6（分数原文图表未提取）</td><td><span class="src">基准段 · 图</span></td></tr>
+        <tr><td>Agents' Last Exam / Vals Index / JobBench / Chartography</td><td>「分数强劲」，未给数值</td><td><span class="src">基准段</span></td></tr>
+        <tr><td>Work360（专有，721 个领域）</td><td>整体超过 Qwen3.8-Max；High 推理档 token −35%；单任务平均成本约 −60%（图表数值未提取）</td><td><span class="src">基准段 · 图</span></td></tr>
+        <tr><td>云资源调度（闭环自优化）</td><td>基准测试中数据标注模型调用成本平均 −9%；离线 CPU 重调度提速 14 倍以上</td><td><span class="src">效率段</span></td></tr>
+        <tr><td>汽车制造演示</td><td>人工工件编程时间约 475 分钟 → 24 分钟，减少 95%；靠反馈迭代在加工前发现过切与欠切</td><td><span class="src">效率段</span></td></tr>
+        <tr><td>芯片冷却液分子</td><td>连续 48 小时 Agent 运行、4 轮闭环迭代，发现一种经实验验证的冷却液分子（原文此处写作「Qwen4」）</td><td><span class="src">科学发现段</span></td></tr>
+        <tr><td>阿尔茨海默研究实验</td><td>自主执行 454 次工具调用、3,239 次指标评估，设计并优化 24 个候选分子（只记结论级数字）</td><td><span class="src">科学发现段</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>新闻稿还称 Qwen4-Max 支持 3D 建模、游戏开发、Agent 式视频创作，以及金融、法律、医疗等行业的前置部署工程（FDE），但没有给数字。<span class="src">效率段</span></p>
+</section>
+
+<!-- 05 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">05 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+  <ul class="limits wide">
+    <li class="key"><b>本页是短记。</b>材料只有一篇约千词的集团新闻稿，没有技术报告、model card 或评测明细；本页不是完整深读。</li>
+    <li class="key"><b>所有数字均为厂商自报，无法复现。</b>Work360 是专有基准，任务、打分与对比设置都不公开；云调度、汽车制造、分子设计等案例是演示或内部实验，没有方法与对照说明。</li>
+    <li class="key"><b>图表数值未提取。</b>新闻稿附的 Code Arena 与 Work360 两张图只取到标题，排名之外的分数与对比模型本页无法给出。</li>
+    <li><b>第三方榜单只给名次或定性。</b>Code Arena 只说第 6（榜单时间点与评测版本未说明）；Agents' Last Exam、Vals Index、JobBench、Chartography 只写「分数强劲」。</li>
+    <li><b>效率数字有限定条件。</b>「token 少 35%」限定 High 推理档；「成本降约 60%」是平均单任务成本，计价口径未说明。价格只公布了输入（隐式缓存命中）$0.075 / 1M token，其余价格未披露。</li>
+    <li><b>架构与训练几乎未披露。</b>只说在注意力、残差、embedding 升级 MoE；专家配置、训练数据、规模、配方、许可证均原文未披露。Qwen3.8-Max 约 95B 激活是本页按「少 25%」推算，不是原文数字。</li>
+    <li><b>开放权重尚未发布。</b>Qwen4-Max 未开放权重；「更小的 Qwen4 开放权重模型将很快发布」只是预告，尺寸、许可证、日期均未知。</li>
+    <li><b>主体措辞不一致。</b>48 小时冷却液分子实验在原文写作「Qwen4」而非「Qwen4-Max」，是否同一模型未说明。</li>
+    <li><b>安全只有定性描述。</b>代码安全、网络数据过滤与 CBRN 防护均无评测数字；本页不转述生物/化学方向的操作层细节。</li>
+  </ul>
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对阿里巴巴集团新闻稿《Alibaba Unveils Qwen4-Max: New AI Teammate for Work, Creativity, and Discovery》（2026-11-16，杭州）的中文短记，不是完整深读。所有数字均来自该新闻稿，均为厂商自报；新闻稿内图表数值未提取，标注「推算」的为本页算术换算。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>

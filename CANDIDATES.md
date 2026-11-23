@@ -51,3 +51,10 @@
 | LLM | 2026-04 | OpenAI | GPT-5.5 System Card | [PDF](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf) | 已发布（短记） |
 | LLM | 2026-09 | Anthropic | Claude Opus 5.5 System Card | [PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) | 已发布（短记） |
 | Image | 2025-11 | Black Forest Labs | FLUX.2 (blog + VAE report) | [blog](https://bfl.ai/blog/flux-2) · [VAE 博文](https://bfl.ai/techblog/representation-comparison) | 已发布（短记） |
+| LLM | 2026-11 | Alibaba / Qwen | Qwen4-Max（新闻稿） | [新闻稿](https://www.alibabagroup.com/en-US/document-2060139246777270272) | 已发布（短记） |
+| LLM | 2026-11 | OpenAI | GPT-6.2 Astra / Sol System Card | [PDF](https://deploymentsafety.openai.com/gpt-6-2-astra-sol/gpt-6-2-astra-sol.pdf) | 已发布（短记） |
+| LLM | 2026-11 | Google DeepMind | Gemini 4 Neon Model Card | [PDF](https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-4-Neon-Model-Card.pdf) | 已发布（短记） |
+| LLM | 2026-11 | Google DeepMind | Gemini 4 Hydrogen（官方博客 2026-11-12，窗口外；未核对是否有 model card） | [博客](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/) | 待写（短记） |
+| LLM | 2026-11 | Anthropic | Claude Fable 5.2 and Mythos 5.2 System Card（Anthropic 系统卡页标 November 2026；具体日期未核对） | [系统卡列表](https://www.anthropic.com/system-cards) | 待写（短记） |
+| LLM | 2026-11 | 未核对 | Sage S2.1 Flash Technical Report（arXiv 检索显示 v2 为 17 Nov 2026；厂商与 v1 日期待核） | [arXiv:2611.21072](https://arxiv.org/abs/2611.21072) | 待核对 |
+| — | 2026-11 | OpenAI | OpenAI–Hugging Face Incident Technical Report（事件报告，非模型技术报告，暂不收录） | [PDF](https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf) | 跳过 |

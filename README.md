@@ -47,6 +47,9 @@
 | LLM（短记） | [【短记】Gemini 3 Pro Model Card](./reports/llm/gemini-3-pro-card/) | Google DeepMind | 2025-11（目录取 2025-11-01） | [官方 PDF](https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-3-Pro-Model-Card.pdf) |
 | LLM（短记） | [【短记】GPT-5.5 System Card](./reports/llm/gpt-5.5-card/) | OpenAI | 2026-04-23 | [官方 PDF](https://deploymentsafety.openai.com/gpt-5-5/gpt-5-5.pdf) |
 | LLM（短记） | [【短记】Claude Opus 5.5 System Card](./reports/llm/claude-opus-5.5-card/) | Anthropic | 2026-09-22 | [官方 PDF](https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf) |
+| LLM（短记） | [【短记】Qwen4-Max](./reports/llm/qwen4-max/) | Alibaba / Qwen | 2026-11-16 | [官方新闻稿](https://www.alibabagroup.com/en-US/document-2060139246777270272) |
+| LLM（短记） | [【短记】GPT-6.2 Astra / Sol System Card](./reports/llm/gpt-6.2-card/) | OpenAI | 2026-11-17 | [官方 PDF](https://deploymentsafety.openai.com/gpt-6-2-astra-sol/gpt-6-2-astra-sol.pdf) |
+| LLM（短记） | [【短记】Gemini 4 Neon Model Card](./reports/llm/gemini-4-neon-card/) | Google DeepMind | 2026-11-18（博客发布日；卡内仅标 2026-11） | [官方 PDF](https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-4-Neon-Model-Card.pdf) |
 | 图像生成 | [Z-Image](./reports/image/z-image/) | Alibaba Group / Z-Image Team | 2025-11-27 | [arXiv:2511.22699](https://arxiv.org/abs/2511.22699) |
 | 图像生成（短记） | [【短记】FLUX.2](./reports/image/flux-2/) | Black Forest Labs | 2025-11-25 | [官方博客](https://bfl.ai/blog/flux-2) · [VAE 博文](https://bfl.ai/techblog/representation-comparison) |
 | 图像生成 / 编辑 | [FireRed-Image-Edit](./reports/image/firered-image-edit/) | 小红书 Super Intelligence Team | 2026-02-12 | [arXiv:2602.13344](https://arxiv.org/abs/2602.13344) |

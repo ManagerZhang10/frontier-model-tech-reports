@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-11-23
+
+- 本周（2026-11-16 至 11-23）新增 3 篇【短记】（均为官方新闻稿 / 系统卡 / 模型卡，不是完整深读）：
+  - [【短记】Qwen4-Max](./reports/llm/qwen4-max/)（LLM · 短记，仅官方新闻稿）
+  - [【短记】GPT-6.2 Astra / Sol System Card](./reports/llm/gpt-6.2-card/)（LLM · 短记）
+  - [【短记】Gemini 4 Neon Model Card](./reports/llm/gemini-4-neon-card/)（LLM · 短记）
+- 本周 arXiv 上未发现所列大厂的新技术报告；其余候选记入 CANDIDATES.md。
+
 ## 2026-11-22
 
 - 站点首次发布：上线 GitHub Pages，统一了图文深读版式。

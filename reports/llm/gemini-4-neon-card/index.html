@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>【短记】Gemini 4 Neon Model Card · 前沿模型技术报告</title>
+<meta name="description" content="Google DeepMind《Gemini 4 Neon Model Card》中文短记：由 Gemini 4 Carbon 改造、1M 上下文、2026 年 11 月结果表、内部安全评测与 Frontier Safety 结论。不是完整深读。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/style.css">
+
+</head>
+<body>
+
+<div class="topbar">
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="切换深浅色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">深色</span>
+  </button>
+</div>
+
+<header class="hero">
+  <div class="hero-in">
+    <div class="kicker"><a href="../../../index.html" class="site-home">前沿模型技术报告</a> · 中文短记 · 不是完整深读 · 语言模型（模型卡）</div>
+    <h1>【短记】Gemini 4 Neon<span class="sub">Gemini 4 Neon Model Card</span></h1>
+    <div class="hero-meta">
+      <span>厂商 <b>Google DeepMind</b></span>
+      <span>模型卡标注 <b>Published: November 2026</b>（未给具体日）</span>
+      <span>官方博客 <b>2026-11-18</b></span>
+      <span>类型 <b>Model Card + 博客 · 短记</b></span>
+    </div>
+    <p class="lede">这是一篇<b>短记</b>，不是完整深读。Gemini 4 Neon 是 Gemini 4 系列里介于 Carbon（最难、长程项目）与 Hydrogen（快速日常执行）之间的一档，定位复杂编码、分析推理和生产级企业工作流，主打「更快、更省」地给出前沿级推理<span class="src">模型卡 p.1</span>。模型卡写明 Neon <b>由 Gemini 4 Carbon 改造而来</b>，架构、训练数据、数据处理、硬件和软件全部指向 Carbon 模型卡，本卡本身不披露<span class="src">p.1–2</span>。输入为文本、图像、音频、视频，输入输出合计上下文最长 1M；默认同步输出最多 64K token，后台长解码最多 1M<span class="src">p.1</span>。完整的 Safety &amp; Security 报告「将在未来几天发布」<span class="src">p.6</span>。</p>
+    <div class="badges">
+      <span class="badge acc">【短记】</span>
+      <span class="badge">Model Card · 短记</span>
+      <span class="badge">参数 / 架构 / 训练数据：原文未披露（指向 Carbon 卡）</span>
+      <span class="badge">上下文 1M · 默认输出 64K</span>
+      <span class="badge">开放权重：未开放（仅 App / API 等渠道）</span>
+      <span class="badge">许可证：原文未披露</span>
+    </div>
+    <div class="links">
+      <a href="https://storage.googleapis.com/deepmind-media/Model-Cards/Gemini-4-Neon-Model-Card.pdf" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4"/></svg>官方 Model Card PDF</a>
+      <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>官方博客</a>
+      <a href="../../../index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg>返回系列首页</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目录">
+  <div class="toc-title">目录</div>
+  <ol>
+    <li><a href="#glance">速览</a></li>
+    <li><a href="#tldr">TL;DR</a></li>
+    <li><a href="#what">卡片写了什么</a></li>
+    <li><a href="#eval">结果表（p.4）</a></li>
+    <li><a href="#safety">安全与 Frontier Safety</a></li>
+    <li><a href="#blog">博客自报</a></li>
+    <li><a href="#limits">局限与存疑</a></li>
+  </ol>
+  <div class="toc-foot">这是一篇标注为【短记】的摘要，不是完整技术报告深读。数字均出自模型卡 PDF（页码按卡上印的页码）与官方博客；<span class="src">出处</span> 标来源。</div>
+</nav>
+
+<main>
+<!-- 01 速览 -->
+<section class="sec" id="glance">
+  <div class="sec-head"><div class="sec-num">01 · AT A GLANCE</div><h2>速览</h2></div>
+  <div class="glance wide">
+    <div class="card stat"><div class="stat-k">文类</div><div class="stat-num sm">模型卡 / 短记</div><div class="stat-sub">10 页 PDF，大部分技术栏目指向 Gemini 4 Carbon 模型卡</div><span class="src">p.1–2</span></div>
+    <div class="card stat"><div class="stat-k">日期</div><div class="stat-num sm">2026 年 11 月</div><div class="stat-sub">卡上只写 Published: November 2026；博客署 2026-11-18</div><span class="src">p.1 · 博客</span></div>
+    <div class="card stat"><div class="stat-k">来源模型</div><div class="stat-num sm">Gemini 4 Carbon</div><div class="stat-sub">「adapted from Gemini 4 Carbon」，改造方式未说明</div><span class="src">p.1</span></div>
+    <div class="card stat"><div class="stat-k">架构 / 参数 / 数据</div><div class="stat-num sm nd">原文未披露</div><div class="stat-sub">本卡只写「见 Carbon 模型卡」</div><span class="src">p.2</span></div>
+    <div class="card stat"><div class="stat-k">上下文 / 输出</div><div class="stat-num sm">1M / 64K（后台 1M）</div><div class="stat-sub">文本、图像、音频、视频输入；输入输出合计 1M</div><span class="src">p.1</span></div>
+    <div class="card stat"><div class="stat-k">知识截止</div><div class="stat-num sm">2026 年 3 月</div><div class="stat-sub">部分领域可能更旧</div><span class="src">p.5</span></div>
+    <div class="card stat"><div class="stat-k">价格（博客）</div><div class="stat-num sm">$3 / $15 每百万 token</div><div class="stat-sub">输入 / 输出；缓存输入 $0.15（博客称 95% 折扣）</div><span class="src">博客</span></div>
+    <div class="card stat"><div class="stat-k">Frontier Safety</div><div class="stat-num sm">低于 MCC 阈值</div><div class="stat-sub">未重做完整关键能力评测，沿用 Gemini 4 Argon 的判定</div><span class="src">p.8</span></div>
+  </div>
+</section>
+
+<!-- 02 要点 -->
+<section class="sec" id="tldr">
+  <div class="sec-head"><div class="sec-num">02 · TL;DR</div><h2>要点</h2></div>
+  <div class="tldr wide">
+    <div class="card tl"><span class="idx">01</span><h3>Carbon 的改造版，技术细节全部外链</h3><p>架构、训练数据、数据处理、硬件、软件、可接受使用政策都只写「Neon 由 Carbon 改造，详见 Carbon 模型卡」。改造用的是蒸馏、剪枝还是继续训练，卡里没有说。<span class="src">p.1–2 · p.5</span></p></div>
+    <div class="card tl"><span class="idx">02</span><h3>自家结果表：19 行里 Neon 有 16 行领先</h3><p>对比对象是 Claude Opus 5.5 与 GPT-6.2 Sol。AA Index v5.0.1 为 61 / 59 / 57，Vals Index v2.2 为 70.9% / 70.1% / 66.1%；Terminal-bench 4.1、FrontierCode 2.0 落后 Opus 5.5，Chartography 落后 GPT-6.2 Sol。<span class="src">p.4 结果表</span></p></div>
+    <div class="card tl"><span class="idx">03</span><h3>内部安全评测与 Hydrogen 持平，过度拒答减少</h3><p>对比 Gemini 4 Hydrogen：文本安全 0.00pp、多语种 −0.40pp、图像到文本 +1.90pp、拒答语气 +1.25pp、无理由拒答 −3.00pp。均为自动化评测，不含人工评估或红队。<span class="src">p.6–7</span></p></div>
+    <div class="card tl caveat"><span class="idx">04</span><h3>Frontier Safety 沿用 Argon 判定；完整安全报告尚未发布</h3><p>MCC 评估显示 Neon 相对 Argon 通用能力有提升但低于阈值，因此没跑完整关键能力评测。生物 CBRN CCL、网络安全 CCL「不能排除」，Loss of Control 的隐蔽与情境感知 TCL「不能排除」，均沿用自 Argon。<span class="src">p.8–9</span></p></div>
+  </div>
+</section>
+
+<!-- 03 卡片写了什么 -->
+<section class="sec" id="what">
+  <div class="sec-head"><div class="sec-num">03 · WHAT IT COVERS</div><h2>卡片写了什么</h2></div>
+
+  <p><b>定位。</b>卡片把 Gemini 4 系列分成三档：Carbon 负责最难的长程项目，Hydrogen 负责快速日常执行，Neon 在深度与效率之间取平衡。推荐场景包括长时间运行的 agent 工作流、重度工具调用任务、单独或作为子 agent 配合前沿模型快速执行、网络防御类任务（安全代码生成、渗透测试、漏洞发现、验证与修补）、仓库级迭代编码与调试、多模态知识工作，以及写作、研究和日常工作。<span class="src">p.1 · p.5</span></p>
+  <p><b>分发渠道。</b>Gemini app、Gemini API、Google AI Studio、Gemini for business、Google Antigravity；访问权限因渠道和订阅档位而异（例如 Antigravity 与 Gemini app 面向付费 Google AI Pro / Ultra 订阅者）。<span class="src">p.3</span></p>
+  <p><b>已知局限。</b>可能出现幻觉等一般性问题；越狱抵抗仍在改进；知识截止 2026 年 3 月，部分领域更旧。<span class="src">p.5</span></p>
+  <p><b>风险缓解（定性）。</b>预训练数据过滤、后训练对齐（SFT 与 RL）、产品与系统级安全过滤、使用监控；针对 CBRN 与网络安全滥用加强了 Frontier Safety 防护；重点关注对抗性越狱与间接提示注入。<span class="src">p.9</span></p>
+
+</section>
+
+<!-- 04 结果表 -->
+<section class="sec" id="eval">
+  <div class="sec-head"><div class="sec-num">04 · RESULTS</div><h2>结果表（模型卡 p.4，截至 2026 年 11 月）</h2></div>
+
+  <p>原表为图片，以下数字由本页对照 PDF 渲染图逐格录入。<b>粗体</b>为原表高亮的该行最高分。「—」为原表空缺。</p>
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th>类别</th><th>基准（设置）</th><th>Gemini 4 Neon</th><th>Claude Opus 5.5</th><th>GPT-6.2 Sol</th></tr></thead>
+    <tbody>
+      <tr><td>综合指数</td><td>AA Index v5.0.1</td><td><b>61</b></td><td>59</td><td>57</td></tr>
+      <tr><td></td><td>Vals Index v2.2</td><td><b>70.9%</b></td><td>70.1%</td><td>66.1%</td></tr>
+      <tr><td>Agentic coding</td><td>CursorBench 4.1（Score）</td><td><b>65.4%</b></td><td>58.1%</td><td>—</td></tr>
+      <tr><td></td><td>Terminal-bench 4.1（Cheating adjusted accuracy）</td><td>65.2%</td><td><b>65.8%</b></td><td>61.5%</td></tr>
+      <tr><td></td><td>FrontierCode 2.0（Main score）</td><td>46.2%</td><td><b>47.3%</b></td><td>43.8%</td></tr>
+      <tr><td></td><td>SWE-sweep（Provider harness）</td><td><b>39.0%</b></td><td>10.1%</td><td>8.3%</td></tr>
+      <tr><td></td><td>SWE-sweep（Mini-SWE harness）</td><td><b>12.8%</b></td><td>3.6%</td><td>11.6%</td></tr>
+      <tr><td>Knowledge work</td><td>AutomationBench</td><td><b>56.3%</b></td><td>42.5%</td><td>41.3%</td></tr>
+      <tr><td></td><td>Agents' Last Exam v1.1</td><td><b>75.8%</b></td><td>71.6%</td><td>73.0%</td></tr>
+      <tr><td>Science and math</td><td>RiemannBench</td><td><b>84.0%</b></td><td>80.0%</td><td>80.0%</td></tr>
+      <tr><td></td><td>Terminal-Bench-Science 0.1</td><td><b>70.5%</b></td><td>63.3%</td><td>68.0%</td></tr>
+      <tr><td>Reasoning</td><td>HLE-Diamond</td><td><b>71.3%</b></td><td>67.9%</td><td>64.0%</td></tr>
+      <tr><td>Multimodal</td><td>MKA（Climb WSR）</td><td><b>56.5%</b></td><td>53.0%</td><td>52.7%</td></tr>
+      <tr><td></td><td>Chartography</td><td>73.5%</td><td>66.3%</td><td><b>75.1%</b></td></tr>
+      <tr><td></td><td>LVBench</td><td><b>89.0%</b></td><td>83.7%</td><td>87.6%</td></tr>
+      <tr><td>Long context</td><td>GraphWalks（256k to 1M, BFS (F1)）</td><td><b>95.2%</b></td><td>66.8%</td><td>80.1%</td></tr>
+      <tr><td>Cybersecurity</td><td>CWE-Bench v2</td><td><b>70.7%</b></td><td>67.1%</td><td>66.0%</td></tr>
+      <tr><td></td><td>SEC-bench Pro</td><td><b>90.5%</b></td><td>—</td><td>88.3%</td></tr>
+      <tr><td></td><td>WebExploitBench v1.2</td><td><b>51.3%</b></td><td>37.1%</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p class="footnote"><span class="src">模型卡 p.4</span> 方法论指向 deepmind.google/models/evals-methodology/gemini-4-neon，本页未读该页；各基准的推理档位、对手模型的设置与测量来源在卡内均未写明。</p>
+
+</section>
+
+<!-- 05 安全 -->
+<section class="sec" id="safety">
+  <div class="sec-head"><div class="sec-num">05 · SAFETY</div><h2>安全与 Frontier Safety（只记结论）</h2></div>
+
+  <p><b>开发期内部安全评测</b>（对比 Gemini 4 Hydrogen，单位为百分点；全部为自动化评测）：</p>
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th>评测</th><th>方向</th><th>Neon vs. Hydrogen</th></tr></thead>
+    <tbody>
+      <tr><td>Text to Text Safety</td><td>越高越好</td><td>0.00pp</td></tr>
+      <tr><td>Multilingual Safety</td><td>越高越好</td><td>−0.40pp</td></tr>
+      <tr><td>Image to Text Safety</td><td>越高越好</td><td><b>+1.90pp</b>（原表标绿）</td></tr>
+      <tr><td>Tone</td><td>越高越好</td><td>+1.25pp</td></tr>
+      <tr><td>Unjustified-refusals</td><td>越低越好</td><td><b>−3.00pp</b>（原表标绿）</td></tr>
+    </tbody>
+  </table></div>
+  <p class="footnote"><span class="src">p.6–7</span> 卡片总结：文本、多语种、图像到文本三项内容安全与 Hydrogen 相当，差异都在置信区间内；拒答语气相当，无理由拒答下降，多模态提示上尤为明显。</p>
+
+  <p><b>Frontier Safety Framework（2026 年 4 月版）。</b>最近一次做过关键能力评估的是 Gemini 4 Argon。对 Neon 做的 Material Capability Change（MCC）评估显示通用能力较 Argon 有提升，但低于 MCC 阈值，因此按 FSF 不要求完整关键能力评测，T/CCL 判定直接沿用 Argon：<span class="src">p.8</span></p>
+  <ul>
+    <li>CBRN 提升 TCL（化学、放射、核）：未达到。<span class="src">p.8</span></li>
+    <li>CBRN 提升 CCL（生物）：不能排除；继续部署缓解措施。<span class="src">p.8</span></li>
+    <li>网络安全提升 CCL：不能排除；继续部署缓解措施。<span class="src">p.8</span></li>
+    <li>有害操纵 CCL：未达到。<span class="src">p.8–9</span></li>
+    <li>失控：隐蔽与情境感知 TCL 不能排除，适用基线 AI 控制与模型安全措施。<span class="src">p.9</span></li>
+    <li>失控：ML 研发加速 CCL、ML 研发自动化 CCL：均未达到。<span class="src">p.9</span></li>
+  </ul>
+  <p>完整结果在尚未发布的《Gemini 4 Neon Safety &amp; Security Report》里。本短记不转述任何生物、化学或网络方向的操作层细节。</p>
+
+</section>
+
+<!-- 06 博客 -->
+<section class="sec" id="blog">
+  <div class="sec-head"><div class="sec-num">06 · BLOG</div><h2>博客里的自报排名与价格</h2></div>
+
+  <ul>
+    <li>Artificial Analysis Intelligence Index：在 xhigh 思考档位得分 61，称「领先同类模型、总榜第 3」，仅落后于更大、更慢的模型。<span class="src">博客</span></li>
+    <li>Vals Index：第 2，并位于 Pareto 前沿。<span class="src">博客</span></li>
+    <li>新的 Agent Arena Index：可引导性（任务中途适应用户纠正）第 2。<span class="src">博客</span></li>
+    <li>Google Antigravity 内部测试中「编造率为历来最低」，未给数值。<span class="src">博客</span></li>
+    <li>价格：输入 $3 / 百万 token，缓存输入 $0.15 / 百万 token（博客称 95% 折扣），输出 $15 / 百万 token；上下文 1M。<span class="src">博客</span></li>
+    <li>上线渠道：Google AI Studio 中的 Gemini API、Gemini for business（API 与模型下拉框）、付费 Google AI Pro / Ultra 订阅者的 Google Antigravity、Pro / Ultra 订阅者的 Gemini app。<span class="src">博客</span></li>
+  </ul>
+
+</section>
+
+<!-- 07 局限与存疑 -->
+<section class="sec" id="limits">
+  <div class="sec-head"><div class="sec-num">07 · LIMITATIONS</div><h2>局限与存疑</h2></div>
+
+  <ul class="limits wide">
+    <li class="key"><b>这是短记，不是深读。</b>本页只整理模型卡与博客节选的结论级信息，没有读 Carbon 模型卡、Argon / Carbon 安全报告，也没有读评测方法论页面。</li>
+    <li class="key"><b>材料本身不是技术报告。</b>模型卡把架构、训练数据、数据处理、硬件、软件全部指向 Carbon 模型卡；参数规模、改造方式（如是否蒸馏）和许可证原文未披露，无法从本材料复原模型本身。</li>
+    <li class="key"><b>结果全部是厂商自报，无法复现。</b>p.4 表是 Google 自己测的，对手模型的设置、推理档位和数据来源未说明；多个基准（如 SWE-sweep、AutomationBench、RiemannBench）在卡内没有介绍，可比性无法核对。SWE-sweep 在 Provider harness 下 Neon 39.0% 对 Opus 5.5 10.1%，换成 Mini-SWE harness 后差距收窄到 12.8% 对 3.6%，GPT-6.2 Sol 从 8.3% 变为 11.6%，说明脚手架对结果影响很大。</li>
+    <li><b>结果表从图片录入。</b>pdftotext 未能提取表格，本页数字是对照渲染图逐格读出的，引用前建议回看原 PDF。</li>
+    <li><b>博客排名是自报的第三方榜单名次。</b>AA Index「总榜第 3」、Vals「第 2」、Agent Arena 可引导性「第 2」都是博客转述的名次，本页没有去榜单核对，名次也会随时间变化；博客的 AA 分数注明是 xhigh 档位，模型卡 p.4 的 61 未注明档位。「编造率历来最低」没有给数值。</li>
+    <li><b>安全评测说法存在张力。</b>正文说三项内容安全的差异「都在置信区间内」，但同表把 Image to Text Safety +1.90pp 标为绿色改进；置信区间本身未给出。且这些只是相对 Hydrogen 的差值，不是绝对分数，也不含人工评估或红队。</li>
+    <li><b>Frontier Safety 结论是沿用的。</b>Neon 未跑完整关键能力评测，判定来自 Argon；MCC 阈值和 MCC 评估的具体数字卡内未给。完整安全报告在模型卡发布时尚未公开（原文称「in the coming days」）。</li>
+    <li><b>日期不精确。</b>模型卡只写 November 2026，2026-11-18 来自博客发布日。</li>
+  </ul>
+
+</section>
+</main>
+</div>
+
+<footer>
+  <div class="in">
+    本页是对 Google DeepMind《Gemini 4 Neon Model Card》（标注 Published: November 2026）及官方博客《Introducing Gemini 4 Neon》（2026-11-18）的中文短记，不是完整深读。所有数字均来自这两份官方材料，结果表与安全评测表由本页对照 PDF 页面图片录入；博客中的榜单名次为厂商自报。本页只记录结论级信息，不转述生物、化学或网络方向的操作层细节。
+    <br>
+    <a href="../../../index.html">← 返回「前沿模型技术报告」首页</a>
+  </div>
+</footer>
+
+<script src="../../../assets/site.js"></script>
+</body>
+</html>
